@@ -25,26 +25,62 @@ synapseLogin()
 file.sources = list.files('../R/lib',pattern="*.R", full.names = T)
 tmp = sapply(file.sources,source,.GlobalEnv)
 
-makeCopy <- function(synId, parentId, FName = NULL, executed = list()){
+# Utility functions
+makeCopy <- function(synId, parentId, FName = NULL, executed = list(), activityName = NULL){
   OLD_OBJ = synGet(synId)
   NEW_OBJ = File(OLD_OBJ@filePath, name = FName, parentId = parentId)
-  NEW_OBJ = synStore(NEW_OBJ, used = OLD_OBJ, executed = executed)
+  NEW_OBJ = synStore(NEW_OBJ, used = OLD_OBJ, executed = executed, activityName = activityName)
 }
+
+ActivityName <- 'Make copy of data'
+
+thisFileName <- 'linkCMC.R'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", 
+                    ref="branch", 
+                    refName='CMC')
+
+thisFile <- getPermlink(repository = thisRepo,
+                        repositoryPath=paste0('code/R/', thisFileName))
+
 
 # Make copies of CMC data
 ## CMC - DLPFC
 EXP = makeCopy('syn3493960', 
                'syn5570049', 
                FName = 'Adjusted Voom Normalised Weighted Residuals', 
-               executed = )
+               executed = thisFile,
+               activityName = ActivityName)
 
-COV_OBJ = synGet('syn3493927')
-COV = fread(COV_OBJ@filePath, data.table=F, header=T)
+COV = makeCopy('syn3493927', 
+               'syn5570049', 
+               FName = 'Covariates', 
+               executed = thisFile,
+               activityName = ActivityName)
 
 ## CMC - ACC
+EXP = makeCopy('syn4985422', 
+               'syn5570054', 
+               FName = 'Adjusted Voom Normalised Weighted Residuals', 
+               executed = thisFile,
+               activityName = ActivityName)
 
-## HBCC - DLPFC
-
-## HBCC - ACC
+COV = makeCopy('syn4985413', 
+               'syn5570054', 
+               FName = 'Covariates', 
+               executed = thisFile,
+               activityName = ActivityName)
 
 ## HBCC - DLPFC (ARRAY)
+EXP = makeCopy('syn4941606', 
+               'syn5570055', 
+               FName = 'Adjusted Voom Normalised Weighted Residuals (Array)', 
+               executed = thisFile,
+               activityName = ActivityName)
+
+COV = makeCopy('syn4941610', 
+               'syn5570055', 
+               FName = 'Covariates (Array)', 
+               executed = thisFile,
+               activityName = ActivityName)
