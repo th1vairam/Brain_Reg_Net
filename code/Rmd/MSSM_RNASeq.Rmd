@@ -57,14 +57,14 @@ knitr::opts_chunk$set(
   message=FALSE,
   error = FALSE,
   tidy = FALSE,
-  cache = TRUE)
+  cache = FALSE)
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
 parentId = 'syn5570248';
-activityName = 'Differential expression analysis';
-activityDescription = 'Differential expression analysis of MSBB RNASeq samples';
+activityName = 'Covariate analysis';
+activityDescription = 'Covariate analysis of MSBB RNASeq samples';
 
 thisFileName <- 'MSSM_RNASeq.Rmd'
 
@@ -105,7 +105,7 @@ Remove genes that have less than 1 cpm counts in at least 50% of samples.
 ```{r cpmnormalisation, cache=TRUE}
 ind <- intersect(rownames(METADATA), colnames(COUNT))
 METADATA <- METADATA[ind,]
-COUNT <- COUNT[1:1000, ind]
+COUNT <- COUNT[, ind]
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT,MIN_GENE_CPM=1, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
 ```
 ### Covariate clustering
@@ -208,7 +208,7 @@ expr = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsembleIDs')
 write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('expression.tsv', 
            name = 'Voom Adjusted Weighted Residual Expression', 
-           parentId = parentId)
+           parentId = CODE$properties$id)
 obj = synStore(obj,
                used = ALL_USED_IDs, 
                activityName = activityName, 
@@ -217,10 +217,10 @@ obj = synStore(obj,
   
 # Covariates
 covar = rownameToFirstColumn(COVARIATES, 'SampleId')
-write.table(expr, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
+write.table(covar, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('covariates.tsv', 
            name = 'Covariates', 
-           parentId = parentId)
+           parentId = CODE$properties$id)
 obj = synStore(obj,
                used = ALL_USED_IDs, 
                activityName = activityName, 
