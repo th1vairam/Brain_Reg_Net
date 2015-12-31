@@ -70,7 +70,7 @@ thisFileName <- 'MSSM_RNASeq.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
-thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('Rmd/',thisFileName))
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
 Data were obtained from AMP-AD portal of MSSM, and following brain regions were analysed for differential expression between case and control:
   | Region | Name                      | 
@@ -105,7 +105,7 @@ Remove genes that have less than 1 cpm counts in at least 50% of samples.
 ```{r cpmnormalisation, cache=TRUE}
 ind <- intersect(rownames(METADATA), colnames(COUNT))
 METADATA <- METADATA[ind,]
-COUNT <- COUNT[, ind]
+COUNT <- COUNT[1:1000, ind]
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT,MIN_GENE_CPM=1, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
 ```
 ### Covariate clustering
@@ -177,9 +177,6 @@ VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION$E, design=DM1$design, we
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
 
-# Add variable of interest back to the residuals
-RESIDUAL.GENE_EXPRESSION = 
-
 # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
 rownames(DESIGN) <- rownames(METADATA)
 residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
@@ -192,25 +189,41 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
 residualSigCovars[["PC_res"]][[1]]$plotData
 ```
 
+```{r varsToAddBack}
+# Add variable of interest back to the residuals
+varsToAddIn = c("TISSUE.DxBM_10.AD", "TISSUE.DxBM_10.Control", "TISSUE.DxBM_22.AD",
+                "TISSUE.DxBM_22.Control", "TISSUE.DxBM_36.AD","TISSUE.DxBM_36.Control")
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
+  VOOM.ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(DM1$design[,varsToAddIn])
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE}
 # Code
-CODE <- File(paste0('./',thisFileName), name = "Differential Expression Analysis MSSM RNASeq", parentId = parentId)
-CODE <- synStore(CODE, used = ALL_USED_IDs, activityName = activityName, executed = thisFile, activityDescription = activityDescription)
+CODE <- Folder(name = "MSBB RNASeq", parentId = parentId)
+CODE <- synStore(CODE)
 
-# Fold change
-FC <- FC[, unique(colnames(FC))]
-write.table(FC, file='./FoldChange_MSSM_RNASeq.tsv', sep='\t', row.names=F, quote=F)
-FC_OBJ <- File('./FoldChange_MSSM_RNASeq.tsv',name = 'Differential Expression Analysis MSSM RNASeq logFC',parentId = parentId)
-FC_OBJ <- synStore(FC_OBJ, used = ALL_USED_IDs, activityName = activityName, executed=CODE$properties$id, activityDescription = activityDescription)
-
-# Pvalue
-PVAL <- PVAL[, unique(colnames(PVAL))]
-write.table(PVAL, file='./AdjustedPval_MSSM_RNASeq.tsv', sep='\t', row.names=F, quote=F)
-PVAL_OBJ <- File('./AdjustedPval_MSSM_RNASeq.tsv',name = 'Differential Expression Analysis MSSM RNASeq adjPval',parentId = parentId)
-PVAL_OBJ <- synStore(PVAL_OBJ, used = ALL_USED_IDs, activityName = activityName, executed=CODE$properties$id, activityDescription = activityDescription)
+# Expression
+expr = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsembleIDs')
+write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
+obj = File('expression.tsv', 
+           name = 'Voom Adjusted Weighted Residual Expression', 
+           parentId = parentId)
+obj = synStore(obj,
+               used = ALL_USED_IDs, 
+               activityName = activityName, 
+               executed = thisFile, 
+               activityDescription = activityDescription)
+  
+# Covariates
+covar = rownameToFirstColumn(COVARIATES, 'SampleId')
+write.table(expr, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
+obj = File('covariates.tsv', 
+           name = 'Covariates', 
+           parentId = parentId)
+obj = synStore(obj,
+               used = ALL_USED_IDs, 
+               activityName = activityName, 
+               executed = thisFile, 
+               activityDescription = activityDescription)
 ```
-|  *Results*           |  *SynapseID*                    |
-  |  -------             |   ---------                     |
-  |  Log fold change     |  `r FC_OBJ$properties$id`       |
-  |  Adjusted pvalues    |  `r PVAL_OBJ$properties$id`     |
