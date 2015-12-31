@@ -1,5 +1,5 @@
 ---
-title: "Differential expression analysis of MSBB microarray data"
+title: "Covariate analysis of MSBB microarray data"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -62,54 +62,17 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE}
 # Synapse parameters
-parentId = 'syn3721177';
-activityName = 'Differential expression analysis';
-activityDescription = 'Differential expression analysis based on image features';
+parentId = 'syn5570248';
+activityName = 'Covariate analysis';
+activityDescription = 'Covariate analysis of MSBB microarrays';
 
-thisFileName <- 'DiffExpAnal_MSSM_MA.Rmd'
+thisFileName <- 'MSSM_Array.Rmd'
 
 # Github link
-thisRepo <- getRepo(repository = "th1vairam/Takeda_contract", ref="branch", refName='master')
-thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('Rmd/',thisFileName))
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
-### Image Analysis
-1. Image features used:
-  * FreeSurfer.thickness..median  
-  * mean.curvature..median         
-  * Volume
-  * travel.depth..median  
-  * FreeSurfer.convexity..sulc...median
-```{r load.data}
-adni.mem.1_5T.3Y <- read.csv('./adni.mem_ranked_1.5T_3Yr_takeda_4_6_15.csv')
-label.name.conversion <- read.csv('./label_names_conversion.csv')
-
-adni.mem.1_5T.3Y <- dplyr::mutate(adni.mem.1_5T.3Y, 
-                                  sig.feature.all = a.ks.pvals <= 0.05 & a.cor.pvals <= 0.05,
-                                  sig.feature.aks = a.ks.pvals <= 0.05,
-                                  feature = sapply(str_split(adni.mem.1_5T.3Y$var.nms,'\\.'),function(x){paste(x[-(length(x))],collapse='.')}),
-                                  region = sapply(str_split(adni.mem.1_5T.3Y$var.nms,'\\.'),function(x){paste(x[(length(x))],collapse='.')}))
-adni.mem.1_5T.3Y <- merge(adni.mem.1_5T.3Y,label.name.conversion, by.x = 'region', by.y = 'Label')
-sig.table.all <- xtabs(sig.feature.all ~ feature + region,data = adni.mem.1_5T.3Y)
-colnames(sig.table.all) <- label.name.conversion[match(label.name.conversion$Label,colnames(sig.table.all)),1]
-
-unique.features <- unique(sapply(str_split(rownames(sig.table.all),'\\.'),function(x){x <- x[x!=""];l <- length(x);ifelse(l>1,paste(x[-(l)],collapse='.'),x)}))
-
-region.ranking <- colSums(sig.table.all[rownames(sig.table.all) %in% c('FreeSurfer.thickness..median','mean.curvature..median','Volume','travel.depth..median','FreeSurfer.convexity..sulc...median'),])
-region.ranking <- sort(region.ranking,decreasing = T)
-region.ranking <- region.ranking[region.ranking!=0]
-
-unique.regions.correlated <- unique(sapply(str_split(names(region.ranking),'-'),function(x){x[[length(x)]]}))
-
-sig.table.aks <- xtabs(sig.feature.aks ~ feature + Label.name, data = adni.mem.1_5T.3Y)
-region.ranking <- colSums(sig.table.aks[rownames(sig.table.aks) %in% c('FreeSurfer.thickness..median','mean.curvature..median','Volume','travel.depth..median','FreeSurfer.convexity..sulc...median'),])
-region.ranking <- sort(region.ranking,decreasing = T)
-region.ranking <- region.ranking[region.ranking!=0]
-unique.regions <- unique(sapply(str_split(names(region.ranking),'-'),function(x){x[[length(x)]]}))
-
-```
-2. Significantly changed regions are: `r unique.regions`
-3. Significantly changed regions that are also correlated with ADNI.MEM are: `r unique.regions.correlated`
-4. Following brain regions were analysed for differential expression between case and control
+Following brain regions were analysed for differential expression between case and control
 
 | Brain Region                        | Synapse ID |
 | ----------------------------------- | ---------- |
@@ -121,286 +84,121 @@ unique.regions <- unique(sapply(str_split(names(region.ranking),'-'),function(x)
 | frontal pole                        | syn3191095 |
 | para hippocampal gyrus              | syn3191109 |
 
-```{r differential.expression}
-# Function to calculate differnetial expression
-differential.expression <- function(EXPR_ID, COV_ID){
-
+```{r covariate analysis}
+# Function to do covariates adjustments
+covariatesAdjustments <- function(exprId, covId){
   # Download expression data
-  EXPR_OBJ <- synGet(EXP_ID)
-  EXPR <- read.table(EXPR_OBJ@filePath,header=T,sep='\t',check.names = F)
-  EXPR <- EXPR[EXPR$Gene.Symbol!='',]
-  rownames(EXPR) <- EXPR$ID
-  ANNOTATIONS <- dplyr::select(EXPR,ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID)
-  EXPR <- dplyr::select(EXPR,-c(ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID))
+  expr <- read.table(synGet(exprId)@filePath, header=T, sep='\t', check.names = F)
+  expr <- expr[expr$Gene.Symbol!='',]
+  rownames(expr) <- expr$ID
+  ANNOTATIONS <- dplyr::select(expr,ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID)
+  expr <- dplyr::select(expr,-c(ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID))
+  rownames(expr) = ANNOTATIONS$ID
 
-  Collapsed.obj <- collapseRows(EXPR,ANNOTATIONS$Gene.Symbol,rownames(EXPR))
-  EXPR <- Collapsed.obj$datETcollapsed
+  Collapsed.obj <- collapseRows(expr,ANNOTATIONS$Gene.Symbol,ANNOTATIONS$ID)
+  expr <- Collapsed.obj$datETcollapsed
 
   # Download covariates data
-  COV_OBJ <- synGet(COV_ID)
-  COV <- fread(COV_OBJ@filePath,sep='\t',header=T,data.table=F)
-  rownames(COV) <- COV$BrainBank
-  COV <- dplyr::select(COV,-(BrainBank))
-  COV <- dplyr::mutate(COV,Dx = ifelse(CDR<1,'Control','AD'))
+  covar <- fread(synGet(covId)@filePath,sep='\t',header=T,data.table=F)
+  BrainBank <- covar$BrainBank
+  covar <- dplyr::select(covar,-(BrainBank))
+  covar <- dplyr::mutate(covar,Dx = ifelse(CDR<1,'Control','AD'))
+  rownames(covar) <- BrainBank
 
   # Get covariates classification
   FactorCovariates <- c('Sex','Race','CDR','Braak','NP1','Dx')
   ContCovariates <- c('PMI','pH','Age','PLQ_Mn','NPrSum','NTrSum')
 
   # Match expression to covariates data
-  ind <- match(colnames(EXPR),rownames(COV))
-  EXPR <- EXPR[,!is.na(ind)]
-  COV <- COV[ind[!is.na(ind)],]
+  ind <- match(colnames(expr),rownames(covar))
+  expr <- expr[,!is.na(ind)]
+  covar <- covar[ind[!is.na(ind)],]
 
   # Convert covariates to factors and numeric variables accordingly
-  COV[,FactorCovariates] <- lapply(COV[,FactorCovariates], factor)  
-  COV[,ContCovariates] <- lapply(COV[,ContCovariates], as.numeric)  
+  covar$Age = gsub('\\+','',covar$Age)
+  covar[,FactorCovariates] <- lapply(covar[,FactorCovariates], as.factor)
+  covar[,ContCovariates] <- lapply(covar[,ContCovariates], as.numeric)  
 
   # Find PC of gene expression and significant covariates that are highly correlated with PCs
-  preAdjustedSigCovars <- runPCAandPlotCorrelations(EXPR, COV,'expression', isKeyPlot=TRUE)
+  covar.tmp = covar
+  covar.tmp[,FactorCovariates] <- lapply(covar.tmp[,FactorCovariates], as.numeric)
+  preAdjustedSigCovars <- runPCAandPlotCorrelations(expr, covar.tmp, 'expression', isKeyPlot=TRUE)
 
   # Plot significant data
   print(preAdjustedSigCovars$PC_res[[2]]$plotData)
   print(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')))
 
   # Get design matrix
-  DESIGN <- getDesignMatrix(COV[,'Dx',drop=F], Intercept = F)
+  DESIGN <- getDesignMatrix(covar[,'Dx',drop=F], Intercept = F)
   print(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')))
 
-#   # Calculate correlation between donors
-#   correlation <- duplicateCorrelation(EXPR, design=DESIGN$design, block=ANNOTATIONS$Gene.Symbol)
-#   print(paste('Consensus correlation is', correlation$consensus.correlation))
-#   
   # Fit linear model
-  FIT <- lmFit(EXPR, design = DESIGN$design)
+  fit <- lmFit(expr, design = DESIGN$design)
 
   # Calculate residuals matrix
-  RESIDUAL <- residuals.MArrayLM(FIT,EXPR)
+  residualFit <- residuals.MArrayLM(fit, expr)
+  residualFit = residualFit + fit$coefficients[,c('DxAD','DxControl')] %*% t(DESIGN$design[,c('DxAD','DxControl')])
 
   # Find correlation between residuals and covariates 
-  postAdjustedSigCovars <- runPCAandPlotCorrelations(RESIDUAL, COV,'residual expression', isKeyPlot=TRUE)
+  postAdjustedSigCovars <- runPCAandPlotCorrelations(residualFit, covar.tmp,'residual expression', isKeyPlot=TRUE)
 
   if (length(postAdjustedSigCovars$significantCovars) != 0)
     print(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')))
 
-  # Make contrast to check differential expression
-  CONT.NAMES <- expand.grid(colnames(DESIGN$design)[2],colnames(DESIGN$design)[1])
-  CONT.NAMES <- apply(CONT.NAMES,1,paste,collapse ='-')
-  
-  CONT <- makeContrasts(contrasts=CONT.NAMES,levels=colnames(FIT$coefficients))
-
-  # Refit contrasts
-  FIT.CONTRAST <- contrasts.fit(FIT,CONT)
-  
-  # Estimate moderated t-statistics
-  FIT.CONTRAST <- eBayes(FIT.CONTRAST)
-  
-  # Obtain all the differential expession combinations
-  DEXP <- list()
-  DEXP$logFC <- data.frame(row.names = rownames(EXPR))
-  DEXP$adj.P.Val <- data.frame(row.names = rownames(EXPR))
-  
-  for (i in colnames(CONT)){
-    tmp <- topTable(FIT.CONTRAST, coef=i, number=dim(EXPR)[1])    
-    DEXP$logFC[,i] <- tmp[rownames(DEXP$logFC),'logFC']
-    DEXP$adj.P.Val[,i] <- tmp[rownames(DEXP$adj.P.Val),'adj.P.Val']
-  }
-  
-  # Get number of significantly differentialy expressed genes with adj.P.Val <= 0.05 and abs(logFC) >= 0
-  DEXP$SIG.EXP <- DEXP$adj.P.Val<=0.05 #& abs(DEXP$logFC) >= 0   
-  DEXP$NUM.SIG.EXP <- colSums(DEXP$SIG.EXP)
-
-  return(list(FIT = FIT, FIT.CONTRAST = FIT.CONTRAST, DEXP = DEXP, ANNOTATIONS = ANNOTATIONS))
+  return(list(EXPR = expr,
+              COVAR = covar,
+              FIT = fit, 
+              RESIDUAL = residualFit, 
+              DESIGN = DESIGN, 
+              ANNOTATIONS = ANNOTATIONS))
 }
 ```
 ### Middle Temporal Analysis
 ```{r middle.temporal, cache=TRUE, fig.height=10, fig.width=15}
 # SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191101'
+EXP_ID <- c('Middle Temporal' = 'syn3191101',
+            'Superior Temporal' = 'syn3191103',
+            'Inferior Temporal' = 'syn3191099',
+            'Superior Parietal Lobule' = 'syn3191119',
+            'Caudal Anterior Cingulate' = 'syn3191107',
+            'Parahippocampal Gyrus' = 'syn3191109',
+            'Frontal Pole' = 'syn3191107')
 COV_ID <- 'syn3205399'  
-ALL_USED_IDs <- unique(c(EXP_ID,COV_ID))
 
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-FC <- DIFF.EXP$DEXP$logFC
-colnames(FC) <- paste('MSSM.MA.MiddleTemporal',colnames(FC),sep='.')
-FC <- rownameToFirstColumn(FC,'hgnc_symbol')
-
-PVAL <- DIFF.EXP$DEXP$adj.P.Val
-colnames(PVAL) <- paste('MSSM.MA.MiddleTemporal',colnames(PVAL),sep='.')
-PVAL <- rownameToFirstColumn(PVAL,'hgnc_symbol')
-```
-### Superior Temporal Analysis 
-```{r superior.temporal, cache=TRUE, fig.height=10, fig.width=15}
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191103'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.SuperiorTemporal',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.SuperiorTemporal',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-```
-### Inferior Temporal Analysis 
-```{r inferior.temporal, cache=TRUE, fig.height=10, fig.width=15}
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191099'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.InferiorTemporal',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.InferiorTemporal',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-```
-### Precuneus Superior Parietal Lobule Analysis
-```{r superior.parietal, cache=TRUE, fig.height=10, fig.width=15}
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191119'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.PrecuneusSuperiorParietal',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.PrecuneusSuperiorParietal',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-```
-### Caudal Anterior Cingulate Analysis
-```{r anterior.cingulate, cache=TRUE, fig.height=10, fig.width=15}
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191107'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.CaudalAnteriorCingulate',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.CaudalAnteriorCingulate',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-```
-### Hippocampal Analysis
-Hippocampal region shows shape changes but not correltated with ADNIMEM
-```{r hippocampal, cache=TRUE, fig.height=10, fig.width=15}
-# Print significant features
-print('Significantly changed image features of hippocampal region are:')
-tmp <- filter(adni.mem.1_5T.3Y, a.ks.pvals <= 0.05 & Label.name %in% grep('hippocampal',adni.mem.1_5T.3Y$Label.name,value=T))
-kable(tmp)
-
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191109'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.Hippocampal',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.Hippocampal',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-```
-### Frontal Pole Analysis
-Frontal pole analysis was performed (since this is one of the regions for which RNASeq is available from MSSM)
-```{r frontal.pole, cache=TRUE, fig.height=10, fig.width=15}
-# SynIDs of expression and covariates matrix
-EXP_ID <- 'syn3191107'
-ALL_USED_IDs <- unique(c(ALL_USED_IDs,EXP_ID))
-
-# Obtain differential expession
-DIFF.EXP <- differential.expression(EXPR_ID,COV_ID)
-
-# Print results
-tmp <- as.data.frame(DIFF.EXP$DEXP$NUM.SIG.EXP)
-colnames(tmp) <- 'Diff exp probes at FDR less than 0.05'
-kable(tmp)
-
-# Get fold change and pvalues
-tmp <- DIFF.EXP$DEXP$logFC
-colnames(tmp) <- paste('MSSM.MA.FrontalPole',colnames(tmp),sep='.')
-FC <- join(FC, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
-
-tmp <- DIFF.EXP$DEXP$adj.P.Val
-colnames(tmp) <- paste('MSSM.MA.FrontalPole',colnames(tmp),sep='.')
-PVAL <- join(PVAL, rownameToFirstColumn(tmp,'hgnc_symbol'), by = 'hgnc_symbol', match = 'all')
+# Obtain adjusted expession
+adjustedExpression <- lapply(EXP_ID, covariatesAdjustments, COV_ID)
 ```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE}
 # Code
-CODE <- File(paste0('./',thisFileName), name = "Differential Expression Analysis MSSM MA", parentId = parentId)
-CODE <- synStore(CODE, used = ALL_USED_IDs, activityName = activityName, executed = thisFile, activityDescription = activityDescription)
-      
-# Fold change
-FC <- FC[, unique(colnames(FC))]
-write.table(FC, file='./FoldChange_MSSM_MA.tsv', sep='\t', row.names=F, quote=F)
-FC_OBJ <- File('./FoldChange_MSSM_MA.tsv',name = 'Differential Expression Analysis MSSM MA logFC',parentId = parentId)
-FC_OBJ <- synStore(FC_OBJ, used = ALL_USED_IDs, activityName = activityName, executed=CODE$properties$id, activityDescription = activityDescription)
-    
-# Pvalue
-PVAL <- PVAL[, unique(colnames(PVAL))]
-write.table(PVAL, file='./AdjustedPval_MSSM_MA.tsv', sep='\t', row.names=F, quote=F)
-PVAL_OBJ <- File('./AdjustedPval_MSSM_MA.tsv',name = 'Differential Expression Analysis MSSM MA adjPval',parentId = parentId)
-PVAL_OBJ <- synStore(PVAL_OBJ, used = ALL_USED_IDs, activityName = activityName, executed=CODE$properties$id, activityDescription = activityDescription)
+CODE <- Folder(name = "MSBB Microarray", parentId ="syn5570248")
+CODE <- synStore(CODE)
+
+ALL.OBJ = mapply(function(exp, regionName, parentId, used, executed, activityName, activityDescription){
+  # Expression
+  expr = rownameToFirstColumn(exp$EXPR, 'hgnc_symbols')
+  write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
+  obj = File('expression.tsv', 
+             name = paste('Expression',regionName), 
+             parentId = parentId)
+  obj = synStore(obj,
+             used = used, 
+             activityName = activityName, 
+             executed = executed, 
+             activityDescription = activityDescription)
+  
+  # Covariates
+  expr = rownameToFirstColumn(exp$COVAR, 'SampleId')
+  write.table(expr, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
+  obj = File('covariates.tsv', 
+             name = paste('Covariates',regionName), 
+             parentId = parentId)
+  obj = synStore(obj,
+             used = used, 
+             activityName = activityName, 
+             executed = executed, 
+             activityDescription = activityDescription)
+},adjustedExpression, names(adjustedExpression), 
+MoreArgs = list(CODE$properties$id, ALL_USED_IDs, thisFile, activityName, activityDescription), 
+SIMPLIFY = F)       
 ```
-|  *Results*           |  *SynapseID*                |
-|  -------             |   ---------                 |
-|  Log fold change     |  `r FC_OBJ$properties$id`       |
-|  Adjusted pvalues    |  `r PVAL_OBJ$properties$id`     |
