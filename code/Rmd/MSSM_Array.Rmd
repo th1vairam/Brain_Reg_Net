@@ -84,9 +84,11 @@ Following brain regions were analysed for differential expression between case a
 | frontal pole                        | syn3191095 |
 | para hippocampal gyrus              | syn3191109 |
 
-```{r covariate analysis}
+```{r fxns}
 # Function to do covariates adjustments
-covariatesAdjustments <- function(exprId, covId){
+covariatesAdjustments <- function(exprId, regionName, covId){
+  inline_expr(paste0('Working on ',regionName), "md")
+  
   # Download expression data
   expr <- read.table(synGet(exprId)@filePath, header=T, sep='\t', check.names = F)
   expr <- expr[expr$Gene.Symbol!='',]
@@ -95,6 +97,7 @@ covariatesAdjustments <- function(exprId, covId){
   expr <- dplyr::select(expr,-c(ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID))
   rownames(expr) = ANNOTATIONS$ID
 
+  # Collapse probe ids to hgnc symbols
   Collapsed.obj <- collapseRows(expr,ANNOTATIONS$Gene.Symbol,ANNOTATIONS$ID)
   expr <- Collapsed.obj$datETcollapsed
 
@@ -126,11 +129,11 @@ covariatesAdjustments <- function(exprId, covId){
 
   # Plot significant data
   print(preAdjustedSigCovars$PC_res[[2]]$plotData)
-  print(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')))
+  inline_expr(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')), "md")
 
   # Get design matrix
   DESIGN <- getDesignMatrix(covar[,'Dx',drop=F], Intercept = F)
-  print(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')))
+  inline_expr(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')), "md")
 
   # Fit linear model
   fit <- lmFit(expr, design = DESIGN$design)
@@ -143,7 +146,7 @@ covariatesAdjustments <- function(exprId, covId){
   postAdjustedSigCovars <- runPCAandPlotCorrelations(residualFit, covar.tmp,'residual expression', isKeyPlot=TRUE)
 
   if (length(postAdjustedSigCovars$significantCovars) != 0)
-    print(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')))
+    inline_expr(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')), "md")
 
   return(list(EXPR = expr,
               COVAR = covar,
@@ -153,8 +156,8 @@ covariatesAdjustments <- function(exprId, covId){
               ANNOTATIONS = ANNOTATIONS))
 }
 ```
-### Extract adjust covariates
-```{r middle.temporal, cache=TRUE, fig.height=10, fig.width=15}
+### Extract expression data and adjust covariates 
+```{r covariate.analysis, cache=TRUE, fig.height=10, fig.width=15}
 # SynIDs of expression and covariates matrix
 EXP_ID <- c('Middle Temporal' = 'syn3191101',
             'Superior Temporal' = 'syn3191103',
@@ -166,7 +169,7 @@ EXP_ID <- c('Middle Temporal' = 'syn3191101',
 COV_ID <- 'syn3205399'  
 
 # Obtain adjusted expession
-adjustedExpression <- lapply(EXP_ID, covariatesAdjustments, COV_ID)
+adjustedExpression <- mapply(covariatesAdjustments, EXP_ID, names(EXP_ID), MoreArgs= list(COV_ID), SIMPLIFY=T)
 ```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE}
