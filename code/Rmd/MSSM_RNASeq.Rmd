@@ -125,6 +125,7 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 
 COVARIATES <- dplyr::mutate(COVARIATES, TISSUE.Dx = paste(TISSUE,Dx,sep='.'))
 COVARIATES$TISSUE.Dx <- factor(COVARIATES$TISSUE.Dx)
+rownames(COVARIATES) <- rownames(METADATA)
 ```
 Covariate correlation
 ```{r covariates.correlation, fig.width=10, fig.height=10}
@@ -188,7 +189,8 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
 ```{r residualSigCovars.manual, fig.width=15, fig.height=8}
 residualSigCovars[["PC_res"]][[1]]$plotData
 ```
-
+### Residual calculation
+Calculate weighted residuals and add back "TISSUE.Dx" to the residuals
 ```{r varsToAddBack}
 # Add variable of interest back to the residuals
 varsToAddIn = c("TISSUE.DxBM_10.AD", "TISSUE.DxBM_10.Control", "TISSUE.DxBM_22.AD",
@@ -198,7 +200,7 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 ```
 
 ### Store files in synapse
-```{r synapse.store, include=FALSE, eval=TRUE}
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
 CODE <- Folder(name = "MSBB RNASeq", parentId = parentId)
 CODE <- synStore(CODE)
@@ -207,7 +209,7 @@ CODE <- synStore(CODE)
 expr = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsembleIDs')
 write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('expression.tsv', 
-           name = 'Voom Adjusted Weighted Residual Expression', 
+           name = 'Voom Adjusted Weighted Residual Expression (Tissue.Dx added)', 
            parentId = CODE$properties$id)
 obj = synStore(obj,
                used = ALL_USED_IDs, 
