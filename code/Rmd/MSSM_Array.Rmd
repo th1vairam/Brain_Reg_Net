@@ -87,7 +87,7 @@ Following brain regions were analysed for differential expression between case a
 ```{r fxns}
 # Function to do covariates adjustments
 covariatesAdjustments <- function(exprId, regionName, covId){
-  inline_expr(paste0('Working on ',regionName), "md")
+  writeLines(paste0('Working on ',regionName))
   
   # Download expression data
   expr <- read.table(synGet(exprId)@filePath, header=T, sep='\t', check.names = F)
@@ -129,11 +129,11 @@ covariatesAdjustments <- function(exprId, regionName, covId){
 
   # Plot significant data
   print(preAdjustedSigCovars$PC_res[[2]]$plotData)
-  inline_expr(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')), "md")
+  writeLines(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')))
 
   # Get design matrix
   DESIGN <- getDesignMatrix(covar[,'Dx',drop=F], Intercept = F)
-  inline_expr(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')), "md")
+  writeLines(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')))
 
   # Fit linear model
   fit <- lmFit(expr, design = DESIGN$design)
@@ -146,7 +146,7 @@ covariatesAdjustments <- function(exprId, regionName, covId){
   postAdjustedSigCovars <- runPCAandPlotCorrelations(residualFit, covar.tmp,'residual expression', isKeyPlot=TRUE)
 
   if (length(postAdjustedSigCovars$significantCovars) != 0)
-    inline_expr(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')), "md")
+    writeLines(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')))
 
   return(list(EXPR = expr,
               COVAR = covar,
@@ -157,7 +157,7 @@ covariatesAdjustments <- function(exprId, regionName, covId){
 }
 ```
 ### Extract expression data and adjust covariates 
-```{r covariate.analysis, cache=TRUE, fig.height=10, fig.width=15}
+```{r covariate.analysis, cache=TRUE, fig.height=10, fig.width=15, echo=FALSE, results='asis'}
 # SynIDs of expression and covariates matrix
 EXP_ID <- c('Middle Temporal' = 'syn3191101',
             'Superior Temporal' = 'syn3191103',
@@ -169,7 +169,7 @@ EXP_ID <- c('Middle Temporal' = 'syn3191101',
 COV_ID <- 'syn3205399'  
 
 # Obtain adjusted expession
-adjustedExpression <- mapply(covariatesAdjustments, EXP_ID, names(EXP_ID), MoreArgs= list(COV_ID), SIMPLIFY=T)
+adjustedExpression <- mapply(covariatesAdjustments, EXP_ID, names(EXP_ID), MoreArgs= list(COV_ID), SIMPLIFY=F)
 ```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE}
