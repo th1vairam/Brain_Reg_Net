@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq.Rmd",
                                  parentId ="syn5570291",
-                                 entityName = 'ROSMAP RNASeq')
+                                 entityName = 'ROSMAP RNASeq (Based on cogdx)')
 ```
 
 
@@ -247,9 +247,9 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
 ### Store files in synapse
-```{r synapse.store, include=FALSE, eval=TRUE}
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "Differential Expression Analysis ROSMAP RNASeq (Based on cogdx)", parentId = parentId)
+CODE <- Folder(name = "ROSMAP RNASeq (Based on cogdx)", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
@@ -262,7 +262,7 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 # Store covariates
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('expression.tsv', name = 'FPKM Normalised Adjusted Residual Expression (cogdx added)', parentId = CODE$properties$id)
-EXP_OBJ = synStore(EXPRP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
