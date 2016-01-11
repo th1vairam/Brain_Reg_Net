@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of UFL-Mayo-ISB RNASeq"
+title: "Covariate analysis of UFL-Mayo-ISB RNASeq from cerebellum"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -296,7 +296,7 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 ```{r addVarsBack}
 varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic Aging")
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
-  VOOM.ADJUSTED.FIT$coefficients[,varsToAddBackIn] %*% t(data.matrix(DM1$design[,varsToAddBackIn]))
+  t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(VOOM.ADJUSTED.FIT$coefficients[,varsToAddBackIn]))
 RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id') 
 ```
 
