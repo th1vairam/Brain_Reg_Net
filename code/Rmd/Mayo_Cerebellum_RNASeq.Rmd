@@ -93,9 +93,9 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA <- METADATA %>%
-  dplyr::filter(!(SampleID %in% c("742_CER")))
+  dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","1147_CER")))
 ```
-
+Following five samples were considered outliers and removed 742_CER, 11386_CER, 11311_CER, 1923_CER, 1147_CER
 ```{r preprocess.data1,cache=TRUE}
 indToRetain = intersect(METADATA$SampleID, colnames(COUNT))
 
@@ -167,9 +167,19 @@ plotdata <- left_join(plotdata, METADATA, by="SampleID")
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") 
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
+
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(VOOM.GENE_EXPRESSION$E)), method = "average")
+tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
+
+WGCNA::plotDendroAndColors(sampleTrees, 
+                    labels2colors(cbind(tree,COVARIATES)),
+                    groupLabels = c('Cluster',colnames(COVARIATES)))
+collectGarbage()
 ```
+
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, results='asis', echo=FALSE}
