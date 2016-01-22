@@ -118,11 +118,12 @@ METADATA <- METADATA %>%
   filter(Sampleid %in% colnames(COUNT)) %>%
   filter(!is.na(cogdx)) %>%
   filter(!is.na(RINcontinuous)) %>%
-  filter(!is.na(pmi))  
+  filter(!is.na(pmi)) %>%
+  filter(!(Sampleid %in% c('380_120503_1')))
 ```
-
+Sample id 380\_120503\_1 is considered as outlier and removed
 ```{r preprocess.data1,cache=TRUE}
-indToRetain = intersect(METADATA$Sampleid, colnames(EXPR))
+indToRetain = intersect(METADATA$Sampleid, colnames(COUNT))
 
 EXPR <- COUNT; #merge(COUNT1,COUNT2,by = 'gene_id',all=T)
 rownames(EXPR) <- EXPR$gene_id
@@ -167,6 +168,37 @@ EXPR <- EXPR[(rowSums(EXPR>0)/dim(EXPR)[2] >= 0.5),]
 EXPR <- log2(EXPR+1e-3)
 ```
 `r dim(EXPR)[1]` number of genes and `r dim(EXPR)[2]` number of samples are considered for the analysis
+
+### Outliers detection
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(EXPR, scale.=T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(Sampleid=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, METADATA)
+  
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=factor(Batch), shape=as.factor(cogdx), size=as.numeric(age_death)))
+p <- p + theme_bw() + theme(legend.position="top") 
+p <- p + geom_text(aes(label= Sampleid), size=4, hjust=1)
+p
+
+COVARIATES.tmp = data.matrix(COVARIATES)
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(EXPR)))
+plotDendroAndColors(tree, 
+                    colors = labels2colors(COVARIATES.tmp), 
+                    dendroLabels = FALSE, 
+                    abHeight = 0.80, 
+                    main = "Sample dendrogram",
+                    groupLabels = colnames(COVARIATES.tmp))
+```
 
 ### Significant Covariates
 Correlation between pca of normalised mRNA expression and covariates
@@ -215,7 +247,7 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 
 ```{r addVarsBack}
 varsToAddBackIn <- c("cogdx1",  "cogdx2", "cogdx3", "cogdx4", "cogdx5", "cogdx6")
-RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + (FIT$coefficients[,varsToAddBackIn] %*% t(data.matrix(DESIGN[,varsToAddBackIn])))
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + t(data.matrix(DESIGN[,varsToAddBackIn]) %*% t(FIT$coefficients[,varsToAddBackIn]))
 RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsemblGeneID') %>%
   tidyr::separate(col = EnsemblGeneID, into = c('ensembl_gene_id','position'), sep = '\\.')
 ```
