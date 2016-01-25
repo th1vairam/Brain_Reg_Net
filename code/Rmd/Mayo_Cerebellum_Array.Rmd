@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of UFL-Mayo-ISB temporal cortex arrays"
+title: "Covariate analysis of UFL-Mayo-ISB cerebellum arrays"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -10,9 +10,9 @@ library(synapseClient)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./Mayo_TemporalCortex_Array.Rmd",
+knit2synapse::knitToFolderEntity(file = "./Mayo_Cerebellum_Array.Rmd",
                                  parentId ="syn5570325",
-                                 entityName = 'UFL_Mayo_ISB Temporal Cortex Microarray')
+                                 entityName = 'UFL_Mayo_ISB Cerebellum Microarray')
 ```
 
 
@@ -64,9 +64,9 @@ knitr::opts_chunk$set(
 # Synapse parameters
 parentId = 'syn5570325';
 activityName = 'Covariate analysis';
-activityDescription = 'Covariate analysis of UFL_Mayo_ISB temporal cortex array data';
+activityDescription = 'Covariate analysis of UFL_Mayo_ISB Cerebellum array data';
 
-thisFileName <- 'Mayo_TemporalCortex_Array.Rmd'
+thisFileName <- 'Mayo_Cerebellum_Array.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
@@ -76,13 +76,13 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Download expression data
-EXPR_ID <- 'syn3617054';
+EXPR_ID <- 'syn3256501';
 ALL_USED_IDs <- EXPR_ID
 EXPR_OBJ <- synGet(EXPR_ID)
 EXPR <- fread(EXPR_OBJ@filePath,sep=',',data.table=F)
 
 # Get clinical metadata
-METADATA_ID <- 'syn3617056'
+METADATA_ID <- 'syn3256502'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
 METADATA_OBJ <- synGet(METADATA_ID)
 METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=F)
@@ -98,14 +98,16 @@ rownames(METADATA) <-  METADATA$IID
 METADATA = METADATA[colnames(EXPR),]
 
 METADATA = dplyr::mutate(METADATA,
+                         plate0 = 6*plate0,
+                         plate1 = 1*plate1,
                          plate2 = 2*plate2,
                          plate3 = 3*plate3,
                          plate4 = 4*plate4,
-                         plate5 = 5*plate5,
-                         plate = plate2+plate3+plate4+plate5)
-METADATA$plate[METADATA$plate == 0] = 1
+                         plate = plate0+plate1+plate2+plate3+plate4)
+METADATA$plate[METADATA$plate == 0] = 5
+METADATA$plate[METADATA$plate == 6] = 0
 ```
-Temporal cortex of `r dim(EXPR)[2]` subjects from the Mayo cohorts were obtained from [AMP-AD portal](`r EXPR_ID`)
+Cerebellum of `r dim(EXPR)[2]` subjects from the Mayo cohorts were obtained from [AMP-AD portal](`r EXPR_ID`)
 
 ### Covariate clustering
 Determine relationship between covariates. 
@@ -153,8 +155,8 @@ COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 tree = hclust(as.dist(t(EXPR)))
 plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
-                    dendroLabels = FALSE,
-                    abHeight = 0.80, 
+#                     dendroLabels = FALSE,
+                    abHeight = 10, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
 ```
@@ -292,7 +294,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(Illumina2HGNC, RESIDUAL.GENE_EXPRESSION) %
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = 'UFL_Mayo_ISB Temporal Cortex Microarray', parentId = parentId)
+CODE <- Folder(name = 'UFL_Mayo_ISB Cerebellum Microarray', parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
