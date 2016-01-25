@@ -93,10 +93,10 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA <- METADATA %>%
-  dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","1147_CER")))
+  dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
-Following five samples were considered outliers and removed 742_CER, 11386_CER, 11311_CER, 1923_CER, 1147_CER
-```{r preprocess.data1,cache=TRUE}
+Following five samples were considered outliers and removed 742\_CER, 11386\_CER, 11311\_CER, 1923\_CER, 11477\_CER
+```{r preprocess.data1}
 indToRetain = intersect(METADATA$SampleID, colnames(COUNT))
 
 EXPR <- COUNT;
@@ -167,7 +167,7 @@ plotdata <- left_join(plotdata, METADATA, by="SampleID")
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") 
-p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 
 # Tree based clustering
@@ -178,6 +178,7 @@ WGCNA::plotDendroAndColors(sampleTrees,
                     labels2colors(cbind(tree,COVARIATES)),
                     groupLabels = c('Cluster',colnames(COVARIATES)))
 collectGarbage()
+dev.off()
 ```
 
 ### Significant Covariates
@@ -279,7 +280,7 @@ VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION$E,
 ```
 ### Sanity Check
 Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
-```{r calculate.residuals, include=FALSE}
+```{r calculate.residuals, include=FALSE, results = 'asis'}
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
                                               VOOM.ADJUSTED.GENE_EXPRESSION$E)
@@ -293,6 +294,7 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
 ```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
+Add "Diagnosis"" back to the residuals
 ```{r addVarsBack}
 varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic Aging")
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
@@ -300,10 +302,39 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id') 
 ```
 
+### Clustering residual gene expression
+```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, METADATA, by="SampleID")
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
+p <- p + theme_bw() + theme(legend.position="top") 
+# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p
+
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
+tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
+
+WGCNA::plotDendroAndColors(sampleTrees, 
+                           labels2colors(cbind(tree,COVARIATES)),
+                           groupLabels = c('Cluster',colnames(COVARIATES)))
+collectGarbage()
+dev.off()
+```
+
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
-tmp = as.data.frame(summary(COVARIATES$Diagnosis))
-colnames(tmp) = 'No. of samples'
+tmp = data.frame(summary(COVARIATES$Diagnosis))
+colnames(tmp) = "No. of samples"
 kable(tmp)
 ```
 
