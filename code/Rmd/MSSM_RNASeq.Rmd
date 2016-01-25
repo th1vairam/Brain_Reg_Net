@@ -172,6 +172,7 @@ WGCNA::plotDendroAndColors(tree,
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
+dev.off()
 ```
 
 
@@ -188,7 +189,7 @@ adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$s
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
 ```{r preAdjustedSigCovars.NULL, fig.width=15, fig.height=8}
-preAdjustedSigCovars[["PC_res"]][[1]]$plotData
+preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (custom/manual design)
 Re-perform normalisation with custom design matrix (manually with "TISSUE.Dx","SEX","RACE","PMI" as fixed effects and Donor as random effects)
@@ -221,7 +222,7 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
 ```
 
 ```{r residualSigCovars.manual, fig.width=15, fig.height=8}
-residualSigCovars[["PC_res"]][[1]]$plotData
+residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Residual calculation
 Calculate weighted residuals and add back "TISSUE.Dx" to the residuals
@@ -265,6 +266,13 @@ WGCNA::plotDendroAndColors(tree,
                            groupLabels = colnames(COVARIATES.tmp))
 ```
 
+```{r summary, results='asis', echo=FALSE}
+writeLines('Number of samples in each category are')
+tmp = as.data.frame(summary(COVARIATES$TISSUE.Dx))
+colnames(tmp) = 'No. of samples'
+kable(tmp)
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
@@ -277,7 +285,7 @@ write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('expression.tsv', 
            name = 'Voom Adjusted Weighted Residual Expression (Tissue.Dx added)', 
            parentId = CODE$properties$id)
-obj = synStore(obj,
+expr_obj = synStore(obj,
                used = ALL_USED_IDs, 
                activityName = activityName, 
                executed = thisFile, 
@@ -289,9 +297,13 @@ write.table(covar, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('covariates.tsv', 
            name = 'Covariates', 
            parentId = CODE$properties$id)
-obj = synStore(obj,
+covar_obj = synStore(obj,
                used = ALL_USED_IDs, 
                activityName = activityName, 
                executed = thisFile, 
                activityDescription = activityDescription)
 ```
+|  *Results*            |  *SynapseID*                    |
+|  -------              |   ---------                     |
+|  Covariates           |  `r covar_obj$properties$id`    |
+|  Residual Expression  |  `r expr_obj$properties$id`     |
