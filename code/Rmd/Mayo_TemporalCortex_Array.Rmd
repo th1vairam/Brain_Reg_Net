@@ -41,7 +41,7 @@ library(biomaRt)
 library(rGithubClient)
 
 ## Requires ggdendro
-devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+devtools::source_url("http://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 
 synapseLogin()
 
