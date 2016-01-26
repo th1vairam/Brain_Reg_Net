@@ -289,6 +289,34 @@ Illumina2HGNC <- getBM(attributes = c("illumina_humanht_12_v4", "hgnc_symbol"),
 RESIDUAL.GENE_EXPRESSION <- left_join(Illumina2HGNC, RESIDUAL.GENE_EXPRESSION) %>%
   dplyr::select(illumina_humanht_12_v4, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Get design matrix
+DM = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F], Intercept = F)
+
+# Linear model with new design
+FIT = lmFit(EXPR, design=DM$design)
+
+# Fit contrast
+contrast = makeContrasts(contrasts="Dxn0-Dxn1", levels = colnames(FIT$coefficients))
+FIT = contrasts.fit(FIT, contrasts=contrast)
+FIT = eBayes(FIT)
+
+# Get differnetial expression
+DE = topTable(FIT, coef=1, number = dim(EXPR)[1])
+DE = rownameToFirstColumn(DE, 'illumina_humanht_12_v4') %>%
+  left_join(Illumina2HGNC)
+p <- ggplot(DE, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p
+
+tmp = DE %>% dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(hgnc_symbol) %>%
+  unlist %>% unique
+kable(data.frame(Comparison = "Control_vs_AD",
+           nDiffExp = length(tmp),
+           DiffExpGenes = paste(tmp, collapse = ',')))  
+```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
@@ -307,8 +335,15 @@ write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.n
 EXP_OBJ = File('expression.tsv', name = 'Voom Adjusted Residual Expression (Dxn added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
+
+# Store differential expression results
+write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
 |  -------              |   ---------                     |
 |  Covariates           |  `r COV_OBJ$properties$id`      |
 |  Residual Expression  |  `r EXP_OBJ$properties$id`      |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
