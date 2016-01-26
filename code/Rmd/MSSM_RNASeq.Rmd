@@ -57,7 +57,7 @@ knitr::opts_chunk$set(
   message=FALSE,
   error = FALSE,
   tidy = FALSE,
-  cache = FALSE)
+  cache = TRUE)
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
