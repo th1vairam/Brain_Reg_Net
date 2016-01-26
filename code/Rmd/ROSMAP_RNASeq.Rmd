@@ -213,7 +213,7 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR, DESIGN,'non-normalized', 
 adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$significantCovars)
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
-```{r preAdjustedSigCovars.NULL.ALL, fig.width=10, fig.height=6}
+```{r preAdjustedSigCovars.NULL.ALL, fig.width=15, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (custom design)
