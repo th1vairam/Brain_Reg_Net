@@ -36,6 +36,7 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
+library(ggplot2)
 
 ## Needs the dev branch
 library(rGithubClient)
@@ -218,7 +219,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ### Normalisation (custom design)
 Fitting a linear model with cogdx, Batch, RINcontinuous, and pmi 
 ```{r iterative.normalisation, cache=TRUE, results='asis', echo=FALSE}
-postAdjustCovars <- c('cogdx','Batch',"RINcontinuous","pmi")
+postAdjustCovars <- c('cogdx', 'Batch', 'RINcontinuous', 'pmi')
 
 writeLines(paste('Using following covariates in the final model',paste(postAdjustCovars,collapse=','),'as fixed effects',sep=' '))
 
@@ -296,7 +297,7 @@ Interpretation of cogdx scores
 5.  AD, Alzheimer's disease AND another cause of CI (NINCDS POSS AD)
 6.  Other dementia. Other primary cause of dementia
 
-```{r get.gene.symbols, cache=TRUE}
+```{r get.gene.symbols, cache=TRUE, eval=F}
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
 
@@ -306,6 +307,41 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
                        mart = mart)
 RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %>%
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Fit contrast
+contrast = makeContrasts(contrasts=c("cogdx1-cogdx2",
+                                     "cogdx1-cogdx4",
+                                     "cogdx2-cogdx4"), 
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = list()
+p = list()
+for (i in 1:3){
+  DE[[i]] = topTable(FIT.CONTR, coef=i, number = dim(EXPR)[1])
+  DE[[i]] = rownameToFirstColumn(DE[[i]], "ensembl_gene_id") 
+  p[[i]] <- ggplot(DE[[i]], aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+  p[[i]] <- p[[i]] + ggtitle(colnames(contrast)[i])# + xlim(c(-1.5,1.5)) + ylim(c(0,6))
+  p[[i]] <- p[[i]] + geom_hline(yintercept = -log10(0.05), color = 'red')
+}
+multiplot(plotlist=p, cols = 3)
+names(DE) = colnames(contrast)
+
+DE = DE %>% plyr::ldply(.id = 'Comparison')
+
+tmp = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(Comparison) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
+            DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+
+kable(tmp)
 ```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
