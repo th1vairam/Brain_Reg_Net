@@ -265,11 +265,58 @@ WGCNA::plotDendroAndColors(tree,
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
 ```
+```{r get.gene.symbols, cache=TRUE}
+# Define biomart object
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
 
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                       filters = "ensembl_gene_id", values = rownames(RESIDUAL.GENE_EXPRESSION),
+                       mart = mart)
+RESIDUAL.GENE_EXPRESSION <- left_join(rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, "ensembl_gene_id"),
+                                      Ensemble2HGNC) %>%
+  dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+```
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
 tmp = as.data.frame(summary(COVARIATES$TISSUE.Dx))
 colnames(tmp) = 'No. of samples'
+kable(tmp)
+```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Fit contrast
+contrast = makeContrasts(contrasts=c("TISSUE.DxBM_10.Control-TISSUE.DxBM_10.AD",
+                                     "TISSUE.DxBM_22.Control-TISSUE.DxBM_22.AD",
+                                     "TISSUE.DxBM_36.Control-TISSUE.DxBM_36.AD"), 
+                         levels = colnames(VOOM.ADJUSTED.FIT$coefficients))
+FIT = contrasts.fit(VOOM.ADJUSTED.FIT, contrasts=contrast)
+FIT = eBayes(FIT)
+
+# Get differnetial expression
+DE = list()
+p = list()
+for (i in 1:3){
+  DE[[i]] = topTable(FIT, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1])
+  DE[[i]] = rownameToFirstColumn(DE[[i]], "ensembl_gene_id") %>%
+    left_join(Ensemble2HGNC)
+  p[[i]] <- ggplot(DE[[i]], aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+  p[[i]] <- p[[i]] + ggtitle(gsub('TISSUE.Dx','',colnames(contrast)[i])) + xlim(c(-1.5,1.5)) + ylim(c(0,6))
+  p[[i]] <- p[[i]] + geom_hline(yintercept = -log10(0.05), color = 'red')
+}
+multiplot(plotlist=p, cols = 3)
+names(DE) = gsub('TISSUE.Dx','',colnames(contrast))
+
+DE = DE %>% ldply(.id = 'Comparison')
+
+tmp = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(Comparison, hgnc_symbol) %>%
+  group_by(Comparison) %>%
+  summarise(nDiffExp = length(unique(hgnc_symbol)), 
+            DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+
 kable(tmp)
 ```
 
@@ -302,8 +349,15 @@ covar_obj = synStore(obj,
                activityName = activityName, 
                executed = thisFile, 
                activityDescription = activityDescription)
+
+# Store differential expression results
+write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
 |  -------              |   ---------                     |
 |  Covariates           |  `r covar_obj$properties$id`    |
 |  Residual Expression  |  `r expr_obj$properties$id`     |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
