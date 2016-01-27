@@ -89,9 +89,10 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 ```
 
 ### Data preprocessing
-```{r preprocess.data,cache=TRUE, echo=TRUE}
+```{r preprocess.data, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
+METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
 METADATA <- METADATA %>%
   dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
@@ -114,7 +115,7 @@ Dorsolateral prefrontal cortex of `r dim(EXPR)[2]` subjects from the Mayo cohort
 
 ### Covariate clustering
 Determine relationship between covariates. 
-```{r covariates.clustering, cache=TRUE}
+```{r covariates.clustering}
 FactorCovariates <- c("Source", "Diagnosis",  "Sex",  "ApoE", "Flowcell")
 ContCovariates <- c("RIN", "AgeAtDeath")
   
@@ -201,7 +202,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative)
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
-```{r iterative.adjusted.voom.normalisation, cache=TRUE, results='asis', echo=FALSE}
+```{r iterative.adjusted.voom.normalisation, results='asis', echo=FALSE}
 postAdjustCovars = c('Diagnosis')
  
 # Assign residual covariates
@@ -296,7 +297,7 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 Add "Diagnosis"" back to the residuals
 ```{r addVarsBack}
-varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic Aging")
+varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic_Aging")
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
   t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(VOOM.ADJUSTED.FIT$coefficients[,varsToAddBackIn]))
 RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id') 
@@ -337,7 +338,6 @@ tmp = data.frame(summary(COVARIATES$Diagnosis))
 colnames(tmp) = "No. of samples"
 kable(tmp)
 ```
-
 ```{r get.gene.symbols, cache=TRUE}
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
@@ -348,6 +348,42 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
                        mart = mart)
 RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %>%
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Fit contrast
+contrast = makeContrasts(contrasts=c("DiagnosisControl-DiagnosisAD",
+                                     "DiagnosisControl-DiagnosisPSP",
+                                     "DiagnosisControl-DiagnosisPathologic_Aging",
+                                     "DiagnosisPathologic_Aging-DiagnosisPSP",
+                                     "DiagnosisPathologic_Aging-DiagnosisAD",
+                                     "DiagnosisPSP-DiagnosisAD"), 
+                         levels = colnames(VOOM.ADJUSTED.FIT$coefficients))
+FIT.CONTR = contrasts.fit(VOOM.ADJUSTED.FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = list()
+p = list()
+for (i in 1:6){
+  DE[[i]] = topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1])
+  DE[[i]] = rownameToFirstColumn(DE[[i]], 'ensembl_gene_id') %>%
+    left_join(Ensemble2HGNC)
+  p[[i]] <- ggplot(DE[[i]], aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+  p[[i]] <- p[[i]] + geom_hline(yintercept = -log10(0.05), color = 'red') 
+  p[[i]] <- p[[i]] + ggtitle(gsub('Diagnosis','',colnames(contrast)[i]))
+}
+multiplot(plotlist=p, cols = 3)
+names(DE) = gsub('Diagnosis','',colnames(contrast))
+
+DE = ldply(DE, .id = 'Comparison')
+tmp = DE %>% 
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  group_by(Comparison) %>%
+  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)),
+                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+kable(tmp)
 ```
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
@@ -367,8 +403,15 @@ write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.n
 EXP_OBJ = File('expression.tsv', name = 'Voom Adjusted Residual Expression (Diagnosis added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
+
+# Store differential expression results
+write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
 |  -------              |   ---------                     |
 |  Covariates           |  `r COV_OBJ$properties$id`      |
 |  Residual Expression  |  `r EXP_OBJ$properties$id`      |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |

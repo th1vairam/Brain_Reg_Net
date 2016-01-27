@@ -60,7 +60,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE}
 # Synapse parameters
 parentId = 'syn5570325';
 activityName = 'Covariate analysis';
@@ -89,7 +89,7 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 ```
 
 ### Data preprocessing
-```{r preprocess.data,cache=TRUE, echo=TRUE}
+```{r preprocess.data,cache=FALSE, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
@@ -97,7 +97,7 @@ METADATA <- METADATA %>%
   dplyr::filter(!(ID %in% c("1923_TCX")))
 ```
 Following five samples were considered outliers and removed 1923\_TCX
-```{r preprocess.data1,cache=TRUE}
+```{r preprocess.data1}
 indToRetain = intersect(METADATA$ID, colnames(COUNT))
 
 EXPR <- COUNT;
@@ -115,7 +115,7 @@ Dorsolateral prefrontal cortex of `r dim(EXPR)[2]` subjects from the Mayo cohort
 
 ### Covariate clustering
 Determine relationship between covariates. 
-```{r covariates.clustering, cache=TRUE}
+```{r covariates.clustering}
 FactorCovariates <- c("Source", "Diagnosis",  "FLOWCELL")
 ContCovariates <- c("RIN", "AgeAtDeath")
   
@@ -201,7 +201,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative)
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
-```{r iterative.adjusted.voom.normalisation, cache=TRUE, results='asis', echo=FALSE}
+```{r iterative.adjusted.voom.normalisation, results='asis', echo=FALSE}
 postAdjustCovars = c('Diagnosis')
  
 # Assign residual covariates
@@ -339,7 +339,7 @@ colnames(tmp) = "No. of samples"
 kable(tmp)
 ```
 
-```{r get.gene.symbols, cache=TRUE}
+```{r get.gene.symbols}
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
 
