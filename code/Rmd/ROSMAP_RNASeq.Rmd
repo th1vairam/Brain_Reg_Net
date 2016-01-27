@@ -213,7 +213,7 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR, DESIGN,'non-normalized', 
 adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$significantCovars)
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
-```{r preAdjustedSigCovars.NULL.ALL, fig.width=10, fig.height=6}
+```{r preAdjustedSigCovars.NULL.ALL, fig.width=15, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (custom design)
@@ -297,7 +297,7 @@ Interpretation of cogdx scores
 5.  AD, Alzheimer's disease AND another cause of CI (NINCDS POSS AD)
 6.  Other dementia. Other primary cause of dementia
 
-```{r get.gene.symbols, cache=TRUE, eval=F}
+```{r get.gene.symbols, cache=TRUE, eval=T}
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
 
@@ -310,7 +310,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp}
+```{r diffExp, fig.height=8, fig.width=16}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("cogdx1-cogdx2",
                                      "cogdx1-cogdx4",
@@ -336,7 +336,7 @@ DE = DE %>% plyr::ldply(.id = 'Comparison')
 
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(Comparison) %>%
+  dplyr::select(Comparison, hgnc_symbol) %>%
   group_by(Comparison) %>%
   dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
             DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
@@ -362,8 +362,14 @@ EXP_OBJ = File('expression.tsv', name = 'FPKM Normalised Adjusted Residual Expre
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
+# Store differential expression results
+write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
 |  -------              |   ---------                     |
 |  Covariates           |  `r COV_OBJ$properties$id`      |
 |  Residual Expression  |  `r EXP_OBJ$properties$id`      |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
