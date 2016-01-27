@@ -361,6 +361,7 @@ write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.n
 EXP_OBJ = File('expression.tsv', name = 'FPKM Normalised Adjusted Residual Expression (cogdx added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
+
 ```
 |  *Results*            |  *SynapseID*                    |
 |  -------              |   ---------                     |

@@ -175,7 +175,6 @@ WGCNA::plotDendroAndColors(tree,
 dev.off()
 ```
 
-
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
@@ -188,7 +187,7 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, DESIGN,
 adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$significantCovars)
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
-```{r preAdjustedSigCovars.NULL, fig.width=15, fig.height=8}
+```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (custom/manual design)
@@ -221,7 +220,7 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
                                               isKeyPlot=TRUE)
 ```
 
-```{r residualSigCovars.manual, fig.width=15, fig.height=8}
+```{r residualSigCovars.manual, fig.width=20, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Residual calculation
@@ -285,7 +284,7 @@ kable(tmp)
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp}
+```{r diffExp, fig.height=10, fig.width=18}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("TISSUE.DxBM_10.Control-TISSUE.DxBM_10.AD",
                                      "TISSUE.DxBM_22.Control-TISSUE.DxBM_22.AD",
