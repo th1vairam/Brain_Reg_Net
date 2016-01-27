@@ -92,6 +92,7 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 ```{r preprocess.data,cache=TRUE, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
+METADATA$Diagnosis = gsub("Pathologic Aging", "Pathologic_Aging", METADATA$Diagnosis)
 METADATA <- METADATA %>%
   dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
@@ -296,7 +297,7 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 Add "Diagnosis"" back to the residuals
 ```{r addVarsBack}
-varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic Aging")
+varsToAddBackIn <- c("DiagnosisAD", "DiagnosisControl", "DiagnosisPSP", "DiagnosisPathologic_Aging")
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
   t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(VOOM.ADJUSTED.FIT$coefficients[,varsToAddBackIn]))
 RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id') 
@@ -349,6 +350,36 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
 RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %>%
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Fit contrast
+contrast = makeContrasts(contrasts=c("DiagnosisControl-DiagnosisAD",
+                                     "DiagnosisControl-DiagnosisPathologic_Aging",
+                                     "DiagnosisControl-DiagnosisPSP",
+                                     "DiagnosisPathologic_Aging-DiagnosisAD",
+                                     "DiagnosisPathologic_Aging-DiagnosisAD",
+                                     "DiagnosisPSP-DiagnosisAD"),
+                         levels = colnames(VOOM.ADJUSTED.FIT$coefficients))
+FIT.CONTR = contrasts.fit(VOOM.ADJUSTED.FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = topTable(FIT.CONTR, coef=1, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1])
+DE = rownameToFirstColumn(DE, 'ensembl_gene_id') %>%
+  left_join(Ensemble2HGNC)
+p <- ggplot(DE, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p <- p + geom_hline(yintercept = -log10(0.05))
+p
+
+tmp = DE %>% dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(hgnc_symbol) %>%
+  unlist %>% unique
+kable(data.frame(Comparison = "Control_vs_AD",
+           nDiffExp = length(tmp),
+           DiffExpGenes = paste(tmp, collapse = ',')))  
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code

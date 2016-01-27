@@ -29,6 +29,7 @@ library(plyr)
 library(dplyr)
 library(psych)
 library(tidyr)
+library(Matrix)
 
 library(limma)
 library(sva)
@@ -43,8 +44,9 @@ devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-func
 synapseLogin()
 
 # source utility files from ../R/lib folder
-file.sources = list.files('../R/lib',pattern="*.R", full.names = T)
-tmp = sapply(file.sources,source,.GlobalEnv)
+source('../R/lib/rownameToFirstColumn.R')
+# file.sources = list.files('../R/lib/rownfile.sources',pattern="row*.R", full.names = T)
+# tmp = sapply(file.sources,source,.GlobalEnv)
 
 options(xtable.type="html")
 
@@ -170,10 +172,10 @@ colnames(tmp) = 'No. of Genes'
 kable(tmp)
 
 writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 7/8 datasets')
-rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==7)]
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==7)], collapse = ',')
 
 writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 6/8 datasets')
-rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==6)]
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==6)], collapse = ',')
 ```
 
 ### Minimum Pvalue meta analysis
@@ -226,7 +228,7 @@ tmp = join_all(list(Pmin,Pfb))
 write.table(tmp, file = './Pval.tsv', sep = '\t', row.names=F, quote=F)
 FILE_OBJ = File("./Pval.tsv", name = 'Meta Differential Expression Analysis FDR', parentId = CODE$properties$id)
 FILE_OBJ = synStore(FILE_OBJ, 
-                    used = as.character(c(EXP_ID, COV_ID)),
+                    used = as.character(DEXP_ID),
                     executed = thisFile,
                     activityName = 'Differential expression analysis of control-AD')
 
@@ -234,7 +236,7 @@ FILE_OBJ = synStore(FILE_OBJ,
 write.table(rownameToFirstColumn(Adj.P.Value, 'hgnc_symbol'), file = './DiffGenes.tsv', sep = '\n', row.names=F, quote=F, col.names = F)
 FILE_OBJ = File("./DiffGenes.tsv", name = 'Differentially expressed genes FDR (individual studies)', parentId = CODE$properties$id)
 FILE_OBJ = synStore(FILE_OBJ, 
-                    used = as.character(c(EXP_ID, COV_ID)),
+                    used = as.character(DEXP_ID),
                     executed = thisFile,
                     activityName = 'Differential expression analysis of control-AD')
 ```
