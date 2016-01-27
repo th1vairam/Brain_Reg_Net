@@ -37,6 +37,7 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 library(ggplot2)
+library(WGCNA)
 
 ## Needs the dev branch
 library(rGithubClient)
@@ -274,7 +275,7 @@ COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION[,-(1:2)])))
-plotDendroAndColors(tree, 
+WGCNA::plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
                     dendroLabels = FALSE, 
                     abHeight = 0.80, 
@@ -332,8 +333,11 @@ for (i in 1:3){
 multiplot(plotlist=p, cols = 3)
 names(DE) = colnames(contrast)
 
-DE = DE %>% plyr::ldply(.id = 'Comparison')
-
+DE = DE %>% plyr::ldply(.id = 'Comparison') %>%
+  tidyr::separate(ensembl_gene_id, into=c("ensemble_id","position")) %>%
+  dplyr::rename(ensembl_gene_id = ensemble_id) %>%
+  left_join(Ensemble2HGNC)
+  
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
   dplyr::select(Comparison, hgnc_symbol) %>%
