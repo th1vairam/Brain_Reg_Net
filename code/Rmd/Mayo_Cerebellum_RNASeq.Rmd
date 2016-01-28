@@ -96,7 +96,7 @@ METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagno
 METADATA <- METADATA %>%
   dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
-Following five samples were considered outliers and removed 742\_CER, 11386\_CER, 11311\_CER, 1923\_CER, 11477\_CER
+Following five samples were considered outliers and removed 742\_CER, 11386\_CER, 11311\_CER, 1923\_CER, 11477\_CER, based on the eucledian distance from other samples and/or seperated on the first 2 PC's
 ```{r preprocess.data1}
 indToRetain = intersect(METADATA$SampleID, colnames(COUNT))
 
@@ -340,7 +340,7 @@ kable(tmp)
 ```
 ```{r get.gene.symbols, cache=TRUE}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -415,3 +415,6 @@ DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
 |  Covariates           |  `r COV_OBJ$properties$id`      |
 |  Residual Expression  |  `r EXP_OBJ$properties$id`      |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
+
+### Source Code
+[This File](`r thisFile`)
