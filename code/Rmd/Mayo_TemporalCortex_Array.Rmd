@@ -1,0 +1,349 @@
+---
+title: "Covariate analysis of UFL-Mayo-ISB temporal cortex arrays"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knit2synapse)
+library(synapseClient)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./Mayo_TemporalCortex_Array.Rmd",
+                                 parentId ="syn5570325",
+                                 entityName = 'UFL_Mayo_ISB Temporal Cortex Microarray')
+```
+
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(synapseClient)
+library(ggplot2)
+library(reshape2)
+library(data.table)
+library(dplyr)
+library(stringr)
+library(limma)
+library(knitr)
+library(Biobase)
+library(GEOquery)
+library(RColorBrewer)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+
+## Needs the dev branch
+library(rGithubClient)
+
+## Requires ggdendro
+devtools::source_url("http://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+synapseLogin()
+
+# source utility files from ../R/lib folder
+file.sources = list.files('../R/lib',pattern="*.R", full.names=T)
+tmp = sapply(file.sources,source,.GlobalEnv)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn5570325';
+activityName = 'Covariate analysis';
+activityDescription = 'Covariate analysis of UFL_Mayo_ISB temporal cortex array data';
+
+thisFileName <- 'Mayo_TemporalCortex_Array.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Download expression data
+EXPR_ID <- 'syn3617054';
+ALL_USED_IDs <- EXPR_ID
+EXPR_OBJ <- synGet(EXPR_ID)
+EXPR <- fread(EXPR_OBJ@filePath,sep=',',data.table=F)
+
+# Get clinical metadata
+METADATA_ID <- 'syn3617056'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
+METADATA_OBJ <- synGet(METADATA_ID)
+METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=F)
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=TRUE}
+rownames(EXPR) <- EXPR$IID
+EXPR <- data.matrix(EXPR[,-(1:2)]) %>% t 
+
+# Fix metadata
+rownames(METADATA) <-  METADATA$IID
+METADATA = METADATA[colnames(EXPR),]
+
+METADATA = dplyr::mutate(METADATA,
+                         plate2 = 2*plate2,
+                         plate3 = 3*plate3,
+                         plate4 = 4*plate4,
+                         plate5 = 5*plate5,
+                         plate = plate2+plate3+plate4+plate5)
+METADATA$plate[METADATA$plate == 0] = 1
+```
+Temporal cortex of `r dim(EXPR)[2]` subjects from the Mayo cohorts were obtained from [AMP-AD portal](`r EXPR_ID`)
+
+### Covariate clustering
+Determine relationship between covariates. 
+```{r covariates.clustering, cache=TRUE}
+FactorCovariates <- c("Dxn", "Sex",  "E4dose", "plate")
+ContCovariates <- c("Age", "RIN", "RINsqAdj")
+  
+# Find inter relation between factor covariates
+COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
+rownames(COVARIATES) <- METADATA$IID
+
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
+```
+Covariate correlation
+```{r covariates.correlation, fig.width=10, fig.height=10}
+COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.1)
+ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.3, row.width=0.15)
+```
+
+### Outlier analysis
+Clustering of raw data
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(EXPR, scale.=T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(IID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, METADATA, by="IID")
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=factor(Dxn), shape=as.factor(plate), size=as.numeric(Age)))
+p <- p + theme_bw() + theme(legend.position="top") 
+# p <- p + geom_text(aes(label= IID), size=4, hjust=0)
+p
+
+COVARIATES.tmp = data.matrix(COVARIATES)
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(EXPR)))
+plotDendroAndColors(tree, 
+                    colors = labels2colors(COVARIATES.tmp), 
+                    dendroLabels = FALSE,
+                    abHeight = 0.80, 
+                    main = "Sample dendrogram",
+                    groupLabels = colnames(COVARIATES.tmp))
+```
+### Significant Covariates
+Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
+```{r preAdjusted.covariates, results='asis', echo=FALSE}
+# Find correlation between PC's of gene expression with covariates
+DM = getDesignMatrix(COVARIATES, Intercept=F)
+DESIGN = getDesignMat2Fact(DM$design,FactorCovariates)
+colnames(DESIGN) = substr(colnames(DESIGN),1,50)
+preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR, DESIGN,
+                                                 'NULL design',
+                                                 isKeyPlot=TRUE)
+
+# Find significant covariates
+adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),
+                                     preAdjustedSigCovars$significantCovars)
+```
+Significant covariates to adjust at FDR 0.1 are `r paste(gsub('_','\\\\_',adjustCovars), collapse= ',')`
+```{r preAdjustedSigCovars.NULL.ALL, fig.width=25, fig.height=12}
+preAdjustedSigCovars[["PC_res"]][[2]]$plotData
+```
+### Normalisation (iterative)
+Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
+```{r iterative.adjusted.voom.normalisation, cache=TRUE, results='asis', echo=FALSE}
+postAdjustCovars = c('Dxn')
+ 
+# Assign residual covariates
+residualSigCovars = preAdjustedSigCovars
+
+significantCovars = designMatVarsToCovars(getCovariatesMap(DM), 
+                                          residualSigCovars$significantCovars)
+
+covariatesEffects = designMat2CovEffects(getCovariatesMap(DM),
+                                         residualSigCovars$Effects.significantCovars)
+
+covariatesEffects = covariatesEffects[setdiff(significantCovars, postAdjustCovars)]
+
+postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
+
+loopCount = 0 
+while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
+  writeLines(paste('Using following covariates in the model:', 
+                   paste(postAdjustCovars, collapse=', '),
+                   'as fixed effects'))
+  
+  # Post adjusted design matrix
+  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+    
+  # Fit linear model
+  FIT = lmFit(EXPR, 
+              design=DM1$design)
+  
+  # Residuals after normalisation
+  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,EXPR)
+  
+  # Residual covariates to choose from
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates), postAdjustCovars)
+  
+  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                                DESIGN,
+                                                'all adjusted design',
+                                                isKeyPlot=TRUE)
+  
+  # Add postadjusted covariates (if any)
+  significantCovars = designMatVarsToCovars(getCovariatesMap(DM), residualSigCovars$significantCovars)
+  covariatesEffects = designMat2CovEffects(getCovariatesMap(DM),residualSigCovars$Effects.significantCovars)
+  covariatesEffects = covariatesEffects[setdiff(significantCovars,postAdjustCovars)]
+  
+  postAdjustCovars = c(postAdjustCovars,names(which.max(covariatesEffects)))
+  loopCount = loopCount + 1
+}
+modelStr <-paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=','), 'as fixed effects')
+
+tmp <- paste('Using following covariates in the final model:', modelStr)
+```
+`r tmp`
+
+```{r adjusted.expression, results='asis', echo=FALSE}
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F], Intercept = F)
+tmp = linColumnFinder(DM1$design)
+
+writeLines('Degenerate variables are:')
+writeLines(tmp$relations)
+DM1$design = DM1$design[,tmp$indepCols] 
+
+# Linear model with new design
+ADJUSTED.FIT = lmFit(EXPR, design=DM1$design)  
+```
+### Sanity Check
+Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
+```{r calculate.residuals, include=FALSE}
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT,
+                                              EXPR)
+
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              DESIGN,
+                                              'residual matrix of all adjusted design',
+                                              isKeyPlot=TRUE)
+```
+```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
+residualSigCovars[["PC_res"]][[2]]$plotData
+```
+```{r addVarsBack}
+varsToAddBackIn <- c("Dxn0", "Dxn1")
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
+  ADJUSTED.FIT$coefficients[,varsToAddBackIn] %*% t(data.matrix(DM1$design[,varsToAddBackIn]))
+RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'illumina_humanht_12_v4') 
+```
+
+```{r summary, results='asis', echo=FALSE}
+writeLines('Number of samples in each category are')
+tmp = as.data.frame(summary(COVARIATES$Dxn))
+colnames(tmp) = 'No. of samples'
+kable(tmp)
+```
+Where 0 is Non-Ad and 1 is AD
+```{r get.gene.symbols, cache=TRUE}
+# Define biomart object
+mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+
+# Query biomart
+Illumina2HGNC <- getBM(attributes = c("illumina_humanht_12_v4", "hgnc_symbol"),
+                       filters = "illumina_humanht_12_v4", 
+                       values = RESIDUAL.GENE_EXPRESSION$illumina_humanht_12_v4,
+                       mart = mart)
+RESIDUAL.GENE_EXPRESSION <- left_join(Illumina2HGNC, RESIDUAL.GENE_EXPRESSION) %>%
+  dplyr::select(illumina_humanht_12_v4, hgnc_symbol, one_of(rownames(COVARIATES)))
+```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp}
+# Get design matrix
+DM = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F], Intercept = F)
+
+# Linear model with new design
+FIT = lmFit(EXPR, design=DM$design)
+
+# Fit contrast
+contrast = makeContrasts(contrasts="Dxn0-Dxn1", levels = colnames(FIT$coefficients))
+FIT = contrasts.fit(FIT, contrasts=contrast)
+FIT = eBayes(FIT)
+
+# Get differnetial expression
+DE = topTable(FIT, coef=1, number = dim(EXPR)[1])
+DE = rownameToFirstColumn(DE, 'illumina_humanht_12_v4') %>%
+  left_join(Illumina2HGNC)
+p <- ggplot(DE, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p
+
+tmp = DE %>% dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(hgnc_symbol) %>%
+  unlist %>% unique
+kable(data.frame(Comparison = "Control_vs_AD",
+           nDiffExp = length(tmp),
+           DiffExpGenes = paste(tmp, collapse = ',')))  
+```
+### Store files in synapse
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Code
+CODE <- Folder(name = 'UFL_Mayo_ISB Temporal Cortex Microarray', parentId = parentId)
+CODE <- synStore(CODE)
+
+# Store covariates
+COVARIATES = rownameToFirstColumn(COVARIATES, 'ID')
+write.table(COVARIATES, file = 'covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+      
+# Store expression values
+write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.names=F, quote=F)
+EXP_OBJ = File('expression.tsv', name = 'Voom Adjusted Residual Expression (Dxn added)', parentId = CODE$properties$id)
+EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
+# Store differential expression results
+write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+```
+|  *Results*            |  *SynapseID*                    |
+|  -------              |   ---------                     |
+|  Covariates           |  `r COV_OBJ$properties$id`      |
+|  Residual Expression  |  `r EXP_OBJ$properties$id`      |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
