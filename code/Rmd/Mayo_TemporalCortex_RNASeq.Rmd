@@ -11,7 +11,7 @@ library(synapseClient)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./Mayo_TemporalCortex_RNASeq.Rmd",
-                                 parentId ="syn5570325",
+                                 parentId ='syn5612983',#"syn5570325",
                                  entityName = 'UFL_Mayo_ISB Temporal Cortex RNASeq')
 ```
 
@@ -36,6 +36,7 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
+library(fpc)
 
 ## Needs the dev branch
 library(rGithubClient)
@@ -62,7 +63,7 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE}
 # Synapse parameters
-parentId = 'syn5570325';
+parentId = 'syn5612983'#'syn5570325';
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of UFL_Mayo_ISB temporal cortex RNASeq data';
 
@@ -307,29 +308,38 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensem
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
 
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
+
+# Cluster expression
+clust = cutreeStatic(sampleTrees, cutHeight = 100, minSize = 10)
+
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
                        PC1=PC$rotation[,1], 
-                       PC2=PC$rotation[,2])
+                       PC2=PC$rotation[,2],
+                       clust = clust)
 
 plotdata <- left_join(plotdata, METADATA, by="ID")
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
+p <- p + geom_point(aes(color=factor(clust), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 
-# Tree based clustering
-sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
+names(clust) = sampleTrees$labels
+clust = clust[rownames(COVARIATES)]
 
 plotDendroAndColors(sampleTrees, 
-                    colors = labels2colors(COVARIATES), 
+                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES)), 
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES))
 collectGarbage()
 dev.off()
+
+writeLines(paste('Samples that deviate from others are', paste(sampleTrees$labels[clust==0], collapse = ',')))
 ```
 
 ```{r summary, results='asis', echo=FALSE}
