@@ -97,7 +97,7 @@ METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagno
 METADATA <- METADATA %>%
   dplyr::filter(!(ID %in% c("1923_TCX")))
 ```
-Following five samples were considered outliers and removed 1923\_TCX
+Following samples were considered outliers and removed based on PCA and/or eucledian distance: 1923\_TCX
 ```{r preprocess.data1}
 indToRetain = intersect(METADATA$ID, colnames(COUNT))
 
@@ -147,6 +147,7 @@ EXPR <- getGeneFilteredGeneExprMatrix(EXPR,
 
 ### Normalisation (with NULL)
 Initial normalisation usign voom (with NULL design)
+
 ```{r initial.voom.normalisation}
 # Initial normalisation of gene expression
 VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=T)
@@ -154,8 +155,9 @@ VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=T)
 # Initial design matrix with covariates under consideration
 DM = getDesignMatrix(COVARIATES, Intercept = F)
 ```
+
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data, fig.height=9, fig.width=16, results='asis'}
+```{r decompse.normalise.data1, fig.height=10, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E)
 
@@ -171,7 +173,8 @@ p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=a
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
-
+```
+```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
 # Tree based clustering
 sampleTrees = flashClust::hclust(dist(t(VOOM.GENE_EXPRESSION$E)), method = "average")
 tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
@@ -272,7 +275,7 @@ DM1$design = DM1$design[,tmp$indepCols]
 
 # Recalculate weights with new design
 VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, 
-                                     design=DM1$design, plot=T)
+                                     design=DM1$design, plot=F)
 
 # Linear model with new weights and design
 VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION$E, 
@@ -304,7 +307,7 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensem
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data1, fig.height=10, fig.width=16, results='asis'}
+```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
 
@@ -330,7 +333,9 @@ p
 
 names(clust) = sampleTrees$labels
 clust = clust[rownames(COVARIATES)]
-
+```
+```{r decompse.normalise.data4, fig.height=10, fig.width=25, results='asis'}
+# Tree based clustering
 plotDendroAndColors(sampleTrees, 
                     colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES)), 
                     abHeight = 0.80, 
@@ -351,7 +356,7 @@ kable(tmp)
 
 ```{r get.gene.symbols}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -362,7 +367,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp}
+```{r diffExp, fig.height=10, fig.width=16}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("DiagnosisControl-DiagnosisAD",
                                      "DiagnosisControl-DiagnosisPSP",
@@ -388,12 +393,11 @@ for (i in 1:6){
 multiplot(plotlist=p, cols = 3)
 names(DE) = gsub('Diagnosis','',colnames(contrast))
 
-DE = ldply(DE, .id = 'Comparison')
+DE = plyr::ldply(DE, .id = 'Comparison')
 tmp = DE %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
   group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)),
-                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)))
 kable(tmp)
 ```
 
@@ -427,3 +431,6 @@ DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
 |  Covariates           |  `r COV_OBJ$properties$id`      |
 |  Residual Expression  |  `r EXP_OBJ$properties$id`      |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
+
+### Source R Code
+[This File](`r thisFile`)
