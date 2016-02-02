@@ -11,7 +11,7 @@ library(synapseClient)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./Mayo_TemporalCortex_RNASeq.Rmd",
-                                 parentId ="syn5570325",
+                                 parentId = "syn5570325",
                                  entityName = 'UFL_Mayo_ISB Temporal Cortex RNASeq')
 ```
 
@@ -36,6 +36,7 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
+library(fpc)
 
 ## Needs the dev branch
 library(rGithubClient)
@@ -310,30 +311,40 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensem
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
 
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
+
+# Cluster expression
+clust = cutreeStatic(sampleTrees, cutHeight = 100, minSize = 10)
+
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
                        PC1=PC$rotation[,1], 
-                       PC2=PC$rotation[,2])
+                       PC2=PC$rotation[,2],
+                       clust = clust)
 
 plotdata <- left_join(plotdata, METADATA, by="ID")
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
+p <- p + geom_point(aes(color=factor(clust), shape=as.factor(Source), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
+
+names(clust) = sampleTrees$labels
+clust = clust[rownames(COVARIATES)]
 ```
 ```{r decompse.normalise.data4, fig.height=10, fig.width=25, results='asis'}
 # Tree based clustering
-sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
-
 plotDendroAndColors(sampleTrees, 
-                    colors = labels2colors(COVARIATES), 
+                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES)), 
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES))
 collectGarbage()
 dev.off()
+
+writeLines(paste('Samples that deviate from others are', paste(sampleTrees$labels[clust==0], collapse = ',')))
 ```
 
 ```{r summary, results='asis', echo=FALSE}
@@ -345,7 +356,7 @@ kable(tmp)
 
 ```{r get.gene.symbols}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -382,12 +393,11 @@ for (i in 1:6){
 multiplot(plotlist=p, cols = 3)
 names(DE) = gsub('Diagnosis','',colnames(contrast))
 
-DE = ldply(DE, .id = 'Comparison')
+DE = plyr::ldply(DE, .id = 'Comparison')
 tmp = DE %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
   group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)),
-                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)))
 kable(tmp)
 ```
 
