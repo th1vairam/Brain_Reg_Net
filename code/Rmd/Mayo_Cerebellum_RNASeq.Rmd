@@ -384,8 +384,7 @@ DE = ldply(DE, .id = 'Comparison')
 tmp = DE %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
   group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)),
-                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)))
 kable(tmp)
 ```
 ### Store files in synapse
