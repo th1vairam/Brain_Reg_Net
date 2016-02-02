@@ -66,7 +66,7 @@ my.theme = theme(title = element_text(size = 24),
                  axis.text.x = element_text(angle = 90, hjust=1, vjust = 0.5)) 
 
 # Utility function to download files from synapse
-download.file <- function(id){ tmp = fread(synGet(id)@filePath, data.table=F, header=T);  }
+download.file <- function(id){ tmp = fread(synGet(as.character(id))@filePath, data.table=F, header=T);  }
 
 # Utility function for combining p-values using Fishers inverse chi-square method
 fishersPvalue <- function(pvalue){
