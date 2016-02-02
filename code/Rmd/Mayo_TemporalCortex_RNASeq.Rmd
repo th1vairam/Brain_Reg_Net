@@ -59,6 +59,7 @@ knitr::opts_chunk$set(
   error = FALSE,
   tidy = FALSE,
   cache = TRUE)
+dev.off()
 ```
 
 ```{r synapse.parameters, include=FALSE}
@@ -177,13 +178,20 @@ p
 ```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
 # Tree based clustering
 sampleTrees = flashClust::hclust(dist(t(VOOM.GENE_EXPRESSION$E)), method = "average")
-tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
+tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 135, minSize=10)
 
 WGCNA::plotDendroAndColors(sampleTrees, 
                     labels2colors(cbind(tree,COVARIATES)),
                     groupLabels = c('Cluster',colnames(COVARIATES)))
 collectGarbage()
 dev.off()
+
+tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[tree == 0], collapse = ','))
+tmp = base::gsub('_','\\\\_',tmp)
+writeLines(tmp)
+tmp = paste('Samples in cluster 2 are', paste(sampleTrees$labels[tree == 2], collapse = ','))
+tmp = base::gsub('_','\\\\_',tmp)
+writeLines(tmp)
 ```
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
@@ -344,7 +352,9 @@ plotDendroAndColors(sampleTrees,
 collectGarbage()
 dev.off()
 
-writeLines(paste('Samples that deviate from others are', paste(sampleTrees$labels[clust==0], collapse = ',')))
+tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[tree == 0], collapse = ','))
+tmp = base::gsub('_','\\\\_',tmp)
+writeLines(tmp)
 ```
 
 ```{r summary, results='asis', echo=FALSE}
