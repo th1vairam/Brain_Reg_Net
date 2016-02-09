@@ -134,6 +134,9 @@ EXPR <- EXPR[, colnames(EXPR) %in% indToRetain]
 # Match covariates to expression data
 rownames(METADATA) = METADATA$Sampleid
 METADATA = METADATA[indToRetain,]
+
+# Arrange rows of metadata in the same order as columns of expression
+METADATA = METADATA[colnames(EXPR),]
 ```
 Dorsolateral prefrontal cortex of `r dim(EXPR)[2]` subjects from the ROS and MAP cohorts were obtained from AMP-AD portal
 
