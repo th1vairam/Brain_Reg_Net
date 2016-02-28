@@ -30,26 +30,13 @@ setwd(wd)
 
 ## Load required libraries
 library(synapseClient)
-library(ggplot2)
-library(reshape2)
 library(data.table)
 library(dplyr)
 library(stringr)
-library(limma)
 library(knitr)
-library(Biobase)
-library(GEOquery)
-library(RColorBrewer)
-library(gplots)
-library(WGCNA)
-library(psych)
-library(edgeR)
-library(biomaRt)
-library(ggplot2)
-library(WGCNA)
 
 ## Needs the dev branch
-library(rGithubClient)
+library(githubr)
 
 ## Requires ggdendro
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
