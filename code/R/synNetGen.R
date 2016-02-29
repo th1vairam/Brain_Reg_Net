@@ -1,0 +1,142 @@
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(synapseClient)
+library(data.table)
+library(dplyr)
+library(stringr)
+library(knitr)
+
+## Needs the dev branch
+library(githubr)
+
+synapseLogin()
+
+# source utility files from ../R/lib folder
+source('./lib/rownameToFirstColumn.R')
+
+# Synapse parameters
+parentId = 'syn5569099';
+activityName = 'Synthetic network generation';
+activityDescription = 'Synthetic network data from ecoli using GNW';
+
+thisFileName <- 'synNetGen.R'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='synNet')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/R/',thisFileName))
+
+# Create folder to store results
+FOLD = Folder(name = 'Synthetic Networks', parentId = parentId)
+FOLD = synStore(FOLD)
+
+#### Extract network
+# Extract settings text file
+con = file('../../../gnw//sandbox/settings.txt')
+settings.txt = readLines(con)
+close(con)
+
+netSize = c(a = 1e1, b = 1e2, c = 1e3, d = 1e4)
+for (net in names(netSize)){
+  # Number of minimum regulators
+  minReg = max(5, round(netSize[[net]]*0.5))
+  
+  # Create output directory
+  outputDir = paste0('SubNetSize',net)
+  system(paste0('mkdir ', outputDir))
+
+  # Write settings file to the output directory
+  con = file(paste0(outputDir,'/settings.txt'))
+  writeLines(settings.txt, con)
+  close(con)
+
+  # Extract 10 subnetworks of size n from ecoli data
+  system(paste('java','-jar','../../../gnw/gnw-3.1.2b.jar',
+                 '--extract','-c',paste0(outputDir,'/settings.txt'), '--input-net',
+                 '../../../gnw/sandbox/ecoli_transcriptional_network_regulonDB_6_7.tsv',
+                 '--random-seed','--greedy-selection','--num-subnets=10',
+                 paste0('--subnet-size=',netSize[[net]]),'--output-net-format=4',
+                 paste0('--output-path=',outputDir),
+                 paste0('--min-num-regulators=',minReg)))
+  
+  # Convert generated subnetworks to tsv data
+  FNames = dir(outputDir, pattern='*.xml',full.names=T)
+  for (fnames in FNames){
+    system(paste('java','-jar','../../../gnw/gnw-3.1.2b.jar',
+                 '--transform','-c',paste0(outputDir,'/settings.txt'), '--input-net',
+                 fnames, '--output-net-format=0',
+                 paste0('--output-path=',outputDir)))
+  }
+  
+  # Change settings for simulations  
+  tmp = settings.txt
+  tmp[grep('outputDirectory = ', tmp)] = paste('outputDirectory =',outputDir)
+  tmp[grep('ssDualKnockouts',tmp)] = "ssDualKnockouts = 0"
+  tmp[grep('tsDREAM4TimeSeries',tmp)] = "tsDREAM4TimeSeries = 0"
+  
+  con = file(paste0(outputDir,'/settings.txt'))
+  writeLines(tmp, con)
+  close(con)
+  
+  # Simulate from extracted networks
+  for (fnames in FNames){
+    system(paste('java','-jar','../../../gnw/gnw-3.1.2b.jar',
+                 '--simulate','-c',paste0(outputDir,'/settings.txt'), 
+                 '--input-net', fnames, '--output-path',outputDir))
+    
+    # Read all data into one file
+    allFiles = dir(pattern = 'ecoli')
+    system(paste('mv',allFiles[grep('.xml',allFiles)],outputDir))
+    system(paste('mv',allFiles[grep('goldstandard.tsv',allFiles)],outputDir))
+    
+    fileName = tools::file_path_sans_ext(fnames) %>% str_replace(paste0(outputDir,'/'),'')
+    
+    data = list()
+    
+    extractData <- function(pat,allfiles, file.name){
+      read.table(allfiles[grep(paste0(file.name,pat),allfiles)], header=T, sep = '\t', quote='')
+    }
+        
+    allPatterns1 = c('_wildtype.tsv','_knockdowns.tsv', '_multifactorial.tsv', '_multifactorial_perturbations.tsv', '_knockouts.tsv')
+    data[['1']] = lapply(allPatterns1, extractData, allFiles, fileName) %>%
+      do.call(rbind,.)
+    
+    allPatterns2 = c('_nonoise_wildtype.tsv','_nonoise_knockdowns.tsv', '_nonoise_multifactorial.tsv', '_nonoise_knockouts.tsv')
+    data[['2']] = lapply(allPatterns2, extractData, allFiles, fileName) %>%
+      do.call(rbind, .)
+    
+    allPatterns3 = c('_noexpnoise_wildtype.tsv','_noexpnoise_knockdowns.tsv', '_noexpnoise_multifactorial.tsv', '_noexpnoise_knockouts.tsv')
+    data[['3']] = lapply(allPatterns3, extractData, allFiles, fileName) %>%
+      do.call(rbind, .)
+    
+    # Store data in synaspe
+    fileNum = str_split(str_split(fnames, '-')[[1]][2],'\\.')[[1]][1]
+    SUB.FOLD = Folder(name = paste0(outputDir, '_', fileNum), parentId = FOLD$properties$id)
+    SUB.FOLD = synStore(SUB.FOLD)
+    
+    objs = lapply(names(data), function(x, Data, subFolder){
+      tmp = data.matrix(Data[[x]]) %>% t %>% rownameToFirstColumn('GeneNames')
+      colnames(tmp)[-1] = paste0('EXP',colnames(tmp)[-1])
+      
+      # Store data in synapse
+      write.table(tmp, file = paste0('Expression_',x,'.tsv'), sep = '\t', row.names=F, quote=F)
+      OBJ = File(paste0('Expression_',x,'.tsv'), 
+                 name = paste('Expression',x), 
+                 parentId = subFolder$properties$id)
+      OBJ = synStore(OBJ, activityName = activityName,
+                     executed = thisFile, activityDescription = activityDescription)
+    }, data, SUB.FOLD)
+    
+    OBJ = File(paste0(tools::file_path_sans_ext(fnames), '.tsv'),
+               name = 'Gold Standard', parentId = SUB.FOLD$properties$id)
+    OBJ = synStore(OBJ, activityName = activityName, executed = thisFile, activityDescription = activityDescription)
+    
+    # Set private acl to the gold standard file
+    resAcc = ResourceAccess(principalId = 3319864, 
+                            accessType = c('CREATE', 'READ', 'UPDATE', 'DELETE', 'CHANGE_PERMISSIONS', 'DOWNLOAD', 'UPLOAD', 'PARTICIPATE', 'SUBMIT', 'READ_PRIVATE_SUBMISSION', 'UPDATE_SUBMISSION', 'DELETE_SUBMISSION', 'TEAM_MEMBERSHIP_UPDATE', 'SEND_MESSAGE', 'CHANGE_SETTINGS'))
+    acl = AccessControlList(id = OBJ$properties$id, resourceAccess = ResourceAccessList(resAcc))
+    tmp = synCreateEntityACL(acl)
+
+    system('rm ecoli*')
+  }
+}
