@@ -171,6 +171,17 @@ for (net in names(netSize))){
       OBJ = synStore(OBJ, activityName = activityName,
                      executed = thisFile, activityDescription = activityDescription)
     }, data, SUB.FOLD)
+    
+    OBJ = File(paste0(tools::file_path_sans_ext(fnames), '.tsv'),
+               name = 'Gold Standard', parentId = SUB.FOLD$properties$id)
+    OBJ = synStore(OBJ, activityName = activityName, executed = thisFile, activityDescription = activityDescription)
+    
+    # Set private acl to the gold standard file
+    resAcc = ResourceAccess(principalId = 3319864, 
+                            accessType = c('CREATE', 'READ', 'UPDATE', 'DELETE', 'CHANGE_PERMISSIONS', 'DOWNLOAD', 'UPLOAD', 'PARTICIPATE', 'SUBMIT', 'READ_PRIVATE_SUBMISSION', 'UPDATE_SUBMISSION', 'DELETE_SUBMISSION', 'TEAM_MEMBERSHIP_UPDATE', 'SEND_MESSAGE', 'CHANGE_SETTINGS'))
+    acl = AccessControlList(id = OBJ$properties$id, resourceAccess = ResourceAccessList(resAcc))
+    tmp = synCreateEntityACL(acl)
+
     system('rm ecoli*')
   }
 }
