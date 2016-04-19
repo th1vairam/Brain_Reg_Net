@@ -111,31 +111,58 @@ DEXP = lapply(DEXP_ID, download.file)
 # Extract subset of differential expression data
 DEXP$ROSMAP.PFC = DEXP$ROSMAP.PFC %>% 
   dplyr::filter(Comparison == "cogdx1-cogdx4") %>%
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MSSB.FP = DEXP$MSSB %>% 
   dplyr::filter(Comparison == "BM_10.Control-BM_10.AD") %>%
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MSSB.STG = DEXP$MSSB %>% 
   dplyr::filter(Comparison == "BM_22.Control-BM_22.AD") %>%
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MSSB.PHG = DEXP$MSSB %>% 
   dplyr::filter(Comparison == "BM_36.Control-BM_36.AD") %>%
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MSSB = NULL
 
+DEXP$MAYO.CER = DEXP$MAYO.CER %>% 
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
 DEXP$MAYO.TC = DEXP$MAYO.TC %>% 
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MAYO.CER.AR = DEXP$MAYO.CER.AR %>% 
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
 
 DEXP$MAYO.TC.AR = DEXP$MAYO.TC.AR %>% 
-  dplyr::select(hgnc_symbol, P.Value)
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+```
 
+```{r plotDE}
+tmp = lapply(DEXP, function(x){
+  x$observed.P.val = p.adjust(x$P.Value, 'fdr')
+  x = arrange(x, observed.P.val)
+  x = mutate(x, expected.P.val = seq(0,1,1/(dim(x)[1]-1)))
+  x$dexp = 0;
+  x$dexp[x$observed.P.val <= 0.05 & x$logFC > 0] = 1;
+  x$dexp[x$observed.P.val <= 0.05 & x$logFC < 0] = -1;
+  dplyr::select(x, observed.P.val, expected.P.val, dexp)
+}) 
+
+p = list()
+for (i in 1:length(tmp)){
+  p[[i]] = ggplot(tmp[[i]], aes(x = -log10(expected.P.val), y = -log10(observed.P.val))) + geom_point(aes(color = factor(dexp))) 
+  p[[i]] = p[[i]] + scale_colour_manual(values=c('green','grey','red')) + theme(legend.position="none")
+  x = -log10(tmp[[i]]$expected.P.val)
+  x[4]-x[1]/
+  p[[i]] = p[[i]] + geom_abline(slope=1, intercept=0) + ggtitle(names(tmp)[i])
+}
+multiplot(plotlist = p, cols = 4)
+```
+
+```{r uniqGenes}
 GNames = DEXP[[1]]$hgnc_symbol
 for (i in 2: length(DEXP)){
   GNames = intersect(GNames, DEXP[[i]]$hgnc_symbol)
@@ -171,11 +198,14 @@ tmp = (data.frame(colSums(Adj.P.Value <= 0.05)))
 colnames(tmp) = 'No. of Genes'
 kable(tmp)
 
+writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 8/8 datasets')
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==8)], collapse = ',')
+
 writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 7/8 datasets')
 paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==7)], collapse = ',')
 
-writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 6/8 datasets')
-paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==6)], collapse = ',')
+writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 6/6 RNASeq datasets')
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value[,-(4:5)]<=0.05)==6)], collapse = ',')
 ```
 
 ### Minimum Pvalue meta analysis
