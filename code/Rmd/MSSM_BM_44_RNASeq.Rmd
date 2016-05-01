@@ -104,19 +104,19 @@ METADATA_TECHNICAL[which(METADATA_TECHNICAL$BB == 1320), "BM22.Fnl"] = 159
 METADATA_TECHNICAL[which(METADATA_TECHNICAL$BB == 1475), "BM22.Fnl"] = 186
 
 METADATA = left_join(METADATA %>%
-  dplyr::mutate(ID = gsub('hB_RNA_','',NewBarcode),
-                ID = as.numeric(ID)),
-  METADATA_TECHNICAL %>%
-  dplyr::select(BB, BM.44.Barcode, BM36.Fnl, BM22.Fnl, BM10.Fnl, PMI, RACE, 
-                AOD, CDR, SEX, NP.1, PlaqueMean, bbscore) %>%
-  dplyr::rename(BM_44 = BM.44.Barcode,
-                BM_10 = BM10.Fnl,
-                BM_22 = BM22.Fnl,
-                BM_36 = BM36.Fnl) %>%
-  tidyr::gather(BrainRegion, ID, -BB, -PMI, -RACE, 
-                -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
-  filter(!is.na(ID)) %>%
-  dplyr::mutate(ID = as.numeric(ID))) %>%
+                       dplyr::mutate(ID = gsub('hB_RNA_','',NewBarcode),
+                                     ID = as.numeric(ID)),
+                     METADATA_TECHNICAL %>%
+                       dplyr::select(BB, BM.44.Barcode, BM36.Fnl, BM22.Fnl, BM10.Fnl, PMI, RACE, 
+                                     AOD, CDR, SEX, NP.1, PlaqueMean, bbscore) %>%
+                       dplyr::rename(BM_44 = BM.44.Barcode,
+                                     BM_10 = BM10.Fnl,
+                                     BM_22 = BM22.Fnl,
+                                     BM_36 = BM36.Fnl) %>%
+                       tidyr::gather(BrainRegion, ID, -BB, -PMI, -RACE, 
+                                     -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
+                       filter(!is.na(ID)) %>%
+                       dplyr::mutate(ID = as.numeric(ID))) %>%
   dplyr::filter(BrainRegion == 'BM_44')
 rownames(METADATA) = METADATA$NewBarcode
 
@@ -136,7 +136,7 @@ METADATA$RIN2 = METADATA$RIN^2
 METADATA$Dx = 'Control'
 METADATA$Dx[METADATA$CDR > 1] = 'AD'
 
-FactorCovariates <- c('RACE','SEX','NP.1','bbscore','Dx','Batch')
+FactorCovariates <- c('RACE','SEX','Dx','Batch')
 ContCovariates <- c('PMI','AOD','PlaqueMean','RIN', 'RIN2')
 
 # Find inter relation between factor covariates
@@ -245,34 +245,34 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
   writeLines(paste('Using following covariates in the model:',
                    paste(postAdjustCovars, collapse=', '),
                    'as fixed effects'))
-
+  
   # Post adjusted design matrix
   DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
   DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
-
+  
   # Estimate correlation of random effects
   VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
   
   # Fit a linear model
   FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
-
+  
   # Residuals after normalisation
   RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
-
+  
   # Residual covariates to choose from
   residCovars <- setdiff(c(FactorCovariates,ContCovariates), postAdjustCovars)
-
+  
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  tmp = sapply(dplyr::select(DESIGN,-one_of(colnames(DM1$design))), as.numeric)
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                dplyr::select(DESIGN,-one_of(colnames(DM1$design))),
-                                                'all adjusted design(voom-normalized)',
+                                                tmp, 'all adjusted design(voom-normalized)',
                                                 isKeyPlot=TRUE)
-
+  
   # Add postadjusted covariates (if any)
   significantCovars = designMatVarsToCovars(getCovariatesMap(DM), residualSigCovars$significantCovars)
   covariatesEffects = designMat2CovEffects(getCovariatesMap(DM),residualSigCovars$Effects.significantCovars)
   covariatesEffects = covariatesEffects[setdiff(significantCovars, postAdjustCovars)]
-
+  
   postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
   loopCount = loopCount + 1
 }
@@ -405,7 +405,7 @@ tmp = DE %>%
   dplyr::select(Comparison, hgnc_symbol) %>%
   group_by(Comparison) %>%
   dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
-            DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
 
 kable(tmp)
 ```
@@ -423,11 +423,11 @@ obj = File('expression.tsv',
            name = 'Voom Adjusted Weighted Residual Expression (Dx added)', 
            parentId = CODE$properties$id)
 expr_obj = synStore(obj,
-               used = ALL_USED_IDs, 
-               activityName = activityName, 
-               executed = thisFile, 
-               activityDescription = activityDescription)
-  
+                    used = ALL_USED_IDs, 
+                    activityName = activityName, 
+                    executed = thisFile, 
+                    activityDescription = activityDescription)
+
 # Covariates
 covar = rownameToFirstColumn(COVARIATES, 'SampleId')
 write.table(covar, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
@@ -435,19 +435,19 @@ obj = File('covariates.tsv',
            name = 'Covariates', 
            parentId = CODE$properties$id)
 covar_obj = synStore(obj,
-               used = ALL_USED_IDs, 
-               activityName = activityName, 
-               executed = thisFile, 
-               activityDescription = activityDescription)
+                     used = ALL_USED_IDs, 
+                     activityName = activityName, 
+                     executed = thisFile, 
+                     activityDescription = activityDescription)
 
 # Store differential expression results
 write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
 dexp_obj = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 dexp_obj = synStore(dexp_obj, used = ALL_USED_IDs, activityName = activityName, 
-                   executed = thisFile, activityDescription = activityDescription)
+                    executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*            |  *SynapseID*                    |
-|  -------              |   ---------                     |
-|  Covariates           |  `r covar_obj$properties$id`    |
-|  Residual Expression  |  `r expr_obj$properties$id`     |
-|  Differential Expression  |  `r dexp_obj$properties$id` |
+  |  -------              |   ---------                     |
+  |  Covariates           |  `r covar_obj$properties$id`    |
+  |  Residual Expression  |  `r expr_obj$properties$id`     |
+  |  Differential Expression  |  `r dexp_obj$properties$id` |
