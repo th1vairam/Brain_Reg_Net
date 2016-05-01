@@ -136,7 +136,7 @@ METADATA$RIN2 = METADATA$RIN^2
 METADATA$Dx = 'Control'
 METADATA$Dx[METADATA$CDR > 1] = 'AD'
 
-FactorCovariates <- c('RACE','SEX','NP.1','bbscore','Dx','Batch')
+FactorCovariates <- c('RACE','SEX','Dx','Batch')
 ContCovariates <- c('PMI','AOD','PlaqueMean','RIN', 'RIN2')
 
 # Find inter relation between factor covariates
@@ -263,9 +263,9 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
   residCovars <- setdiff(c(FactorCovariates,ContCovariates), postAdjustCovars)
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  tmp = sapply(dplyr::select(DESIGN,-one_of(colnames(DM1$design))), as.numeric)
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                dplyr::select(DESIGN,-one_of(colnames(DM1$design))),
-                                                'all adjusted design(voom-normalized)',
+                                                tmp, 'all adjusted design(voom-normalized)',
                                                 isKeyPlot=TRUE)
   
   # Add postadjusted covariates (if any)
@@ -284,7 +284,7 @@ tmp <- paste('Using following covariates in the final model:', modelStr)
 `r tmp`
 
 Degenerate variables are:
-  ```{r degenVar}
+```{r degenVar}
 # Post adjusted design matrix
 DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F], Intercept = F)
 tmp = linColumnFinder(DM1$design)
