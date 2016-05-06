@@ -184,12 +184,17 @@ plotdata <- data.frame(Sampleid=rownames(PC$rotation),
                        PC1=PC$rotation[,1], 
                        PC2=PC$rotation[,2])
 
-plotdata <- left_join(plotdata, METADATA)
-  
+plotdata <- left_join(plotdata, METADATA) %>%
+  dplyr::mutate(Batch = factor(Batch),
+                age_death = as.numeric(age_death),
+                cogdx = factor(cogdx))
+
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=factor(Batch), shape=as.factor(cogdx), size=as.numeric(age_death)))
+p <- p + geom_point(aes(color=Batch, shape=cogdx, size=age_death))
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= Sampleid), size=4, hjust=1)
+p <- p + xlab(paste0('PC1(',round((PC$sdev^2/sum(PC$sdev^2))[1]*100),'%)'))
+p <- p + ylab(paste0('PC2(',round((PC$sdev^2/sum(PC$sdev^2))[2]*100),'%)'))
 p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
@@ -200,7 +205,7 @@ tree = hclust(as.dist(t(EXPR)))
 plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
                     dendroLabels = FALSE, 
-                    abHeight = 0.80, 
+                    abHeight = 5, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
 dev.off()

@@ -1,0 +1,272 @@
+---
+title: "Meta analysis of differential expression results from AMP-AD (Control vs AD)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./MetaAnalysis.Rmd", 
+                                 parentId ="syn5569102",
+                                 entityName = 'MetaAnalysis of Control vs AD Data')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+# Clear R console screen output
+cat("\014")  
+
+# Load required libraries
+library(synapseClient)
+library(RColorBrewer)
+library(ggplot2)
+library(data.table)
+library(plyr)
+library(dplyr)
+library(psych)
+library(tidyr)
+library(Matrix)
+
+library(limma)
+library(sva)
+library(RankProd)
+
+library(knitr)
+library(rGithubClient) ## Needs the dev branch
+
+## Requires ggdendro
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+synapseLogin()
+
+# source utility files from ../R/lib folder
+source('../R/lib/rownameToFirstColumn.R')
+# file.sources = list.files('../R/lib/rownfile.sources',pattern="row*.R", full.names = T)
+# tmp = sapply(file.sources,source,.GlobalEnv)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r fxns}
+# Set ggplot theme
+my.theme = theme(title = element_text(size = 24), 
+                 axis.text = element_text(size = 20), 
+                 axis.text.x = element_text(angle = 90, hjust=1, vjust = 0.5)) 
+
+# Utility function to download files from synapse
+download.file <- function(id){ tmp = fread(synGet(as.character(id))@filePath, data.table=F, header=T);  }
+
+# Utility function for combining p-values using Fishers inverse chi-square method
+fishersPvalue <- function(pvalue){
+  pvalue = -2*log(pvalue, base = exp(1))
+  S <- 0
+  N <- dim(pvalue)[2]
+  
+  correlation <- WGCNA::bicor(pvalue,use = 'pairwise.complete.obs');
+  
+  for (i in 1:(N-1))
+    for (j in (i+1):N){
+      if (correlation[i,j] > 0){
+        S <- S + correlation[i,j]*(3.25+0.75*correlation[i,j])
+      } else if (correlation[i,j] <= 0){
+        S <- S + correlation[i,j]*(3.27+0.71*correlation[i,j])
+      }
+    }
+  
+  combinedPvalue.chi <- rowSums(pvalue)*(4*N)/(4*N+2*S)
+  combinedPvalue <- sapply(combinedPvalue.chi, function(x,N){
+    pchisq(x, df = 2*N, lower.tail = FALSE)
+  },N)
+  names(combinedPvalue) = rownames(pvalue)
+  
+  return(combinedPvalue)
+}
+```
+
+### Download differential expression data
+```{r download.data}
+# Get all differential expression files and their synIds
+DEXP_ID = c(ROSMAP.PFC = 'syn5608845',
+            MSSB = 'syn5609009',
+            MAYO.CER = 'syn5609850',
+            MAYO.TC = 'syn5609813',
+            MAYO.CER.AR = 'syn5607457',
+            MAYO.TC.AR = 'syn5607475')
+
+# Download differential expression data
+DEXP = lapply(DEXP_ID, download.file) 
+
+# Extract subset of differential expression data
+DEXP$ROSMAP.PFC = DEXP$ROSMAP.PFC %>% 
+  dplyr::filter(Comparison == "cogdx1-cogdx4") %>%
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MSSB.FP = DEXP$MSSB %>% 
+  dplyr::filter(Comparison == "BM_10.Control-BM_10.AD") %>%
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MSSB.STG = DEXP$MSSB %>% 
+  dplyr::filter(Comparison == "BM_22.Control-BM_22.AD") %>%
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MSSB.PHG = DEXP$MSSB %>% 
+  dplyr::filter(Comparison == "BM_36.Control-BM_36.AD") %>%
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MSSB = NULL
+
+DEXP$MAYO.CER = DEXP$MAYO.CER %>% 
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MAYO.TC = DEXP$MAYO.TC %>% 
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MAYO.CER.AR = DEXP$MAYO.CER.AR %>% 
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+
+DEXP$MAYO.TC.AR = DEXP$MAYO.TC.AR %>% 
+  dplyr::select(hgnc_symbol, P.Value, logFC)
+```
+
+```{r plotDE}
+tmp = lapply(DEXP, function(x){
+  x$observed.P.val = p.adjust(x$P.Value, 'fdr')
+  x = arrange(x, observed.P.val)
+  x = mutate(x, expected.P.val = seq(0,1,1/(dim(x)[1]-1)))
+  x$dexp = 0;
+  x$dexp[x$observed.P.val <= 0.05 & x$logFC > 0] = 1;
+  x$dexp[x$observed.P.val <= 0.05 & x$logFC < 0] = -1;
+  dplyr::select(x, observed.P.val, expected.P.val, dexp)
+}) 
+
+p = list()
+for (i in 1:length(tmp)){
+  p[[i]] = ggplot(tmp[[i]], aes(x = -log10(expected.P.val), y = -log10(observed.P.val))) + geom_point(aes(color = factor(dexp))) 
+  p[[i]] = p[[i]] + scale_colour_manual(values=c('green','grey','red')) + theme(legend.position="none")
+  x = -log10(tmp[[i]]$expected.P.val)
+  x[4]-x[1]/
+  p[[i]] = p[[i]] + geom_abline(slope=1, intercept=0) + ggtitle(names(tmp)[i])
+}
+multiplot(plotlist = p, cols = 4)
+```
+
+```{r uniqGenes}
+GNames = DEXP[[1]]$hgnc_symbol
+for (i in 2: length(DEXP)){
+  GNames = intersect(GNames, DEXP[[i]]$hgnc_symbol)
+}
+GNames = GNames[!is.na(GNames)]
+GNames = GNames[GNames != '']
+
+DEXP = lapply(DEXP, function(dexp, GNames){
+  dexp = dexp %>%
+    dplyr::filter(hgnc_symbol %in% GNames) %>%
+    group_by(hgnc_symbol) %>%
+    dplyr::summarise(P.Value = min(P.Value)) %>%
+    data.frame
+  rownames(dexp) = dexp$hgnc_symbol
+  dexp = dexp[GNames,]
+  }, GNames)
+
+DEXP = mapply(function(dexp, dataName){
+  colnames(dexp) = c('hgnc_symbol', dataName)
+  return(dexp)
+}, DEXP, names(DEXP), SIMPLIFY = F)
+
+DEXP = join_all(DEXP, by = "hgnc_symbol")
+```
+Overall `r dim(DEXP)[1]` genes in `r dim(DEXP)[2]-1` studies are analysed
+### Differential expression analysis
+```{r diffExp, results = 'asis'}
+Adj.P.Value = apply(DEXP[,-(1)], 2, p.adjust, method = "fdr")
+rownames(Adj.P.Value) = DEXP$hgnc_symbol
+
+writeLines('Total number of genes that are differentially expressed at a FDR <= 0.05 are')
+tmp = (data.frame(colSums(Adj.P.Value <= 0.05)))
+colnames(tmp) = 'No. of Genes'
+kable(tmp)
+
+writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 8/8 datasets')
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==8)], collapse = ',')
+
+writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 7/8 datasets')
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==7)], collapse = ',')
+
+writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 6/6 RNASeq datasets')
+paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value[,-(4:5)]<=0.05)==6)], collapse = ',')
+```
+
+### Minimum Pvalue meta analysis
+```{r minP}
+Pval = DEXP
+
+Pmin = data.frame(hgnc_symbols = Pval[,1], Pmin = rowMin(data.matrix(Pval[,-(1)])))
+Pmin$Pmin = p.adjust(Pmin$Pmin, method = 'fdr')
+
+tmp = dplyr::filter(Pmin, Pmin <= 0.05) 
+tmp = data.frame(No.of.Genes = dim(tmp)[1], 
+                 GeneList = tmp %>%
+                   dplyr::select(hgnc_symbols) %>%
+                   unlist %>% paste(collapse = ','))
+writeLines("Genes that are atleast differentially expressed at an FDR <= 0.05 in one study are")
+kable(tmp)
+```
+
+### Fisher-Brown's meta analysis
+```{r fisher.brown}
+Pfb = data.frame(hgnc_symbols = Pval[,1], 
+                 Pfb = p.adjust(fishersPvalue(Pval[,-(1)]), method = 'fdr'))
+
+Pfb$Pfb = p.adjust(Pfb$Pfb, method = 'fdr')
+
+tmp = dplyr::filter(Pfb, Pfb <= 0.05) 
+tmp = data.frame(No.of.Genes = dim(tmp)[1], 
+                 GeneList = tmp %>%
+                   dplyr::select(hgnc_symbols) %>%
+                   unlist %>% paste(collapse = ','))
+
+writeLines("Genes that are differentially expressed in the meta analysis at an FDR <= 0.05 are")
+kable(tmp)
+```
+
+### Store results in synapse
+```{r synapse.store, include=FALSE, cache=FALSE}
+thisFileName <- 'MetaAnalysis.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='metaAnal')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+
+# Store consolidated data in synapse
+CODE = Folder(name = 'MetaAnalysis of Control vs AD Data', parentId = "syn5569102")
+CODE = synStore(CODE)
+
+# Store pvalues
+tmp = join_all(list(Pmin,Pfb))
+write.table(tmp, file = './Pval.tsv', sep = '\t', row.names=F, quote=F)
+FILE_OBJ = File("./Pval.tsv", name = 'Meta Differential Expression Analysis FDR', parentId = CODE$properties$id)
+FILE_OBJ = synStore(FILE_OBJ, 
+                    used = as.character(DEXP_ID),
+                    executed = thisFile,
+                    activityName = 'Differential expression analysis of control-AD')
+
+# Store differentially expressed genes
+write.table(rownameToFirstColumn(Adj.P.Value, 'hgnc_symbol'), file = './DiffGenes.tsv', sep = '\n', row.names=F, quote=F, col.names = F)
+FILE_OBJ = File("./DiffGenes.tsv", name = 'Differentially expressed genes FDR (individual studies)', parentId = CODE$properties$id)
+FILE_OBJ = synStore(FILE_OBJ, 
+                    used = as.character(DEXP_ID),
+                    executed = thisFile,
+                    activityName = 'Differential expression analysis of control-AD')
+```

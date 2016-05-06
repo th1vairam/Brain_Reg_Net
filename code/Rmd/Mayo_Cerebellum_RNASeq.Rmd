@@ -93,7 +93,7 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 ```{r preprocess_data, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
-METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
+METADATA$Diagnosis = gsub("Pathologic Aging", "Pathologic_Aging", METADATA$Diagnosis)
 METADATA <- METADATA %>%
   dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
