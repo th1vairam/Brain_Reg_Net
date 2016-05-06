@@ -134,6 +134,9 @@ EXPR <- EXPR[, colnames(EXPR) %in% indToRetain]
 # Match covariates to expression data
 rownames(METADATA) = METADATA$Sampleid
 METADATA = METADATA[indToRetain,]
+
+# Arrange rows of metadata in the same order as columns of expression
+METADATA = METADATA[colnames(EXPR),]
 ```
 Dorsolateral prefrontal cortex of `r dim(EXPR)[2]` subjects from the ROS and MAP cohorts were obtained from AMP-AD portal
 
@@ -172,7 +175,7 @@ EXPR <- log2(EXPR+1e-3)
 `r dim(EXPR)[1]` number of genes and `r dim(EXPR)[2]` number of samples are considered for the analysis
 
 ### Outliers detection
-```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(EXPR, scale.=T)
 
@@ -191,7 +194,8 @@ p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
-
+```
+```{r decompse.normalise.data2, fig.height=8, fig.width=16, results='asis'}
 tree = hclust(as.dist(t(EXPR)))
 plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
@@ -199,6 +203,7 @@ plotDendroAndColors(tree,
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
+dev.off()
 ```
 
 ### Significant Covariates
@@ -254,7 +259,7 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'Ensem
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data3, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1:2)], scale.=T)
 
@@ -273,7 +278,8 @@ p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
-
+```
+```{r decompse.normalise.data4, fig.height=8, fig.width=16, results='asis'}
 tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION[,-(1:2)])))
 WGCNA::plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
@@ -281,6 +287,7 @@ WGCNA::plotDendroAndColors(tree,
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
+dev.off()
 ```
 
 ```{r summary, results='asis', echo=FALSE}

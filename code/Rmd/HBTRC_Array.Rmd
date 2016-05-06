@@ -1,0 +1,285 @@
+---
+title: "Covariate analysis of HBTRC microarray data"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knit2synapse)
+library(synapseClient)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./HBTRC_Array.Rmd",
+                                 parentId ="syn5570324",
+                                 entityName = "HBTRC Microarray")
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE}
+## It is assumed your working directory is where this file
+
+### Clear R console screen output
+cat("\014") 
+
+## Load required libraries
+library(synapseClient)
+library(ggplot2)
+library(reshape2)
+library(data.table)
+library(dplyr)
+library(stringr)
+library(limma)
+library(knitr)
+library(Biobase)
+library(GEOquery)
+library(RColorBrewer)
+library(gplots)
+library(WGCNA)
+library(psych)
+
+## Requires ggdendro
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+## Needs the dev branch
+library(rGithubClient)
+
+synapseLogin()
+
+# source utility files from ../R/lib folder
+file.sources = list.files('../R/lib',pattern="*.R", full.names=T)
+tmp = sapply(file.sources,source,.GlobalEnv)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE}
+# Synapse parameters
+parentId = 'syn5570324';
+activityName = 'Covariate analysis';
+activityDescription = 'Covariate analysis of HBTRC microarrays';
+
+thisFileName <- 'HBTRC_Array.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+Following brain regions were analysed for differential expression
+
+| Brain Region                        | Synapse ID |
+| ----------------------------------- | ---------- |
+| Cerebellum                          | syn3275756 |
+| Prefrontal cortex                   | syn3275756 |
+| Visual cortex                       | syn3275756 |
+### Data download
+#### Obtain expression matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Download expression data
+FOLDER_ID <- 'syn3275756';
+ALL_USED_IDs <- FOLDER_ID
+FOLDER_OBJ <- synGet(FOLDER_ID)
+
+# Unzip all files
+FNames = unzip(FOLDER_OBJ@filePath)
+
+# Get expression data
+brain_regions = c('cerebellum', 'visualcortex', 'prefrontalcortex')
+EXPR = lapply(brain_regions, function(region, fileNames){
+  ind = intersect(grep(region, fileNames),grep('gene_expression.txt', fileNames))
+  expr = read.table(fileNames[ind], header=T, row.names = 1)
+  
+#   ind = intersect(grep(region, fileNames),grep('gene_expression_pvals.txt', fileNames))
+#   pvals = read.table(fileNames[ind], header=T, row.names = 1)
+#   pvals = pvals[rownames(expr), colnames(expr)]
+#   
+#   expr[pvals > 0.05] = NA
+#   ind = (rowSums(is.na(expr))/dim(expr)[2]) <= 0.5
+#   expr = expr[ind,]
+  
+  return(expr)
+}, FNames)
+names(EXPR) = brain_regions
+
+# Get metadata
+METADATA1 = fread(FNames[grep('phenotype.txt',FNames)], header=T, data.table=F)
+METADATA2 = read.table(pipe("cut -f1,1,2 ./hbtrc/phenotype/phenotype_description.txt"), header=T)
+METADATA = full_join(METADATA2, METADATA1)
+
+# Arrange metadata and expression
+allDATA = lapply(EXPR, function(expr, metadata){
+  rownames(metadata) = metadata$trait_name
+  metadata = t(metadata[,-(1:2)])
+  
+  colnames(expr) = gsub('X','',colnames(expr))
+  cnames.expr = sapply(colnames(expr), function(x){str_split(x,'\\.')[[1]][1]})
+  
+  expr = expr[,names(cnames.expr)[cnames.expr %in% rownames(metadata)]]
+  cnames.expr = cnames.expr[cnames.expr %in% rownames(metadata)]
+  
+  newMetadata = metadata[cnames.expr,]
+  rownames(newMetadata) = colnames(expr)
+    
+  return(list(expr = expr, metadata = newMetadata))
+}, METADATA)
+
+# Seperate expression
+EXPR = lapply(brain_regions, function(region, allData){
+  expr = allData[[region]]$expr
+  colnames(expr) = paste(colnames(expr),region,sep='.')
+  expr = rownameToFirstColumn(expr, 'probeIDs')
+  return(expr)
+}, allDATA) %>%
+  plyr::join_all(type = 'full')
+  
+# Seperate metadata
+ALL.METADATA = lapply(brain_regions, function(region, allData){
+  metadata = allData[[region]]$metadata
+  metadata = cbind(data.frame(metadata), data.frame(donorID = rownames(metadata)))
+  
+  rownames(metadata) = paste(rownames(metadata), region, sep = '.')
+  return(metadata)
+}, allDATA) %>%
+  rbindlist
+
+# Store results in synapse
+write.table(EXPR, file = 'rawExpression.tsv', sep = '\t', quote=F, row.names = F)
+obj = File('rawExpression.tsv', name = 'Raw Expression', parentId = CODE$properties$id)
+obj = synStore(obj, used = as.character(ALL_USED_IDs), executed = ThisFile, 
+               activityDescription = activityDescription, activityName = activityName)
+
+# Store results in synapse
+write.table(ALL.METADATA, file = 'rawMetaData.tsv', sep = '\t', quote=F, row.names = F)
+obj = File('rawMetaData.tsv', name = 'Raw Metadata', parentId = CODE$properties$id)
+obj = synStore(obj, used = as.character(ALL_USED_IDs), executed = ThisFile, 
+               activityDescription = activityDescription, activityName = activityName)
+```
+
+```{r fxns}
+# Function to do covariates adjustments
+covariatesAdjustments <- function(exprId, regionName, covId){
+  writeLines(paste0('Working on ',regionName))
+  
+  # Download expression data
+  expr <- read.table(synGet(exprId)@filePath, header=T, sep='\t', check.names = F)
+  expr <- expr[expr$Gene.Symbol!='',]
+  rownames(expr) <- expr$ID
+  ANNOTATIONS <- dplyr::select(expr,ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID)
+  expr <- dplyr::select(expr,-c(ID,GB_ACC,Gene.Symbol,ENTREZ_GENE_ID))
+  rownames(expr) = ANNOTATIONS$ID
+
+  # Collapse probe ids to hgnc symbols
+  Collapsed.obj <- collapseRows(expr,ANNOTATIONS$Gene.Symbol,ANNOTATIONS$ID)
+  expr <- Collapsed.obj$datETcollapsed
+
+  # Download covariates data
+  covar <- fread(synGet(covId)@filePath,sep='\t',header=T,data.table=F)
+  BrainBank <- covar$BrainBank
+  covar <- dplyr::select(covar,-(BrainBank))
+  covar <- dplyr::mutate(covar,Dx = ifelse(CDR<1,'Control','AD'))
+  rownames(covar) <- BrainBank
+
+  # Get covariates classification
+  FactorCovariates <- c('Sex','Race','CDR','Braak','NP1','Dx')
+  ContCovariates <- c('PMI','pH','Age','PLQ_Mn','NPrSum','NTrSum')
+
+  # Match expression to covariates data
+  ind <- match(colnames(expr),rownames(covar))
+  expr <- expr[,!is.na(ind)]
+  covar <- covar[ind[!is.na(ind)],]
+
+  # Convert covariates to factors and numeric variables accordingly
+  covar$Age = gsub('\\+','',covar$Age)
+  covar[,FactorCovariates] <- lapply(covar[,FactorCovariates], as.factor)
+  covar[,ContCovariates] <- lapply(covar[,ContCovariates], as.numeric)  
+
+  # Find PC of gene expression and significant covariates that are highly correlated with PCs
+  covar.tmp = covar
+  covar.tmp[,FactorCovariates] <- lapply(covar.tmp[,FactorCovariates], as.numeric)
+  preAdjustedSigCovars <- runPCAandPlotCorrelations(expr, covar.tmp, 'expression', isKeyPlot=TRUE)
+
+  # Plot significant data
+  print(preAdjustedSigCovars$PC_res[[2]]$plotData)
+  writeLines(paste('Significant covariates are:',paste(preAdjustedSigCovars$significantCovars,collapse=',')))
+
+  # Get design matrix
+  DESIGN <- getDesignMatrix(covar[,'Dx',drop=F], Intercept = F)
+  writeLines(paste('Fitting linear model with the following coefficients:',paste(colnames(DESIGN$design),collapse=',')))
+
+  # Fit linear model
+  fit <- lmFit(expr, design = DESIGN$design)
+
+  # Calculate residuals matrix
+  residualFit <- residuals.MArrayLM(fit, expr)
+  residualFit = residualFit + fit$coefficients[,c('DxAD','DxControl')] %*% t(DESIGN$design[,c('DxAD','DxControl')])
+
+  # Find correlation between residuals and covariates 
+  postAdjustedSigCovars <- runPCAandPlotCorrelations(residualFit, covar.tmp,'residual expression', isKeyPlot=TRUE)
+
+  if (length(postAdjustedSigCovars$significantCovars) != 0)
+    writeLines(paste('Following coefficients have to be included in the model:',paste(postAdjustedSigCovars$significantCovars,collapse=',')))
+
+  return(list(EXPR = expr,
+              COVAR = covar,
+              FIT = fit, 
+              RESIDUAL = residualFit, 
+              DESIGN = DESIGN, 
+              ANNOTATIONS = ANNOTATIONS))
+}
+```
+### Extract expression data and adjust covariates 
+```{r covariate.analysis, cache=TRUE, fig.height=10, fig.width=15, echo=FALSE, results='asis'}
+# SynIDs of expression and covariates matrix
+EXP_ID <- c('Middle Temporal' = 'syn3191101',
+            'Superior Temporal' = 'syn3191103',
+            'Inferior Temporal' = 'syn3191099',
+            'Superior Parietal Lobule' = 'syn3191119',
+            'Caudal Anterior Cingulate' = 'syn3191107',
+            'Parahippocampal Gyrus' = 'syn3191109',
+            'Frontal Pole' = 'syn3191107')
+COV_ID <- 'syn3205399'  
+
+# Obtain adjusted expession
+adjustedExpression <- mapply(covariatesAdjustments, EXP_ID, names(EXP_ID), MoreArgs= list(COV_ID), SIMPLIFY=F)
+```
+### Store files in synapse
+```{r synapse.store, include=FALSE, eval=TRUE}
+# Code
+CODE <- Folder(name = "MSBB Microarray", parentId ="syn5570248")
+CODE <- synStore(CODE)
+
+ALL.OBJ = mapply(function(exp, regionName, parentId, used, executed, activityName, activityDescription){
+  # Expression
+  expr = rownameToFirstColumn(exp$EXPR, 'hgnc_symbols')
+  write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
+  obj = File('expression.tsv', 
+             name = paste('Expression',regionName), 
+             parentId = parentId)
+  obj = synStore(obj,
+             used = used, 
+             activityName = activityName, 
+             executed = executed, 
+             activityDescription = activityDescription)
+  
+  # Covariates
+  expr = rownameToFirstColumn(exp$COVAR, 'SampleId')
+  write.table(expr, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
+  obj = File('covariates.tsv', 
+             name = paste('Covariates',regionName), 
+             parentId = parentId)
+  obj = synStore(obj,
+             used = used, 
+             activityName = activityName, 
+             executed = executed, 
+             activityDescription = activityDescription)
+},adjustedExpression, names(adjustedExpression), 
+MoreArgs = list(CODE$properties$id, ALL_USED_IDs, thisFile, activityName, activityDescription), 
+SIMPLIFY = F)       
+```

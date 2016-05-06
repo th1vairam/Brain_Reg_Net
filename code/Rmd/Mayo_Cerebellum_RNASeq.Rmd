@@ -1,8 +1,8 @@
 ---
 title: "Covariate analysis of UFL-Mayo-ISB RNASeq from cerebellum"
 author: "Thanneer Perumal"
-date: "`r date()`"
-output: html_document
+date: '`r date()`'
+output: "html_document"
 ---
 ```{r knit2synapse, eval=FALSE}
 library(knit2synapse)
@@ -24,6 +24,7 @@ library(synapseClient)
 library(ggplot2)
 library(reshape2)
 library(data.table)
+library(plyr)
 library(dplyr)
 library(stringr)
 library(limma)
@@ -60,7 +61,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse_parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
 parentId = 'syn5570325';
 activityName = 'Covariate analysis';
@@ -74,7 +75,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain count matrix and metadata from synapse.
-```{r download.data, cache=TRUE}
+```{r download_data, cache=TRUE}
 # Download expression data
 COUNT_ID <- 'syn5201012';
 ALL_USED_IDs <- COUNT_ID
@@ -89,7 +90,7 @@ METADATA <- read.table(METADATA_OBJ@filePath,sep=',',header=T, stringsAsFactors=
 ```
 
 ### Data preprocessing
-```{r preprocess.data, echo=TRUE}
+```{r preprocess_data, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
@@ -97,7 +98,7 @@ METADATA <- METADATA %>%
   dplyr::filter(!(SampleID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER")))
 ```
 Following five samples were considered outliers and removed 742\_CER, 11386\_CER, 11311\_CER, 1923\_CER, 11477\_CER, based on the eucledian distance from other samples and/or seperated on the first 2 PC's
-```{r preprocess.data1}
+```{r preprocess_data1}
 indToRetain = intersect(METADATA$SampleID, colnames(COUNT))
 
 EXPR <- COUNT;
@@ -115,7 +116,7 @@ Dorsolateral prefrontal cortex of `r dim(EXPR)[2]` subjects from the Mayo cohort
 
 ### Covariate clustering
 Determine relationship between covariates. 
-```{r covariates.clustering}
+```{r covariates_clustering}
 FactorCovariates <- c("Source", "Diagnosis",  "Sex",  "ApoE", "Flowcell")
 ContCovariates <- c("RIN", "AgeAtDeath")
   
@@ -129,14 +130,14 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
 COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 ```
 Covariate correlation
-```{r covariates.correlation, fig.width=10, fig.height=10}
+```{r covariates_correlation, fig.width=10, fig.height=10}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.1)
 ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.3, row.width=0.15)
 ```
 
 ### Gene Filtering
 Retain genes with atleast 50% of the samples have >= 1 gene counts
-```{r gene.filtering, results='asis', echo=FALSE}
+```{r gene_filtering, results='asis', echo=FALSE}
 # Remove genes
 EXPR <- getGeneFilteredGeneExprMatrix(EXPR, 
                                       MIN_GENE_CPM=1,
@@ -146,7 +147,7 @@ EXPR <- getGeneFilteredGeneExprMatrix(EXPR,
 
 ### Normalisation (with NULL)
 Initial normalisation usign voom (with NULL design)
-```{r initial.voom.normalisation}
+```{r initial_voom_normalisation}
 # Initial normalisation of gene expression
 VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=T)
 
@@ -154,7 +155,7 @@ VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=T)
 DM = getDesignMatrix(COVARIATES, Intercept = F)
 ```
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E)
 
@@ -170,7 +171,8 @@ p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=a
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
-
+```
+```{r decompse.normalise.data2, fig.height=10, fig.width=25, results='asis'}
 # Tree based clustering
 sampleTrees = flashClust::hclust(dist(t(VOOM.GENE_EXPRESSION$E)), method = "average")
 tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
@@ -184,7 +186,7 @@ dev.off()
 
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
-```{r preAdjusted.covariates, results='asis', echo=FALSE}
+```{r preAdjusted_covariates, results='asis', echo=FALSE}
 # Find correlation between PC's of gene expression with covariates
 DESIGN = getDesignMat2Fact(DM$design,FactorCovariates)
 colnames(DESIGN) = substr(colnames(DESIGN),1,50)
@@ -197,12 +199,12 @@ adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),
                                      preAdjustedSigCovars$significantCovars)
 ```
 Significant covariates to adjust at FDR 0.1 are `r paste(gsub('_','\\\\_',adjustCovars), collapse= ',')`
-```{r preAdjustedSigCovars.NULL.ALL, fig.width=25, fig.height=12}
+```{r preAdjustedSigCovars_NULL_ALL, fig.width=25, fig.height=12}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative)
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
-```{r iterative.adjusted.voom.normalisation, results='asis', echo=FALSE}
+```{r iterative_adjusted_voom_normalisation, results='asis', echo=FALSE}
 postAdjustCovars = c('Diagnosis')
  
 # Assign residual covariates
@@ -262,7 +264,7 @@ tmp <- paste('Using following covariates in the final model:', modelStr)
 ```
 `r tmp`
 
-```{r adjusted.voom.normalisation, results='asis', echo=FALSE}
+```{r adjusted_voom_normalisation, results='asis', echo=FALSE}
 # Post adjusted design matrix
 DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F], Intercept = F)
 tmp = linColumnFinder(DM1$design)
@@ -281,7 +283,7 @@ VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION$E,
 ```
 ### Sanity Check
 Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
-```{r calculate.residuals, include=FALSE, results = 'asis'}
+```{r calculate_residuals, include=FALSE, results = 'asis'}
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
                                               VOOM.ADJUSTED.GENE_EXPRESSION$E)
@@ -292,7 +294,7 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
                                               'residual matrix of all adjusted design(voom-normalized)',
                                               isKeyPlot=TRUE)
 ```
-```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
+```{r residualSigCovars_ALL, fig.width=25, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 Add "Diagnosis"" back to the residuals
@@ -304,7 +306,7 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensem
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data3, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
 
@@ -320,7 +322,8 @@ p <- p + geom_point(aes(color=factor(Diagnosis), shape=as.factor(Source), size=a
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
-
+```
+```{r decompse.normalise.data4, fig.height=8, fig.width=25, results='asis'}
 # Tree based clustering
 sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
 tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 200, minSize=3)
@@ -338,7 +341,7 @@ tmp = data.frame(summary(COVARIATES$Diagnosis))
 colnames(tmp) = "No. of samples"
 kable(tmp)
 ```
-```{r get.gene.symbols, cache=TRUE}
+```{r get_gene_symbols, cache=TRUE}
 # Define biomart object
 mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
 
@@ -351,7 +354,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp}
+```{r diffExp, fig.height=10, fig.width=16}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("DiagnosisControl-DiagnosisAD",
                                      "DiagnosisControl-DiagnosisPSP",
@@ -381,12 +384,11 @@ DE = ldply(DE, .id = 'Comparison')
 tmp = DE %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
   group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)),
-                   DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+  dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)))
 kable(tmp)
 ```
 ### Store files in synapse
-```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+```{r synapse_store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
 CODE <- Folder(name = 'UFL_Mayo_ISB Cerebellum RNASeq', parentId = parentId)
 CODE <- synStore(CODE)
