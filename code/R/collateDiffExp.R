@@ -24,7 +24,7 @@ synapseLogin()
 thisFileName <- 'collateDiffExp.R'
 
 # Github link
-thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='metaAnal')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/R/',thisFileName))
 
 # Get protein coding genes from biomaRt
@@ -59,7 +59,7 @@ DEXP_OBJ = synStore(DEXP_OBJ,
                    executed = thisFile)
 
 logFC = diffExp %>%
-  filter(adj.P.Val <= 0.05, abs(logFC) <= 1) %>%
+  filter(adj.P.Val <= 0.05, abs(logFC) >= 2) %>%
   dplyr::select(DataSetName, Comparison, ensembl_gene_id, logFC) %>%
   unite(DataSet.Comparison, DataSetName, Comparison, sep = ' ') %>%
   spread(DataSet.Comparison, logFC)
