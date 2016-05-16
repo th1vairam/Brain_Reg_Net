@@ -8,29 +8,28 @@ calcCompleteCorAndPlot <- function(COMPARE_data, COVAR_data, correlationType, ti
   FactorCovariates <- colnames(COVAR_data)[sapply(COVAR_data,is.factor)]
   ContCovariates <- setdiff(colnames(COVAR_data),FactorCovariates)
   
-  # Convert factor covariates to numeric vector
-  COVAR_data[,FactorCovariates] <- apply(COVAR_data[,FactorCovariates],2,
-                                          function(x){x <- unclass(x)})
-    
   # Calculate correlation between compare_data and factor covariates
   if (length(FactorCovariates) > 0){
     comb <- expand.grid(colnames(COMPARE_data),FactorCovariates)
-    factCont_cor <- apply(comb,1,
-                          getFactorContAssociationStatistics,
-                          cbind(COMPARE_data,COVAR_data[rownames(COMPARE_data),FactorCovariates]),
-                          alpha=MAX_FDR)
-    factCont_cor_vals <- matrix(factCont_cor['Estimate',],
-                                nrow = length(colnames(COMPARE_data)),
-                                ncol = length(FactorCovariates))
-    factCont_cor_p <- matrix(factCont_cor['Pval',],
-                             nrow = length(colnames(COMPARE_data)),
-                             ncol = length(FactorCovariates))
+    factCont_cor <- plyr::ddply(comb,
+                                .(Var1, Var2),
+                                .fun = getFactorContAssociationStatistics,
+                                cbind(COMPARE_data,COVAR_data[rownames(COMPARE_data),FactorCovariates,drop=F]),
+                                alpha=MAX_FDR)
+    factCont_cor_vals <- factCont_cor %>%
+      dplyr::select(Var1, Var2, Estimate) %>%
+      tidyr::spread(Var2, Estimate)
+    rownames(factCont_cor_vals) <- factCont_cor_vals$Var1
+    factCont_cor_vals$Var1 <- NULL
+    factCont_cor_vals = factCont_cor_vals %>% data.matrix()
     
-    rownames(factCont_cor_vals) <- colnames(COMPARE_data)
-    colnames(factCont_cor_vals) <- FactorCovariates
+    factCont_cor_p <- factCont_cor %>%
+      dplyr::select(Var1, Var2, Pval) %>%
+      tidyr::spread(Var2, Pval)
+    rownames(factCont_cor_p) <- factCont_cor_p$Var1
+    factCont_cor_p$Var1 <- NULL
+    factCont_cor_p = factCont_cor_p %>% data.matrix()
     
-    rownames(factCont_cor_p) <- colnames(COMPARE_data)
-    colnames(factCont_cor_p) <- FactorCovariates
   } else {
     factCont_cor_vals <- NULL
     factCont_cor_p <- NULL
@@ -39,7 +38,7 @@ calcCompleteCorAndPlot <- function(COMPARE_data, COVAR_data, correlationType, ti
   # Calculate correlation between compare_data and factor covariates
   if (length(ContCovariates) > 0){
     cont_cor <- corr.test(COMPARE_data,
-                          COVAR_data[,ContCovariates],
+                          COVAR_data[,ContCovariates, drop=F],
                           use='pairwise.complete.obs',
                           method=correlationType, 
                           adjust="none")

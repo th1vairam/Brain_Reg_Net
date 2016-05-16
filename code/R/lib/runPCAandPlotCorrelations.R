@@ -1,8 +1,9 @@
 # Function to run principal component analysis and plot correlations
 runPCAandPlotCorrelations <- function(genesBySamples, samplesByCovariates, dataName, isKeyPlot=FALSE, 
-                                      SCALE_DATA_FOR_PCA = TRUE, MIN_PVE_PCT_PC = 1.0, CORRELATION_TYPE = "pearson",
+                                      SCALE_DATA_FOR_PCA = TRUE, MIN_PVE_PCT_PC = 1.0, CORRELATION_TYPE = 'pearson',
                                       ALSO_PLOT_ALL_COVARS_VS_PCA = TRUE, MAX_NUM_LEVELS_PER_COVAR = 50) {
       
+  
   title = paste(ifelse(SCALE_DATA_FOR_PCA, "S", "Un-s"), "caled ", dataName, " ", " data in PCA; PVE >= ", MIN_PVE_PCT_PC, "%; ", CORRELATION_TYPE, " correlations ", sep="")
   writeLines(paste("\nRunning PCA and calculating correlations for:\n", title, sep=""))
  
