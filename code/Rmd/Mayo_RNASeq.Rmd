@@ -120,6 +120,7 @@ METADATA = rbindlist(list(METADATA_TC, METADATA_CE), use.names = T, fill = T) %>
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
 METADATA$BrainRegion.Diagnosis = paste(METADATA$BrainRegion, METADATA$Diagnosis, sep = '.')
+METADATA$RIN2 = METADATA$RIN^2
 METADATA <- METADATA %>%
   dplyr::filter(!(ID %in% c("742_CER", "11386_CER","11311_CER","1923_CER","11477_CER", "11344_CER", 
                             "1923_TCX", "11423_TCX", "1940_TCX", "7095_TCX", "11408_TCX")))
@@ -162,7 +163,7 @@ vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "AgeAtDeath")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
