@@ -143,7 +143,7 @@ COUNT$ensembl_id = NULL
 ```
 `r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD portal
 
-```{r diagnosisPlots, fig.height=6, fig.width = 12}
+```{r diagnosisPlots, fig.height=10, fig.width = 15}
 # RIN
 p = list()
 p[[1]] = ggplot(METADATA, aes(x = Diagnosis, y = RIN, fill = Tissue)) + geom_boxplot()
@@ -203,7 +203,7 @@ colnames(DESIGN) = substr(colnames(DESIGN),1,50)
 ```
 
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data1, fig.height=10, fig.width=10, results='asis'}
+```{r decompse.normalise.data1, fig.height=15, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E)
 
@@ -242,7 +242,6 @@ COVARIATES.tmp[,FactorCovariates] = lapply(COVARIATES.tmp[,FactorCovariates], as
 WGCNA::plotDendroAndColors(sampleTrees, 
                            labels2colors(cbind(tree,COVARIATES.tmp)),
                            groupLabels = c('Cluster',colnames(COVARIATES.tmp)))
-gc()
 dev.off()
 
 tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[tree == 0], collapse = ','))
@@ -255,6 +254,7 @@ writeLines(tmp)
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, results='asis', echo=FALSE}
+gc()
 # Find correlation between PC's of gene expression with covariates
 preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, COVARIATES,
                                                  'NULL design(voom-normalized)',
@@ -384,8 +384,10 @@ clust = clust[rownames(COVARIATES)]
 ```
 ```{r decompse.normalise.data4, fig.height=10, fig.width=25, results='asis'}
 # Tree based clustering
+COVARIATES.tmp = COVARIATES
+COVARIATES.tmp[, FactorCovariates] = sapply(COVARIATES.tmp[,FactorCovariates], as.numeric)
 plotDendroAndColors(sampleTrees, 
-                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES)), 
+                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES.tmp)), 
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES))
@@ -423,7 +425,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=10, fig.width=16}
+```{r diffExp, fig.height=25, fig.width=25}
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
   "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
