@@ -159,7 +159,7 @@ vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
 ```
 
 ### Cell type markers (i.e., eigen genes of cell types) as additional covariates
-```{r cellMark}
+```{r cellMark, fig.height=10, fig.width = 15}
 load(synGet('syn4893059')@filePath)
 GeneSets = GeneSets[grep("Zhang", names(GeneSets))] %>%
   ldply(.fun = function(x){
@@ -186,7 +186,8 @@ p = METADATA %>%
   dplyr::select(Diagnosis, Tissue, one_of(colnames(COVARIATES.cellmarkers))) %>%
   gather(CellType, EigenGeneExpression, -ID, -Diagnosis, -Tissue) %>%
   ggplot(aes(x = Diagnosis, y = abs(EigenGeneExpression), fill = Tissue)) + geom_boxplot() + facet_grid(.~CellType)
-p                         
+p = p +  theme(axis.text.x = element_text(angle = 90, hjust = 1))   
+p
 ```
 
 ### Covariate clustering
@@ -251,15 +252,15 @@ p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(OPC)))
 p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
-pl[[1]] <- p
+pl[[1]] <- p + xlab(paste0('PC1(', round(PC$sdev[1]^2/sum(PC$sdev^2)*100), '%)')) + ylab(paste0('PC2(', round(PC$sdev[2]^2/sum(PC$sdev^2)*100), '%)'))
 
 p <- ggplot(plotdata, aes(x=PC3, y=PC4))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Diagnosis), size=as.numeric(OPC)))
 p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
-pl[[2]] <- p
+pl[[2]] <- p + xlab(paste0('PC3(', round(PC$sdev[3]^2/sum(PC$sdev^2)*100), '%)')) + ylab(paste0('PC4(', round(PC$sdev[4]^2/sum(PC$sdev^2)*100), '%)'))
 
-multiplot(plotlist = pl, cols = 1)
+multiplot(plotlist = pl, cols = 2)
 ```
 ```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
 # Tree based clustering
@@ -373,7 +374,7 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensem
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
+```{r decompse.normalise.data3, fig.height=15, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T)
 
@@ -477,6 +478,8 @@ for (i in 1:12){
     left_join(Ensemble2HGNC)
   p[[i]] <- ggplot(DE[[i]], aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
   p[[i]] <- p[[i]] + geom_hline(yintercept = -log10(0.05), color = 'red') 
+  p[[i]] <- p[[i]] + geom_vline(xintercept = -log2(1.5), color = 'red')
+  p[[i]] <- p[[i]] + geom_vline(xintercept = log2(1.5), color = 'red')
   p[[i]] <- p[[i]] + ggtitle(gsub('BrainRegion.Diagnosis','',colnames(contrast)[i]))
 }
 multiplot(plotlist=p, cols = 3)
@@ -484,7 +487,7 @@ names(DE) = gsub('BrainRegion.Diagnosis','',colnames(contrast))
 
 DE = plyr::ldply(DE, .id = 'Comparison')
 tmp = DE %>% 
-  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.5)) %>%
   group_by(Comparison) %>%
   dplyr::summarize(nDiffExpGenes = length(unique(hgnc_symbol)))
 kable(tmp)
