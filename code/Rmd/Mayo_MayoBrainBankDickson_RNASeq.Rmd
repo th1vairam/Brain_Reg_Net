@@ -423,7 +423,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=25, fig.width=25}
+```{r diffExp, fig.height=16, fig.width=25}
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
   "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
