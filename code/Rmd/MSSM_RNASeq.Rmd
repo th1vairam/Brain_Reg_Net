@@ -176,6 +176,32 @@ Covariate correlation
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.3, row.width=0.15)
 ```
+
+```{r dataExplore, fig.width = 10, fig.height = 10}
+# RIN
+p = list()
+p[[1]] = ggplot(METADATA, aes(x = Dx, y = RIN, fill = BrainRegion)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('RIN') + theme(legend.position = 'top')
+
+# AgeAtDeath
+p[[2]] = ggplot(METADATA, aes(x = Dx, y = as.numeric(AOD), fill = BrainRegion)) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + theme(legend.position = 'top')
+
+# Mean Plaque
+p[[3]] = ggplot(METADATA, aes(x = Dx, y = as.numeric(PlaqueMean), fill = BrainRegion)) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PlaqueMean') + theme(legend.position = 'top')
+
+# Mean Plaque
+p[[4]] = ggplot(METADATA, aes(x = Dx, y = as.numeric(NP.1), fill = BrainRegion)) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('NP.1') + theme(legend.position = 'top')
+
+multiplot(plotlist = p, cols = 2)
+
+# Sex
+vcd::mosaic(~ SEX + Dx + BrainRegion, data = METADATA)
+```
+
+
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
 
