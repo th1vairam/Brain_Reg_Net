@@ -3,7 +3,6 @@
 getFactorContAssociationStatistics <- function(factorContNames,COVARIATES, na.action='remove', 
                                                alpha = 0.05){
   require(psych)
-  
   factorContNames = factorContNames %>% unlist %>% as.character()
   
   if (na.action == "remove")

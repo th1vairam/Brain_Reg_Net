@@ -1,18 +1,25 @@
 getAssociationStatistics <- function(COVARIATES, PVAL=0.05){
 
+  require(plyr)
   # Get factor and continuous covariates
   FactorCovariates <- names(COVARIATES)[sapply(COVARIATES,is.factor)]
   ContCovariates <- setdiff(names(COVARIATES),FactorCovariates)
   
-  # Convert factor covariates to numeric vector
-  COVARIATES[,FactorCovariates] <- lapply(COVARIATES[,FactorCovariates],
-                                          function(x){x <- as.numeric(unclass(x))})
-
+  # Convert factor covariates to numeric vector of factors
+  COVARIATES[,FactorCovariates] <- lapply(COVARIATES[,FactorCovariates],as.numeric)
+  COVARIATES[,FactorCovariates] <- lapply(COVARIATES[,FactorCovariates],as.factor)
+  
   # Find association between factor covariates
-  if (length(FactorCovariates) != 0 & length(FactorCovariates) != 1){
-    COVARIATES.FACTOR.CORRELATION = apply(expand.grid(FactorCovariates,FactorCovariates),1,getFactorAssociationStatistics,COVARIATES[,FactorCovariates])
-    COVARIATES.FACTOR.CORRELATION.ESTIMATE <- matrix(COVARIATES.FACTOR.CORRELATION['Estimate',],nrow=length(FactorCovariates),ncol=length(FactorCovariates))
-    COVARIATES.FACTOR.CORRELATION.PVAL <- matrix(COVARIATES.FACTOR.CORRELATION['Pval',],nrow=length(FactorCovariates),ncol=length(FactorCovariates))
+  if (length(FactorCovariates) > 1){
+    COVARIATES.FACTOR.CORRELATION = apply(expand.grid(FactorCovariates,FactorCovariates),
+                                          1, getFactorAssociationStatistics,
+                                          COVARIATES[,FactorCovariates])
+    COVARIATES.FACTOR.CORRELATION.ESTIMATE <- matrix(COVARIATES.FACTOR.CORRELATION['Estimate',],
+                                                     nrow=length(FactorCovariates),
+                                                     ncol=length(FactorCovariates))
+    COVARIATES.FACTOR.CORRELATION.PVAL <- matrix(COVARIATES.FACTOR.CORRELATION['Pval',],
+                                                 nrow=length(FactorCovariates),
+                                                 ncol=length(FactorCovariates))
   
     colnames(COVARIATES.FACTOR.CORRELATION.ESTIMATE) <- FactorCovariates
     rownames(COVARIATES.FACTOR.CORRELATION.ESTIMATE) <- FactorCovariates
@@ -34,7 +41,7 @@ getAssociationStatistics <- function(COVARIATES, PVAL=0.05){
     
   # Find correlation between continuous covariates
   if (length(ContCovariates) > 1){
-    tmp <- apply(COVARIATES[,ContCovariates,drop=F],2,as.numeric)
+    tmp <- apply(COVARIATES[,ContCovariates], 2, as.numeric)
     COVARIATES.CONT.CORRELATION = corr.test(tmp,use = 'pairwise.complete.obs')
     COVARIATES.CONT.CORRELATION.ESTIMATE = COVARIATES.CONT.CORRELATION$r
     COVARIATES.CONT.CORRELATION.PVAL = COVARIATES.CONT.CORRELATION$p
@@ -53,15 +60,21 @@ getAssociationStatistics <- function(COVARIATES, PVAL=0.05){
     
   # Find interclass correlation between factor and continuous covariates
   if (length(FactorCovariates) > 0 & length(ContCovariates) > 0){
-    COVARIATES.FACTORCONT.CORRELATION = apply(expand.grid(FactorCovariates,ContCovariates),1,getFactorContAssociationStatistics,COVARIATES[,c(FactorCovariates,ContCovariates)])
-    COVARIATES.FACTORCONT.CORRELATION.ESTIMATE <- matrix(COVARIATES.FACTORCONT.CORRELATION['Estimate',],nrow=length(FactorCovariates),ncol=length(ContCovariates))
-    COVARIATES.FACTORCONT.CORRELATION.PVAL <- matrix(COVARIATES.FACTORCONT.CORRELATION['Pval',],nrow=length(FactorCovariates),ncol=length(ContCovariates))
+    COVARIATES.FACTORCONT.CORRELATION = plyr::ddply(expand.grid(FactorCovariates,ContCovariates),
+                                                    .(Var1, Var2), .fun = getFactorContAssociationStatistics,
+                                                    COVARIATES[,c(FactorCovariates,ContCovariates)])
+    COVARIATES.FACTORCONT.CORRELATION.ESTIMATE <- matrix(COVARIATES.FACTORCONT.CORRELATION[, 'Estimate'],
+                                                         nrow=length(ContCovariates),
+                                                         ncol=length(FactorCovariates))
+    COVARIATES.FACTORCONT.CORRELATION.PVAL <- matrix(COVARIATES.FACTORCONT.CORRELATION[, 'Pval'],
+                                                     nrow=length(ContCovariates),
+                                                     ncol=length(FactorCovariates))
     
-    colnames(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE) <- ContCovariates
-    rownames(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE) <- FactorCovariates
+    colnames(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE) <- FactorCovariates
+    rownames(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE) <- ContCovariates
     
-    colnames(COVARIATES.FACTORCONT.CORRELATION.PVAL) <- ContCovariates
-    rownames(COVARIATES.FACTORCONT.CORRELATION.PVAL) <- FactorCovariates
+    colnames(COVARIATES.FACTORCONT.CORRELATION.PVAL) <- FactorCovariates
+    rownames(COVARIATES.FACTORCONT.CORRELATION.PVAL) <- ContCovariates
   } else {
     COVARIATES.FACTORCONT.CORRELATION.ESTIMATE <- NULL
     COVARIATES.FACTORCONT.CORRELATION.PVAL<- NULL
@@ -75,11 +88,15 @@ getAssociationStatistics <- function(COVARIATES, PVAL=0.05){
     COVARIATES.CORRELATION.ESTIMATE = COVARIATES.CONT.CORRELATION.ESTIMATE
     COVARIATES.CORRELATION.PVAL = COVARIATES.CONT.CORRELATION.PVAL
   }else if (length(FactorCovariates) != 0 & length(ContCovariates) != 0){
-    COVARIATES.CORRELATION.ESTIMATE = rbind(cbind(COVARIATES.FACTOR.CORRELATION.ESTIMATE,COVARIATES.FACTORCONT.CORRELATION.ESTIMATE),
-                                            cbind(t(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE),COVARIATES.CONT.CORRELATION.ESTIMATE))
+    COVARIATES.CORRELATION.ESTIMATE = rbind(cbind(COVARIATES.FACTOR.CORRELATION.ESTIMATE,
+                                                  t(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE)),
+                                            cbind(COVARIATES.FACTORCONT.CORRELATION.ESTIMATE,
+                                                  COVARIATES.CONT.CORRELATION.ESTIMATE))
     
-    COVARIATES.CORRELATION.PVAL = rbind(cbind(COVARIATES.FACTOR.CORRELATION.PVAL,COVARIATES.FACTORCONT.CORRELATION.PVAL),
-                                        cbind(t(COVARIATES.FACTORCONT.CORRELATION.PVAL),COVARIATES.CONT.CORRELATION.PVAL))
+    COVARIATES.CORRELATION.PVAL = rbind(cbind(COVARIATES.FACTOR.CORRELATION.PVAL,
+                                              t(COVARIATES.FACTORCONT.CORRELATION.PVAL)),
+                                        cbind(COVARIATES.FACTORCONT.CORRELATION.PVAL,
+                                              COVARIATES.CONT.CORRELATION.PVAL))
   }else{
     COVARIATES.CORRELATION.ESTIMATE = NULL    
     COVARIATES.CORRELATION.PVAL = NULL
