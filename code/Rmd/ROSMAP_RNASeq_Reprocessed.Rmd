@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of ROSMAP RNASeq"
+title: "Covariate analysis of ROSMAP Reprocessed RNASeq"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -11,11 +11,10 @@ library(synapseClient)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq.Rmd",
+knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Reprocessed.Rmd",
                                  parentId ="syn5570291",
                                  entityName = 'ROSMAP RNASeq Reprocessed Counts (Based on cogdx)')
 ```
-
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
 ## It is assumed your working directory is where this file
@@ -181,7 +180,6 @@ vcd::mosaic(~ Batch + cogdx, data = COVARIATES)
 # Sex
 vcd::mosaic(~ msex + cogdx, data = COVARIATES)
 ```
-
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
 
@@ -196,7 +194,7 @@ Initial normalisation usign voom (with NULL design)
 VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=NULL, plot=T)
 ```
 ### Outlier analysis
-Clustering of initial normalised data (with NULL design)
+Clustering of voom adjusted data (with NULL design)
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale.=T, center = T)
