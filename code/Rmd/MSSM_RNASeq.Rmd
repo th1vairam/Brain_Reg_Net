@@ -23,7 +23,7 @@ knit2synapse::knitToFolderEntity(file = "./MSSM_RNASeq.Rmd",
 cat("\014") 
 
 ## Load required libraries
-library(CovariateAnalysis)
+library(CovariateAnalysis) # Get the utilities package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
 library(tidyr)
 library(plyr)
@@ -174,7 +174,7 @@ COUNT = COUNT[, rownames(COVARIATES)]
 Covariate correlation
 ```{r covariates.correlation, fig.width=10, fig.height=10}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
-ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.3, row.width=0.15)
+ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
 ```
 
 ```{r dataExplore, fig.width = 10, fig.height = 10}
@@ -191,7 +191,7 @@ p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + theme(legend.position = 'top')
 p[[3]] = ggplot(METADATA, aes(x = Dx, y = as.numeric(PlaqueMean), fill = BrainRegion)) + geom_boxplot()
 p[[3]] = p[[3]] + ggtitle('PlaqueMean') + theme(legend.position = 'top')
 
-# Mean Plaque
+# NP.1
 p[[4]] = ggplot(METADATA, aes(x = Dx, y = as.numeric(NP.1), fill = BrainRegion)) + geom_boxplot()
 p[[4]] = p[[4]] + ggtitle('NP.1') + theme(legend.position = 'top')
 
@@ -200,7 +200,6 @@ multiplot(plotlist = p, cols = 2)
 # Sex
 vcd::mosaic(~ SEX + Dx + BrainRegion, data = METADATA)
 ```
-
 
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
@@ -219,7 +218,7 @@ VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=NULL, pl
 Clustering of initial normalised data (with NULL design)
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale.=T)
+PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
@@ -234,27 +233,26 @@ p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values =
 # p <- p + geom_text(aes(label= ID), size=4, hjust=1)
 p
 
-COVARIATES.tmp = data.matrix(COVARIATES)
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,FactorCovariates])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(VOOM.GENE_EXPRESSION$E)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
-tmp = gsub('\\..*','',cols)
+
 WGCNA::plotDendroAndColors(tree, 
-                           colors = tmp, 
+                           colors = cols, 
                            dendroLabels = FALSE, 
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
-                           groupLabels = colnames(COVARIATES.tmp))
+                           groupLabels = colnames(COVARIATES.tmp[,FactorCovariates]))
 dev.off()
 ```
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
-COVARIATES.tmp = COVARIATES
-COVARIATES.tmp[, FactorCovariates] = sapply(COVARIATES.tmp[, FactorCovariates], as.numeric)
-preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, COVARIATES.tmp,'NULL design(voom-normalized)', isKeyPlot=TRUE, MIN_PVE_PCT_PC = 1)
+preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, COVARIATES,'NULL design(voom-normalized)', isKeyPlot=TRUE, MIN_PVE_PCT_PC = 1)
 ```
 Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
 ```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
@@ -303,7 +301,7 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                COVARIATES.tmp[, residCovars, drop=F], 'all adjusted design(voom-normalized)',
+                                                COVARIATES[, residCovars, drop=F], 'all adjusted design(voom-normalized)',
                                                 isKeyPlot=TRUE)
   
   # Add postadjusted covariates (if any)
@@ -334,7 +332,7 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 ### Clustering residual data
 ```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale. = T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
@@ -373,6 +371,9 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
 RESIDUAL.GENE_EXPRESSION <- left_join(rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, "ensembl_gene_id"),
                                       Ensemble2HGNC) %>%
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+VOOM.ADJUSTED.GENE_EXPRESSION$E <- left_join(rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRESSION$E, "ensembl_gene_id"),
+                                             Ensemble2HGNC) %>%
+  dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
@@ -410,7 +411,7 @@ for (i in 1:dim(contrast)[2]){
   p[[i]] <- p[[i]] + ggtitle(gsub('BrainRegion.Dx','',colnames(contrast)[i])) + xlim(c(-1.5,1.5)) + ylim(c(0,6))
   p[[i]] <- p[[i]] + geom_hline(yintercept = -log10(0.05), color = 'red')
 }
-multiplot(plotlist=p, cols = 3)
+multiplot(plotlist=p, cols = 4)
 names(DE) = gsub('BrainRegion.Dx','',colnames(contrast))
 
 DE = DE %>% ldply(.id = 'Comparison')
@@ -432,17 +433,27 @@ CODE <- Folder(name = "MSBB RNASeq", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Expression
-expr = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsembleIDs')
-write.table(expr, file='expression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(RESIDUAL.GENE_EXPRESSION, file='expression.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('expression.tsv', 
            name = 'Voom Adjusted Weighted Residual Expression (BrainRegion.Dx added)', 
            parentId = CODE$properties$id)
 expr_obj = synStore(obj,
-               used = ALL_USED_IDs, 
-               activityName = activityName, 
-               executed = thisFile, 
-               activityDescription = activityDescription)
+                    used = ALL_USED_IDs, 
+                    activityName = activityName, 
+                    executed = thisFile, 
+                    activityDescription = activityDescription)
   
+# Raw Expression
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file='MSSMlogCPM.tsv', sep = '\t', row.names=F, quote=F)
+obj = File('MSSMlogCPM.tsv', 
+           name = 'Raw logCPM',
+           parentId = CODE$properties$id)
+rawcpm_obj = synStore(obj,
+                    used = ALL_USED_IDs, 
+                    activityName = activityName, 
+                    executed = thisFile, 
+                    activityDescription = activityDescription)
+
 # Covariates
 covar = rownameToFirstColumn(COVARIATES, 'SampleId')
 write.table(covar, file='covariates.tsv', sep = '\t', row.names=F, quote=F)
