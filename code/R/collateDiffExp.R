@@ -35,32 +35,60 @@ humanProteinCodingGenes = getBM(attributes=c("ensembl_gene_id","external_gene_na
                                 values=c('protein_coding'), 
                                 mart=ensemblHSapiens)
 
+#### Get all covariates
+covariates.id = c('ROSMAP' = 'syn6114444', 
+                  'MSBB' = 'syn5573110',
+                  'Mayo' = 'syn6088521')
+covariates = lapply(covariates.id, downloadFile)
+
+covariates$ROSMAP = covariates$ROSMAP %>%
+  dplyr::select(Sampleid, msex, cogdx) %>%
+  dplyr::rename(ID = Sampleid, Gender = msex, Status = cogdx) %>%
+  dplyr::mutate(Gender = factor(Gender, labels = c('1' = 'male','2'='female')),
+                Status = factor(Status, labels = c('1' = 'NCI', '2' = 'MCI', '3' = 'MCI.CI', 
+                                                   '4' = 'AD', '5' = 'AD.CI', '6' = 'OD')),
+                BrainRegion = 'DLPFC') %>%
+  dplyr::filter(Status %in% c('NCI', 'AD'))
+
+covariates$MSBB = covariates$MSBB %>%
+  dplyr::select(SampleId, SEX, BrainRegion.Dx) %>%
+  tidyr::separate(BrainRegion.Dx, c('BrainRegion', 'Dx'), sep = '\\.') %>%
+  dplyr::rename(ID = SampleId, Gender = SEX, Status = Dx) %>%
+  dplyr::mutate(Gender = factor(Gender, labels = c('M' = 'male','F'='female')),
+                Status = factor(Status)) %>%
+  dplyr::filter(Status %in% c('ND', 'SD'))
+
+covariates = rbindlist(covariate, use.names = T, fill = T, idcol = 'Study')
+
+#### Get raw expression values
+logcpm.id = c('ROSMAP' = 'syn6114447', 'MSBB' = 'syn6117295')
+logcpm = lapply(logcpm.id, downloadFile)
+
 # Get all differential expresison results from synapse
-diffExp.ids = c('ROSMAP DLPFC' = 'syn5608845',
-                'MSBB Frontal Pole' = 'syn6037382',
-                'MSBB Superior Temporal Gyrus'	= 'syn6037356',
-                'MSBB Para Hippocampal Gyrus' = 'syn6037276',
-                'MSBB Inferior Frontal Gyrus' = 'syn6037095',
-                'Mayo Cerebellum' = 'syn5609850',
-                'Mayo Temporal Cortex' = 'syn5609813')
-diffExp = lapply(diffExp.ids, downloadFile) %>%
+diffexp.id = c('ROSMAP' = 'syn6114453',
+               'MSBB' = 'syn5609009',
+               'Mayo' = 'syn6088525')
+
+diffexp = lapply(diffexp.id, downloadFile) %>%
   rbindlist(idcol = 'DataSetName', fill=T, use.names=T) %>%
-  dplyr::select(-genes, -position) %>%
   filter(ensembl_gene_id %in% humanProteinCodingGenes$ensembl_gene_id)
 
-# Store differential expression results in synapse
-write.table(diffExp, file = 'differentialExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('differentialExpression.tsv', 
-                name = 'Differential expression results of all the RNASeq data (protein coding only)', 
-                parentId = 'syn5569102')
-DEXP_OBJ = synStore(DEXP_OBJ, 
-                    used = as.character(diffExp.ids), 
-                    activityName = 'Collate all the differential expression analysis results', 
-                   executed = thisFile)
+# Plot ROSMAP
+filter(diffexp, adj.P.Val <= 0.05, Comparison == '')
+  
 
-logFC = diffExp %>%
-  filter(adj.P.Val <= 0.05, abs(logFC) <= 1) %>%
-  dplyr::select(DataSetName, Comparison, ensembl_gene_id, logFC) %>%
-  unite(DataSet.Comparison, DataSetName, Comparison, sep = ' ') %>%
-  spread(DataSet.Comparison, logFC)
-
+# # Store differential expression results in synapse
+# write.table(diffExp, file = 'differentialExpression.tsv', sep = '\t', row.names=F, quote=F)
+# DEXP_OBJ = File('differentialExpression.tsv', 
+#                 name = 'Differential expression results of all the RNASeq data (protein coding only)', 
+#                 parentId = 'syn5569102')
+# DEXP_OBJ = synStore(DEXP_OBJ, 
+#                     used = as.character(diffExp.ids), 
+#                     activityName = 'Collate all the differential expression analysis results', 
+#                    executed = thisFile)
+# 
+# logFC = diffExp %>%
+#   filter(adj.P.Val <= 0.05, abs(logFC) <= 1) %>%
+#   dplyr::select(DataSetName, Comparison, ensembl_gene_id, logFC) %>%
+#   unite(DataSet.Comparison, DataSetName, Comparison, sep = ' ') %>%
+#   spread(DataSet.Comparison, logFC)
