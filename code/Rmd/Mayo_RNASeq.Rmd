@@ -422,6 +422,10 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
                        mart = mart)
 RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %>%
   dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+VOOM.ADJUSTED.GENE_EXPRESSION$E <- left_join(rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRESSION$E, "ensembl_gene_id"),
+                                             Ensemble2HGNC) %>%
+  dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
@@ -479,7 +483,18 @@ COV_OBJ = File('covariates.tsv', name = 'Covariates', parentId = CODE$properties
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
       
-# Store covariates
+# Raw Expression
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file='MAYOlogCPM.tsv', sep = '\t', row.names=F, quote=F)
+obj = File('MAYOlogCPM.tsv', 
+           name = 'Raw logCPM',
+           parentId = CODE$properties$id)
+rawcpm_obj = synStore(obj,
+                    used = ALL_USED_IDs, 
+                    activityName = activityName, 
+                    executed = thisFile, 
+                    activityDescription = activityDescription)
+
+# Store residual gene expression
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('expression.tsv', name = 'Voom Adjusted Residual Expression (BrainRegion.Diagnosis added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
