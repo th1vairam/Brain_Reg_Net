@@ -41,17 +41,11 @@ library(edgeR)
 library(biomaRt)
 library(xlsx)
 
-# library(doParallel)
-# library(foreach)
-# 
-# cl = makeCluster(12)
-# registerDoParallel(cl)
+library(doParallel)
+library(foreach)
 
-## Requires ggdendro
-devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
-
-# Source required R files
-source('../R/lib/parallelDuplicateCorrelation.R')
+cl = makeCluster(12)
+registerDoParallel(cl)
 
 options(xtable.type="html")
 
