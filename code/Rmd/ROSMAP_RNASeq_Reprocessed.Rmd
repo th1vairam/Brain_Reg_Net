@@ -63,10 +63,17 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ### Data download
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
-# Download expression data
-COUNT_ID <- 'syn6112813';
-ALL_USED_IDs <- COUNT_ID
-COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F)
+# Download reprocessed counts (paired end)
+COUNT_PE_ID <- 'syn6112813';
+ALL_USED_IDs <- COUNT_PE_ID
+COUNT_PE <- read.table(synGet(COUNT_PE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+# Download reprocessed counts (single end)
+COUNT_SE_ID <- 'syn6117775';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_SE_ID
+COUNT_SE <- read.table(synGet(COUNT_SE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+COUNT = COUNT_PE + COUNT_SE[rownames(COUNT_PE), colnames(COUNT_PE)]
 
 # Get clinical metadata
 METADATA.CLINICAL_ID <- 'syn3191087'
