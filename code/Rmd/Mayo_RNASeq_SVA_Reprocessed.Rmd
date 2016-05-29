@@ -361,10 +361,10 @@ PERM.SING.VALS <- foreach (i = 1:100,
         }
 num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
 
-num.sv2 = num.sv(EXPR$filteredExprMatrix$COUNT, MODEL1, method = 'be', seed = 123456)
+num.sv2 = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456)
 NUM.SV = min(num.sv1, num.sv2)
 
-SURR.VAR = svaseq(EXPR$filteredExprMatrix$counts, MODEL1, MODEL0, n.sv = NUM.SV, method = "two-step", B = 30)$sv
+SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, n.sv = NUM.SV, method = "two-step", B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 
 # Estimate voom weights
