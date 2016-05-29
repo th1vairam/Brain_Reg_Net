@@ -342,10 +342,10 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 ### Clustering residual gene expression
 ```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1)], scale.=T, center = T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
 # Tree based clustering
-sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION[,-(1)])), method = "average")
+sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION)), method = "average")
 
 # Cluster expression
 clust = cutreeStatic(sampleTrees, cutHeight = 100, minSize = 10)
