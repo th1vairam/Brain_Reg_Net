@@ -14,7 +14,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_SVA_Reprocessed.Rmd",
                                  parentId ="syn5570291",
-                                 entityName = 'ROSMAP RNASeq Reprocessed Counts (Based on cogdx with SVA)')
+                                 entityName = 'ROSMAP RNASeq Reprocessed Counts (Based on cogdx with SVA IRW)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -350,7 +350,7 @@ num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
 num.sv2 = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456)
 NUM.SV = min(num.sv1, num.sv2)
 
-SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "two-step", n.sv = NUM.SV, B = 30)$sv
+SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "irw", n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 
 # Estimate voom weights
@@ -490,7 +490,7 @@ p
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts (Based on cogdx with SVA)", parentId = parentId)
+CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts (Based on cogdx with SVA IRW)", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
