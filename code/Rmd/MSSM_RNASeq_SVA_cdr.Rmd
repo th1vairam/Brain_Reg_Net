@@ -1,5 +1,5 @@
 ---
-title: "Covariates analysis of MSBB RNASeq (with SVA)"
+title: "Covariates analysis of MSBB RNASeq (with two-step SVA)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -46,6 +46,8 @@ library(foreach)
 
 cl = makeCluster(12)
 registerDoParallel(cl)
+
+source('../R/lib/num.sv')
 
 options(xtable.type="html")
 
@@ -315,7 +317,7 @@ MODEL0 = DM1$design[,-grep('BrainRegion.CDR',colnames(DM1$design))] # Get null m
 MODEL1 = DM1$design
 
 ## Calculate the number of surrogate variables
-NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456)
+NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456, LINPACK = TRUE, B = 10)
 
 SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "two-step", n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
@@ -380,7 +382,7 @@ dev.off()
 gc()
 ```
 
-```{r get.gene.symbols, cache=TRUE, eval=FALSE}
+```{r get.gene.symbols, cache=TRUE, eval=TRUE}
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl", host = )
 
