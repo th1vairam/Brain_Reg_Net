@@ -28,7 +28,6 @@ library(data.table)
 library(tidyr)
 library(plyr)
 library(dplyr)
-library(stringr)
 
 library(ggplot2)
 library(reshape2)
@@ -353,9 +352,9 @@ WGCNA::plotDendroAndColors(tree,
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
 ```
-```{r get.gene.symbols, cache=TRUE, eval=FALSE}
+```{r get.gene.symbols, cache=TRUE, eval=TRUE}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl", host = )
+mart <- useMart('ENSEMBL_MART_ENSEMBL', dataset = "hsapiens_gene_ensembl", host = 'dec2015.archive.ensembl.org')
 
 backgroundGenes = data.frame(Gene.ID = rownames(RESIDUAL.GENE_EXPRESSION),
                              ID = rownames(RESIDUAL.GENE_EXPRESSION)) %>%
