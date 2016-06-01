@@ -157,7 +157,7 @@ ContCovariates = c(ContCovariates, 'RINcontinuous2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
 ```{r covariates.correlation, fig.width=10, fig.height=10}
-COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.1)
+COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
 ```
 
@@ -232,7 +232,10 @@ WGCNA::plotDendroAndColors(tree,
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp[,FactorCovariates]))
+```
+```{r temp, include = F}
 dev.off()
+gc()
 ```
 
 ### Significant Covariates
@@ -345,7 +348,10 @@ WGCNA::plotDendroAndColors(tree,
                           abHeight = 0.80, 
                           main = "Sample dendrogram",
                           groupLabels = colnames(COVARIATES.tmp[,FactorCovariates]))
+```
+```{r temp1, include=F}
 dev.off()
+gc()
 ```
 
 ```{r summary, results='asis', echo=FALSE}
@@ -364,30 +370,30 @@ Interpretation of cogdx scores
 6.  Other dementia. Other primary cause of dementia
 
 ```{r get.gene.symbols, cache=TRUE, eval=T}
-row.id = data.frame(GeneID = rownames(RESIDUAL.GENE_EXPRESSION),
-                    ensembl_gene_id = rownames(RESIDUAL.GENE_EXPRESSION)) %>%
-  separate(ensembl_gene_id, c('ensembl_gene_id','position'), sep = '\\.')
+backgroundGenes = data.frame(Gene.ID = rownames(COUNT),
+                             ID = rownames(COUNT)) %>%
+  separate(ID, c('ensembl_gene_id','position'), sep = '\\.')
 
 # Define biomart object
 mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
-                       filters = "ensembl_gene_id", values = row.id$ensembl_gene_id,
+                       filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
 
 # Add gene names
 RESIDUAL.GENE_EXPRESSION <- RESIDUAL.GENE_EXPRESSION %>%
-  rownameToFirstColumn('GeneID') %>%
-  left_join(row.id) %>%
+  rownameToFirstColumn('Gene.ID') %>%
+  left_join(backgroundGenes) %>%
   left_join(Ensemble2HGNC) %>%
-  dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+  dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 
 VOOM.ADJUSTED.GENE_EXPRESSION$E <- VOOM.ADJUSTED.GENE_EXPRESSION$E %>%
-  rownameToFirstColumn('GeneID') %>%
-  right_join(row.id) %>%
+  rownameToFirstColumn('Gene.ID') %>%
+  left_join(backgroundGenes) %>%
   left_join(Ensemble2HGNC) %>%
-  dplyr::select(ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+  dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
@@ -401,32 +407,37 @@ FIT.CONTR = contrasts.fit(VOOM.ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = list()
-p = list()
-for (i in 1:3){
-  DE[[i]] = topTable(FIT.CONTR, coef=i, number = dim(COUNT)[1])
-  DE[[i]] = rownameToFirstColumn(DE[[i]], "ensembl_gene_id") 
-}
+DE = lapply(1:3, function(i, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, backgroundGenes, Ensemble2HGNC){
+  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1]) %>%
+    rownameToFirstColumn('Gene.ID') %>%
+    left_join(backgroundGenes) %>%
+    left_join(Ensemble2HGNC) %>%
+    dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, logFC, AveExpr, t, P.Value, adj.P.Val, B)
+}, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, backgroundGenes, Ensemble2HGNC)
 names(DE) = colnames(contrast)
 
-DE = DE %>% plyr::ldply(.id = 'Comparison') %>%
-  tidyr::separate(ensembl_gene_id, into=c("ensemble_id","position")) %>%
-  dplyr::rename(ensembl_gene_id = ensemble_id) %>%
-  left_join(Ensemble2HGNC)
+DE = DE %>% 
+  plyr::ldply(.id = 'Comparison')
   
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(Comparison, hgnc_symbol) %>%
+  dplyr::select(Gene.ID, Comparison) %>%
   group_by(Comparison) %>%
-  dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
-            DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+  dplyr::summarise(FDR_0_05 = length(unique(Gene.ID)))
 
-kable(tmp)
+tmp1 = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
+  dplyr::select(Gene.ID, Comparison) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_FC_1_2 = length(unique(Gene.ID)))
+
+kable(full_join(tmp,tmp1))
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC)) + geom_point() + xlim(c(-1,1))
 p = p + geom_hline(yintercept = -log10(0.05), color = 'red') 
 p = p + geom_vline(xintercept = log2(1.2), color = 'red') 
-p = p + geom_vline(xintercept = -log2(1.2), color = 'red') + facet_grid(.~Comparison, scales = 'fixed')
+p = p + geom_vline(xintercept = -log2(1.2), color = 'red') 
+p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 ```
 ### Store files in synapse
@@ -448,6 +459,12 @@ COUNT_OBJ = File('ROSMAPlogCPM.tsv', name = 'Raw counts (logCPM)', parentId = CO
 COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                      executed = thisFile, activityDescription = activityDescription)
 
+# Store design matrix
+write.table(DM1$design, file = 'ROSMAPDesign.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('ROSMAPDesign.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
 # Store residual gene expression
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'ROSMAPExpression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('ROSMAPExpression.tsv', name = 'Normalised Adjusted Residual Expression (cogdx added)', parentId = CODE$properties$id)
@@ -464,5 +481,6 @@ DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
 |  -------                  |   ---------                      |
 |  Covariates               |  `r COV_OBJ$properties$id`       |
 |  Raw counts (log CPM)     |  `r COUNT_OBJ$properties$id`     |
+|  Design Matrix            |  `r DM_OBJ$properties$id`        |
 |  Residual Expression      |  `r EXP_OBJ$properties$id`       |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
