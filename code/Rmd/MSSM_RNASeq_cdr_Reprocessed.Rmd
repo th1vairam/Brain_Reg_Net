@@ -44,7 +44,7 @@ library(ggdendro)
 library(doParallel)
 library(foreach)
 
-cl = makeCluster(2)
+cl = makeCluster(14)
 registerDoParallel(cl)
 
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
@@ -88,9 +88,33 @@ Data were obtained from AMP-AD portal of MSSM, and following brain regions were 
 Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Download expression data
-COUNT_ID <- 'syn6114414'
-ALL_USED_IDs <- COUNT_ID
-COUNT <- read.table(synGet(COUNT_ID)@filePath, quote = '', header = T, sep = '\t')
+COUNT_B1_ID <- 'syn6114414'
+ALL_USED_IDs <- COUNT_B1_ID
+COUNT_B1 <- read.table(synGet(COUNT_B1_ID)@filePath, quote = '', header = T, sep = '\t')
+
+COUNT_B2_3_ID <- 'syn6125203'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_B2_3_ID
+COUNT_B2_3 <- read.table(synGet(COUNT_B2_3_ID)@filePath, quote = '', header = T, sep = '\t')
+
+# Download expression data
+COUNT_B4_ID <- 'syn6130073'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_B4_ID
+COUNT_B4 <- read.table(synGet(COUNT_B4_ID)@filePath, quote = '', header = T, sep = '\t')
+
+# Remove samples in Batch 2&3 if they present in batch 4
+COUNT_B2_3 = COUNT_B2_3[,setdiff(colnames(COUNT_B2_3), colnames(COUNT_B4))]
+
+COUNT = cbind(COUNT_B1, COUNT_B2_3[rownames(COUNT_B1),], COUNT_B4[rownames(COUNT_B1),])
+
+# Get sample ids
+SampleID = data.frame(SampleID = colnames(COUNT),
+                 ID = colnames(COUNT)) %>% 
+  tidyr::separate(ID, c('A','B','ID'), sep = '_') 
+SampleID$ID[SampleID$ID == 'HISEQ'] = SampleID$B[SampleID$ID == 'HISEQ']
+
+SampleID = SampleID %>%
+  dplyr::select(SampleID, ID) %>%
+  dplyr::mutate(ID = as.numeric(ID))
 
 # Get technical metadata
 METADATA_ID <- 'syn5898489'
@@ -122,11 +146,15 @@ METADATA = left_join(METADATA_TECHNICAL %>%
                        tidyr::gather(BrainRegion, ID, -BB, -PMI, -RACE, 
                                      -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
                        filter(!is.na(ID)) %>%
-                       dplyr::mutate(ID = as.numeric(ID)))
-rownames(METADATA) = METADATA$OldBarcode
+                       dplyr::mutate(ID = as.numeric(ID))) %>%
+  left_join(SampleID) %>%
+  filter(!is.na(SampleID)) %>%
+  unique
+rownames(METADATA) = METADATA$SampleID
 
 # Filter data
-ind <- intersect(rownames(METADATA), colnames(COUNT))
+ind <- intersect(METADATA$SampleID, colnames(COUNT))
+indRemoved <- setdiff(colnames(COUNT), METADATA$SampleID)
 # ind <- setdiff(ind, 'hB_RNA_10622')
 METADATA <- METADATA[ind,]
 COUNT <- COUNT[, ind]
@@ -149,7 +177,7 @@ ContCovariates <- c('PMI', 'AOD', 'RIN', 'RIN2')
 
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
-rownames(COVARIATES) <- METADATA$OldBarcode
+rownames(COVARIATES) <- METADATA$SampleID
 
 # Convert factor covariates to factors
 COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
@@ -188,7 +216,46 @@ multiplot(plotlist = p, cols = 2)
 # Sex
 vcd::mosaic(~ SEX + CDR + BrainRegion, data = METADATA)
 ```
+### Quality Control
+```{r check.sex}
+# Query biomart for Y chromosome genes
+ensembl = useMart('ensembl', dataset = 'hsapiens_gene_ensembl', host = 'www.ensembl.org')
+EnsembleInY <- getBM(attributes = c("ensembl_gene_id"),
+                       filters = "chromosome_name", 
+                       values = 'Y',
+                       mart = ensembl)
 
+YChromGenes = data.frame(Gene.ID = rownames(COUNT),
+                             ID = rownames(COUNT)) %>%
+  tidyr::separate(ID, c('ensembl_gene_id','position'), sep = '\\.') %>%
+  inner_join(EnsembleInY)
+
+tmp1 = t(COUNT[YChromGenes$Gene.ID,]) %>%
+  rowSums %>% rownameToFirstColumn('SampleID') %>%
+  dplyr::rename(CPM.Sum = DF) %>%
+  left_join(COVARIATES %>% 
+              rownameToFirstColumn('SampleID'))
+
+ggplot(tmp1, aes(x = SEX, y= log2(CPM.Sum))) + geom_boxplot()
+
+EnsembleInX <- getBM(attributes = c("ensembl_gene_id"),
+                       filters = "chromosome_name", 
+                       values = 'X',
+                       mart = ensembl)
+
+XChromGenes = data.frame(Gene.ID = rownames(COUNT),
+                             ID = rownames(COUNT)) %>%
+  tidyr::separate(ID, c('ensembl_gene_id','position'), sep = '\\.') %>%
+  inner_join(EnsembleInX)
+
+tmp1 = t(COUNT[XChromGenes$Gene.ID,]) %>%
+  rowSums %>% rownameToFirstColumn('SampleID') %>%
+  dplyr::rename(CPM.Sum = DF) %>%
+  left_join(COVARIATES %>% 
+              rownameToFirstColumn('SampleID'))
+
+ggplot(tmp1, aes(x = SEX, y= log2(CPM.Sum))) + geom_boxplot()
+```
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
 
@@ -244,7 +311,11 @@ gc()
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
-preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, COVARIATES,'NULL design(voom-normalized)', isKeyPlot=TRUE, MIN_PVE_PCT_PC = 1)
+preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, 
+                                                 COVARIATES,
+                                                 'NULL design(voom-normalized)', 
+                                                 isKeyPlot=TRUE, 
+                                                 MIN_PVE_PCT_PC = 1)
 ```
 Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
 ```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
@@ -442,6 +513,17 @@ expr_obj = synStore(obj,
                     executed = thisFile, 
                     activityDescription = activityDescription)
   
+# Design Matrix
+write.table(DM1$design, file='MSSMDesignMat.tsv', sep = '\t', row.names=F, quote=F)
+obj = File('MSSMDesignMat.tsv', 
+           name = 'Design Matrix',
+           parentId = CODE$properties$id)
+dm_obj = synStore(obj,
+                    used = ALL_USED_IDs, 
+                    activityName = activityName, 
+                    executed = thisFile, 
+                    activityDescription = activityDescription)
+
 # Raw Expression
 write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file='MSSMlogCPM.tsv', sep = '\t', row.names=F, quote=F)
 obj = File('MSSMlogCPM.tsv', 
@@ -474,5 +556,7 @@ dexp_obj = synStore(dexp_obj, used = ALL_USED_IDs, activityName = activityName,
 |  *Results*                |  *SynapseID*                    |
 |  -------                  |   ---------                     |
 |  Covariates               |  `r covar_obj$properties$id`    |
+|  Raw counts (log CPM)     |  `r rawcpm_obj$properties$id`   |
+|  Design Matrix            |  `r dm_obj$properties$id`       |
 |  Residual Expression      |  `r expr_obj$properties$id`     |
 |  Differential Expression  |  `r dexp_obj$properties$id`     |
