@@ -42,11 +42,11 @@ library(edgeR)
 library(biomaRt)
 library(fpc)
 
-# library(doParallel)
-# library(foreach)
-# 
-# cl = makeCluster(14)
-# registerDoParallel(cl)
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(2)
+registerDoParallel(cl)
 
 options(xtable.type="html")
 
@@ -406,8 +406,10 @@ dev.off()
 
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
-tmp = data.frame(summary(COVARIATES$BrainRegion.Diagnosis))
-colnames(tmp) = "No. of samples"
+tmp = summary(COVARIATES$BrainRegion.Diagnosis) %>%
+  rownameToFirstColumn('SampleName') %>%
+  tidyr::separate(SampleName, c('BrainRegion','Diagnosis'), sep = '\\.') %>%
+  tidyr::spread(Diagnosis, DF)
 kable(tmp)
 ```
 
@@ -505,6 +507,17 @@ RAWCPM_OBJ = synStore(RAWCPM_OBJ,
                       executed = thisFile, 
                       activityDescription = activityDescription)
 
+# Design Matrix
+write.table(DM1$design, file='MAYOdesign.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MAYOdesign.tsv', 
+                  name = 'Design Matrix',
+                  parentId = CODE$properties$id)
+DM_OBJ = synStore(DM_OBJ,
+                      used = ALL_USED_IDs, 
+                      activityName = activityName, 
+                      executed = thisFile, 
+                      activityDescription = activityDescription)
+
 # Store residual gene expression
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'MAYOexpression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('MAYOexpression.tsv', name = 'Voom Adjusted Residual Expression (BrainRegion.Diagnosis added)', parentId = CODE$properties$id)
@@ -522,6 +535,7 @@ stopCluster(cl)
 |  -------                  |   ---------                     |
 |  Covariates               |  `r COV_OBJ$properties$id`      |
 |  Raw counts (logCPM)      |  `r RAWCPM_OBJ$properties$id`   |
+|  Design Matrix            |  `r DM_OBJ$properties$id`       |
 |  Residual Expression      |  `r EXP_OBJ$properties$id`      |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`     |
 
