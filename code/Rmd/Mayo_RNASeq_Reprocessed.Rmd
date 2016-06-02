@@ -216,7 +216,7 @@ pl = list()
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
-p <- p + geom_text(aes(label= ID), size=4, hjust=0)
+# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[1]] <- p
 
 p <- ggplot(plotdata, aes(x=PC3, y=PC4))
@@ -364,7 +364,7 @@ pl = list()
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
 p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
-p <- p + geom_text(aes(label= ID), size=4, hjust=0)
+# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[1]] <- p
 
 p <- ggplot(plotdata, aes(x=PC3, y=PC4))
