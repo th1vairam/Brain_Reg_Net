@@ -219,7 +219,7 @@ p[[4]] = p[[4]] + ggtitle('NP.1') + theme(legend.position = 'top')
 multiplot(plotlist = p, cols = 2)
 
 # Sex
-vcd::mosaic(~ SEX + Diagnosis + BrainRegion, data = METADATA)
+vcd::mosaic( Diagnosis + SEX ~ BrainRegion, data = METADATA)
 ```
 ### Quality Control
 ```{r check.sex}
@@ -235,13 +235,19 @@ YChromGenes = data.frame(Gene.ID = rownames(COUNT),
   tidyr::separate(ID, c('ensembl_gene_id','position'), sep = '\\.') %>%
   inner_join(EnsembleInY)
 
-tmp1 = t(COUNT[YChromGenes$Gene.ID,]) %>%
-  rowSums %>% rownameToFirstColumn('SampleID') %>%
-  dplyr::rename(CPM.Sum = DF) %>%
+PROCESSED_COUNTS = COUNT
+PROCESSED_COUNTS = PROCESSED_COUNTS[rowSums(COUNT) != 0,]
+
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS, design=NULL, plot=F)
+
+tmp1 = apply(VOOM.GENE_EXPRESSION$E[intersect(rownames(VOOM.GENE_EXPRESSION$E), YChromGenes$Gene.ID),], 2, mean) %>%
+  rownameToFirstColumn('SampleID') %>%
+  dplyr::rename(mean.log2.CPM = DF) %>%
   left_join(COVARIATES %>% 
               rownameToFirstColumn('SampleID'))
 
-ggplot(tmp1, aes(x = SEX, y= log2(CPM.Sum))) + geom_boxplot()
+pl = list()
+pl[[1]] = ggplot(tmp1, aes(x = SEX, y= mean.log2.CPM)) + geom_boxplot() + ggtitle('Mean expression of Y chromosome genes')
 
 EnsembleInX <- getBM(attributes = c("ensembl_gene_id"),
                        filters = "chromosome_name", 
@@ -253,13 +259,15 @@ XChromGenes = data.frame(Gene.ID = rownames(COUNT),
   tidyr::separate(ID, c('ensembl_gene_id','position'), sep = '\\.') %>%
   inner_join(EnsembleInX)
 
-tmp1 = t(COUNT[XChromGenes$Gene.ID,]) %>%
-  rowSums %>% rownameToFirstColumn('SampleID') %>%
-  dplyr::rename(CPM.Sum = DF) %>%
+tmp1 = apply(VOOM.GENE_EXPRESSION$E[intersect(rownames(VOOM.GENE_EXPRESSION$E), XChromGenes$Gene.ID),], 2, mean) %>%
+  rownameToFirstColumn('SampleID') %>%
+  dplyr::rename(mean.log2.CPM = DF) %>%
   left_join(COVARIATES %>% 
               rownameToFirstColumn('SampleID'))
 
-ggplot(tmp1, aes(x = SEX, y= log2(CPM.Sum))) + geom_boxplot()
+pl[[2]] = ggplot(tmp1, aes(x = SEX, y= mean.log2.CPM)) + geom_boxplot() + ggtitle('Mean expression of X chromosome genes')
+
+multiplot(plotlist = pl, cols = 2)
 ```
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
