@@ -40,11 +40,11 @@ library(biomaRt)
 
 library(sva)
 
-# library(doParallel)
-# library(foreach)
-# 
-# cl = makeCluster(14)
-# registerDoParallel(cl)
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(14)
+registerDoParallel(cl)
 
 options(xtable.type="html")
 
@@ -506,6 +506,12 @@ COUNT_OBJ = File('ROSMAPlogCPM.tsv', name = 'Raw counts (logCPM)', parentId = CO
 COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                      executed = thisFile, activityDescription = activityDescription)
 
+# Store SVs
+write.table(SURR.VAR, file = 'ROSMAPsurrogatevar.tsv', sep = '\t', row.names=F, quote=F)
+SURR_OBJ = File('ROSMAPsurrogatevar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+SURR_OBJ = synStore(SURR_OBJ, used = ALL_USED_IDs, activityName = activityName,
+                    executed = thisFile, activityDescription = activityDescription)
+
 # Store residual gene expression
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'ROSMAPExpression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('ROSMAPExpression.tsv', name = 'Normalised Adjusted Residual Expression (cogdx added)', parentId = CODE$properties$id)
@@ -522,5 +528,6 @@ DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
 |  -------                  |   ---------                      |
 |  Covariates               |  `r COV_OBJ$properties$id`       |
 |  Raw counts (log CPM)     |  `r COUNT_OBJ$properties$id`     |
+|  Surrogate variable       |  `r SURR_OBJ$properties$id`      |
 |  Residual Expression      |  `r EXP_OBJ$properties$id`       |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
