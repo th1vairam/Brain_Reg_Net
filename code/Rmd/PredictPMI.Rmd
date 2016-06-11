@@ -1,0 +1,252 @@
+---
+title: "Prediction model for PMI using ROSMAP Reprocessed RNASeq"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+  
+```{r knit2synapse, eval=FALSE}
+library(knitr)
+library(knit2synapse)
+library(synapseClient)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./PredictPMI.Rmd",
+                                 parentId ="syn5570291",
+                                 entityName = 'Predict PMI')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(Biobase)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn5570291';
+activityName = 'Predict PMI';
+activityDescription = 'Predict PMI using ROSMAP data';
+
+thisFileName <- 'PredictPMI.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r rosmap.download.data, cache=TRUE}
+# Download reprocessed counts (paired end)
+COUNT_PE_ID <- 'syn6112813';
+ALL_USED_IDs <- COUNT_PE_ID
+COUNT_PE <- read.table(synGet(COUNT_PE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+# Download reprocessed counts (single end)
+COUNT_SE_ID <- 'syn6117775';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_SE_ID
+COUNT_SE <- read.table(synGet(COUNT_SE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+COUNT = COUNT_PE + COUNT_SE[rownames(COUNT_PE), colnames(COUNT_PE)]
+rownames(COUNT) = sapply(rownames(COUNT), function(x){unlist(str_split(x, '\\.'))[1]})
+
+# Download filtered logCPM
+LOG.CPM_ID <- 'syn6129370';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_ID
+LOG.CPM <- read.table(synGet(LOG.CPM_ID)@filePath, header=T, sep='\t', check.names = F)
+
+COUNT = COUNT[intersect(rownames(COUNT), LOG.CPM$ensembl_gene_id), intersect(colnames(COUNT), colnames(LOG.CPM))]
+
+# Get covariates
+COVARIATES_ID <- 'syn6129368'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = COVARIATES_ID
+COVARIATES <- read.table(synGet(COVARIATES_ID)@filePath,sep='\t',header=T, row.names = 1)
+
+FactorCovariates <- c("cogdx")
+ContCovariates <- c("RINcontinuous","age_death","pmi")
+
+COVARIATES = COVARIATES[,c(FactorCovariates,ContCovariates),drop=F]
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates,drop=F], factor)
+
+# Get surrogate variables
+SURR.VAR_ID <- 'syn6140323'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = SURR.VAR_ID
+SURR.VAR <- read.table(synGet(SURR.VAR_ID)@filePath,sep='\t',header=T)
+rownames(SURR.VAR) = rownames(COVARIATES)
+COVARIATES = cbind(COVARIATES, SURR.VAR)
+
+COUNT = COUNT[,rownames(COVARIATES)]
+```
+Using dorsolateral prefrontal cortex of `r dim(COUNT)[2]` subjects from the ROS and MAP cohorts to predict PMI. Following sample are removed `r paste(removedIDs, collapse = ',')`
+### Fit model with PMI
+```{r w.pmi}
+writeLines(paste('Using following covariates in the model:',paste(colnames(COVARIATES), collapse=', '),'as fixed effects'))
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES,Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+# Estimate sample weights using voom methodology
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(COUNT, design=DM1$design, plot=F)
+
+# Fit linear model using estimated weights and calculate BIC's
+BIC.WPMI = sapply(1:dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], function(gene){
+  y = VOOM.ADJUSTED.GENE_EXPRESSION$E[gene,]
+  w = VOOM.ADJUSTED.GENE_EXPRESSION$weights[gene,]
+  x = DM1$design
+  obj = lm(y~0+., data = cbind(x,data.frame(y=y)), weights = w)
+  BIC(obj)
+})
+names(BIC.WPMI) = rownames(VOOM.ADJUSTED.GENE_EXPRESSION$E)
+```
+### Fit model with out PMI
+```{r wo.pmi}
+COVARIATES.tmp = COVARIATES[,-(4)]
+writeLines(paste('Using following covariates in the model:',paste(colnames(COVARIATES.tmp), collapse=', '),'as fixed effects'))
+
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES.tmp,Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+# Estimate sample weights using voom methodology
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(COUNT, design=DM1$design, plot=F)
+
+# Fit a linear model
+VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+
+# Calculate residual
+RESIDUAL.EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT, VOOM.ADJUSTED.GENE_EXPRESSION$E)
+  
+# Fit linear model using estimated weights and calculate BIC's
+BIC.WOPMI = sapply(1:dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], function(gene){
+  y = VOOM.ADJUSTED.GENE_EXPRESSION$E[gene,]
+  w = VOOM.ADJUSTED.GENE_EXPRESSION$weights[gene,]
+  x = DM1$design
+  obj = lm(y~0+., data = cbind(x,data.frame(y=y)), weights = w)
+  BIC(obj)
+})
+names(BIC.WOPMI) = rownames(VOOM.ADJUSTED.GENE_EXPRESSION$E)
+```
+### Predict PMI
+```{rpredict.pmi}
+# Extract features that show improvement in the model with pmi when compared to without pmi
+genes = rownames(VOOM.ADJUSTED.GENE_EXPRESSION$E)[which((BIC.WOPMI-BIC.WPMI) >= 6)]
+
+# Extract x and y
+x = t(RESIDUAL.EXPRESSION[genes,])
+y = COVARIATES$pmi
+
+# Remove samples with 0 pmi
+ind = y == 0
+x = x[!ind,]
+y = log(y[!ind])
+
+# Linear regression model
+glm.model = foreach(i = 1:100,
+                .export = c('x','y'),
+                .packages = c('glmnet', 'CovariateAnalysis', 'dplyr', 'plyr')) %dopar% {
+  ind = sample(1:length(y), round(length(y)*0.8))
+  ind.comp = setdiff(1:length(y), ind)
+  
+  obj = cv.glmnet(x[ind,],y[ind], family = 'gaussian')
+  coeff = as.matrix(coef.glmnet(obj, s = 'lambda.min'))
+  ind.var1 = rownames(coeff)
+  ind.var2 = setdiff(rownames(coeff)[coeff != 0], '(Intercept)')
+  
+  # Prune model based on least variable of importance
+  while(length(ind.var1) > length(ind.var2)){
+    obj1 = cv.glmnet(x[ind,ind.var2],y[ind], family = 'gaussian')
+    coeff = as.matrix(coef.glmnet(obj1, s = 'lambda.min'))
+    ind.var1 = ind.var2
+    ind.var2 = setdiff(rownames(coeff)[coeff != 0], '(Intercept)')
+  }
+  
+  mse = sum((predict(obj1, x[ind.comp,ind.var2], s = 'lambda.min', type = 'response') - y[ind.comp])^2)/length(ind.comp)
+  coeff = as.matrix(coef.glmnet(obj1, s = 'lambda.min')) %>%
+    rownameToFirstColumn('Coefficients') %>%
+    plyr::rename(c('1' = i))
+  list(mse = mse, coeff = coeff)
+}
+boxplot(sapply(glm.model, function(x){x$mse}), main = 'glmnet', ylab = 'mse')
+coeff1 = lapply(glm.model, function(x){x$coeff}) %>%
+  join_all(type = 'full')
+coeff1[is.na(coeff1)] = 0
+coeff1 = coeff1[which(rowSums(coeff1[,-(1)] == 0) < 80),]
+
+# Random forest model
+rf.model = foreach(i = 1:100,
+                .export = c('x','y'),
+                .packages = c('ranger', 'CovariateAnalysis', 'dplyr', 'plyr')) %dopar% {
+  ind = sample(1:length(y), round(length(y)*0.8))
+  ind.comp = setdiff(1:length(y), ind)
+  
+  obj = ranger(formula = y ~., data = cbind(data.frame(y = y[ind]), x[ind,]), 
+               importance = 'permutation',
+               write.forest = TRUE)
+  coeff = obj$variable.importance
+  ind.var1 = names(coeff)
+  ind.var2 = names(coeff)[coeff >= abs(min(coeff))]
+  
+  # Prune model based on least variable of importance
+  while(length(ind.var1) > length(ind.var2)){
+    obj1 = ranger(formula = y ~., data = cbind(data.frame(y = y[ind]), x[ind,ind.var2]),
+                  importance = 'permutation',
+                  write.forest = TRUE)
+    coeff = obj1$variable.importance
+    ind.var1 = ind.var2
+    ind.var2 = names(coeff)[coeff >= abs(min(coeff))]
+  }
+  
+  mse = obj1$prediction.error
+  coeff = obj1$variable.importance %>%
+    rownameToFirstColumn('Coefficients') %>%
+    plyr::rename(c('DF' = i))
+  list(mse = mse, coeff = coeff)
+}
+boxplot(sapply(rf.model, function(x){x$mse}), main = 'random forest', ylab = 'mse')
+coeff2 = lapply(rf.model, function(x){x$coeff}) %>%
+  join_all(type = 'full')
+coeff2[is.na(coeff2)] = 0
+coeff2 = coeff2[which(rowSums(coeff2[,-(1)] == 0) < 80),]
+```
+
+### Store results in synapse
+```{r syn.store}
+# Create folder to store results in synapse
+CODE = Folder(name = 'Predict PMI', parentId ="syn5570291")
+CODE = synStore(CODE)
+
+# Store features in synapse (union of both the models)
+tmp = setdiff(unique(c(coeff1$Coefficients, coeff2$coefficients)), '(Intercept)')
+write.table(tmp, file = 'features.tsv', sep = '\n', row.names = F, quote=F)
+obj = File('features.tsv', name = 'Predictors of PMI', parentId = CODE$properties$id)
+obj = synStore(obj, used = as.character(ALL_USED_IDs), executed = thisFile, 
+               activityName = activityName, activityDescription = activityDescription)
+```
