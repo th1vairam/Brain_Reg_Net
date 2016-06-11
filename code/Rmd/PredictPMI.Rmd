@@ -38,6 +38,12 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(14)
+registerDoParallel(cl)
+
 options(xtable.type="html")
 
 knitr::opts_chunk$set(
@@ -155,7 +161,7 @@ BIC.WOPMI = sapply(1:dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], function(gene){
 names(BIC.WOPMI) = rownames(VOOM.ADJUSTED.GENE_EXPRESSION$E)
 ```
 ### Predict PMI
-```{rpredict.pmi}
+```{r predict.pmi, fig.height=6, fig.width=6}
 # Extract features that show improvement in the model with pmi when compared to without pmi
 genes = rownames(VOOM.ADJUSTED.GENE_EXPRESSION$E)[which((BIC.WOPMI-BIC.WPMI) >= 6)]
 
@@ -249,4 +255,5 @@ write.table(tmp, file = 'features.tsv', sep = '\n', row.names = F, quote=F)
 obj = File('features.tsv', name = 'Predictors of PMI', parentId = CODE$properties$id)
 obj = synStore(obj, used = as.character(ALL_USED_IDs), executed = thisFile, 
                activityName = activityName, activityDescription = activityDescription)
+stopCluster(cl)
 ```
