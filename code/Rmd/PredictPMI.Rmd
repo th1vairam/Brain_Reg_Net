@@ -176,8 +176,8 @@ y = log(y[!ind])
 
 # Linear regression model
 glm.model = foreach(i = 1:100,
-                .export = c('x','y'),
-                .packages = c('glmnet', 'CovariateAnalysis', 'dplyr', 'plyr')) %dopar% {
+                    .export = c('x','y'),
+                    .packages = c('glmnet', 'CovariateAnalysis', 'dplyr', 'plyr')) %dopar% {
   ind = sample(1:length(y), round(length(y)*0.8))
   ind.comp = setdiff(1:length(y), ind)
   
