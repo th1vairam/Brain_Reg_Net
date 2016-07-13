@@ -327,28 +327,28 @@ NUM.DEG.FREEDOM = dim(RESIDUAL.GENE_EXPRESSION)[2] - dim(MODEL1)[2] + 1
 SING.VALS <- SINGULAR.VAL.DECOM$d^2/sum(SINGULAR.VAL.DECOM$d)
 SING.VALS = SING.VALS[1:NUM.DEG.FREEDOM]
 
-# Permute and calculate the permuted singular values
-PERM.SING.VALS <- foreach (i = 1:100,
-         .combine = rbind,
-         .packages = c('limma','CovariateAnalysis'),
-         .export = c('PROCESSED_COUNTS','MODEL1')) %dopar% {
-  PERM.COUNTS <- t(apply(PROCESSED_COUNTS$filteredExprMatrix, 1, sample, replace = FALSE))
-  # Estimate voom weights
-  VOOM.ADJUSTED.PERM.GENE_EXPRESSION = voom(PERM.COUNTS, design=MODEL1, plot=F)
-  
-  # Fit linear model using new weights and new design
-  VOOM.ADJUSTED.PERM.FIT = lmFit(VOOM.ADJUSTED.PERM.GENE_EXPRESSION)
-  
-  # Residuals after normalisation
-  RESIDUAL.PERM.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.PERM.FIT,VOOM.ADJUSTED.PERM.GENE_EXPRESSION$E)
-  
-  PERM.SINGULAR.VAL.DECOM <- svd(RESIDUAL.PERM.GENE_EXPRESSION)
-  PERM.SING.VALS <- PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2/sum(PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2)
-}
-num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
+# # Permute and calculate the permuted singular values
+# PERM.SING.VALS <- foreach (i = 1:100,
+#          .combine = rbind,
+#          .packages = c('limma','CovariateAnalysis'),
+#          .export = c('PROCESSED_COUNTS','MODEL1')) %dopar% {
+#   PERM.COUNTS <- t(apply(PROCESSED_COUNTS$filteredExprMatrix, 1, sample, replace = FALSE))
+#   # Estimate voom weights
+#   VOOM.ADJUSTED.PERM.GENE_EXPRESSION = voom(PERM.COUNTS, design=MODEL1, plot=F)
+#   
+#   # Fit linear model using new weights and new design
+#   VOOM.ADJUSTED.PERM.FIT = lmFit(VOOM.ADJUSTED.PERM.GENE_EXPRESSION)
+#   
+#   # Residuals after normalisation
+#   RESIDUAL.PERM.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.PERM.FIT,VOOM.ADJUSTED.PERM.GENE_EXPRESSION$E)
+#   
+#   PERM.SINGULAR.VAL.DECOM <- svd(RESIDUAL.PERM.GENE_EXPRESSION)
+#   PERM.SING.VALS <- PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2/sum(PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2)
+# }
+# num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
 
 num.sv2 = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456)
-NUM.SV = min(num.sv1, num.sv2)
+NUM.SV = num.sv2 #min(num.sv1, num.sv2)
 
 SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "irw", n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
@@ -369,13 +369,13 @@ Calculate weighted residuals and add back "cogdx" to the residuals
 # Add variable of interest back to the residuals
 varsToAddIn = grep("cogdx", colnames(DM1$design), value = T)
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
-  VOOM.ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(DM1$design[,varsToAddIn])
+  VOOM.ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(VOOM.ADJUSTED.FIT$design[,varsToAddIn])
 ```
 
 ### Clustering residual data
 ```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
