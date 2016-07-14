@@ -48,6 +48,7 @@ cl = makeCluster(14)
 registerDoParallel(cl)
 
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+source('../R/num.sv.R') # Source parallel version of num.sv from local repo
 
 options(xtable.type="html")
 
@@ -379,7 +380,6 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
                                               COVARIATES, 'all adjusted design(voom-normalized)',
                                               isKeyPlot=TRUE)
 ```
-`r tmp`
 ### Sanity check
 ```{r residualSigCovars.manual, fig.width=20, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
@@ -390,7 +390,7 @@ MODEL0 = DM1$design[,-grep('BrainRegion.Diagnosis',colnames(DM1$design))] # Get 
 MODEL1 = DM1$design
 
 ## Calculate the number of surrogate variables
-NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456, LINPACK = TRUE, B = 10)
+NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456, B = 10)
 
 SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "irw", n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
