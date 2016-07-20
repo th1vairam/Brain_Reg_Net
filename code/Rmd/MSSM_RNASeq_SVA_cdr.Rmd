@@ -130,7 +130,7 @@ rownames(METADATA) = METADATA$NewBarcode
 
 # Filter data
 ind <- intersect(rownames(METADATA), colnames(COUNT))
-ind <- setdiff(ind, 'hB_RNA_10622')
+# ind <- setdiff(ind, 'hB_RNA_10622')
 METADATA <- METADATA[ind,]
 COUNT <- COUNT[, ind]
 ```
