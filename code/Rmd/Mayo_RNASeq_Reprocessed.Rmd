@@ -22,7 +22,7 @@ knit2synapse::knitToFolderEntity(file = "./Mayo_RNASeq_Reprocessed.Rmd",
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
-library(CovariateAnalysis)
+library(CovariateAnalysis) ## install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
 library(tidyr)
 library(plyr)
@@ -42,10 +42,12 @@ library(edgeR)
 library(biomaRt)
 library(fpc)
 
+library(glmnet)
+
 library(doParallel)
 library(foreach)
 
-cl = makeCluster(2)
+cl = makeCluster(14)
 registerDoParallel(cl)
 
 options(xtable.type="html")
@@ -126,7 +128,7 @@ METADATA <- METADATA %>%
   filter(!is.na(Source)) %>%
   dplyr::filter(!(ID %in% c("11386_CER","1923_CER", "11311_CER", "11477_CER", "11408_TCX", "11294_TCX", "11396_TCX")))
 ```
-Following samples were considered outliers and removed based on PCA and/or eucledian distance:
+Following samples were considered outliers and removed based on PCA and/or eucledian distance: `r paste(c("11386_CER","1923_CER", "11311_CER", "11477_CER", "11408_TCX", "11294_TCX", "11396_TCX"), collapse = ',')`
 ```{r preprocess.data1}
 # Match covariates to expression data
 indToRetain = intersect(METADATA$ID, colnames(COUNT))
@@ -138,6 +140,66 @@ rownames(METADATA) = METADATA$ID
 METADATA = METADATA[indToRetain,]
 ```
 `r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. Following samples were removed `r indRemoved`
+### Predict missing PMI
+```{r predict.pmi}
+PMI = read.table('Mayo_PMI.tsv', header=T, fill=T) %>%
+  dplyr::select(-Source) %>% 
+  right_join(METADATA %>%
+               dplyr::mutate(SubjectId_Synpase = paste(Donor_ID, BrainRegion, sep = '_')))
+rownames(PMI) = PMI$SubjectId_Synpase
+
+# Get genes that are predictors of PMI and use them as control probes
+CONTROL.PROBES_ID = 'syn6145639'
+ALL_USED_IDs = c(ALL_USED_IDs, CONTROL.PROBES_ID)
+CONTROL.PROBES = fread(synGet(CONTROL.PROBES_ID)@filePath, data.table = F)
+
+# Remove genes
+EXPR <- getGeneFilteredGeneExprMatrix(COUNT, 
+                                      MIN_GENE_CPM=0,
+                                      MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0,
+                                      verbose=T)
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=F)
+
+ind = sapply(rownames(VOOM.GENE_EXPRESSION$E), function(x){str_split(x, '\\.')[[1]][1]}) %in% CONTROL.PROBES$x 
+EXPR = VOOM.GENE_EXPRESSION$E[ind,]
+PMI = PMI[colnames(EXPR),]
+
+expr = dlply(PMI, .(Donor_ID), function(mtd, expr){
+  if (dim(mtd)[1] > 1)
+    expr = rowMeans(expr[, mtd$SubjectId_Synpase]) %>% rownameToFirstColumn('GeneID')
+  else
+    expr = expr[, mtd$SubjectId_Synpase] %>% rownameToFirstColumn('GeneID')
+  expr = expr %>% plyr::rename(c('DF' = unique(mtd$Donor_ID)))
+  return(expr)
+}, EXPR) %>%
+  join_all
+rownames(expr) = expr$GeneID
+
+PMI = PMI[,colnames(PMI) %in% c('Donor_ID','PMI')] %>% unique
+rownames(PMI) = PMI$Donor_ID
+
+PMI = PMI[intersect(rownames(PMI), colnames(expr)), ]
+expr = expr[,intersect(rownames(PMI), colnames(expr))]
+
+# Split data into trainining and prediction set
+x.train = expr[,!is.na(PMI$PMI)]
+x.predict = expr[,is.na(PMI$PMI)]
+
+y.train = PMI[!is.na(PMI$PMI),]
+
+plr.model = cv.glmnet(t(x.train), y.train$PMI, family = 'gaussian')
+coeff = as.matrix(coef.glmnet(plr.model, s = 'lambda.min'))
+mse = sum((predict(plr.model, t(x.train), s = 'lambda.min', type = 'response') - y.train$PMI)^2)/length(y.train$PMI)
+y.predict = predict(plr.model, t(x.predict), s = 'lambda.min', type = 'response') %>%
+  rownameToFirstColumn('Donor_ID') %>%
+  plyr::rename(c('1' = 'PMI'))
+
+PMI = rbindlist(list(y.train, y.predict), use.names = T, fill = T)
+
+METADATA = left_join(METADATA, PMI)
+```
 
 ```{r diagnosisPlots, fig.height=10, fig.width = 15}
 # RIN
@@ -149,7 +211,11 @@ p[[1]] = p[[1]] + ggtitle('RIN') + theme(legend.position = 'top')
 p[[2]] = ggplot(METADATA, aes(x = Diagnosis, y = as.numeric(AgeAtDeath), fill = Tissue)) + geom_boxplot()
 p[[2]] = p[[2]] + ggtitle('AgeAtDeath') + theme(legend.position = 'top')
 
-multiplot(plotlist = p, cols = 2)
+# PMI
+p[[3]] = ggplot(METADATA, aes(x = Diagnosis, y = as.numeric(PMI), fill = Tissue)) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PMI') + theme(legend.position = 'top')
+
+multiplot(plotlist = p, cols = 3)
 
 # Source
 vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
@@ -159,7 +225,7 @@ vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AgeAtDeath")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -234,9 +300,11 @@ tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 135, minSize=10)
 
 COVARIATES.tmp = COVARIATES
 COVARIATES.tmp[,FactorCovariates] = lapply(COVARIATES.tmp[,FactorCovariates], as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
 
 WGCNA::plotDendroAndColors(sampleTrees, 
-                           labels2colors(cbind(tree,COVARIATES.tmp)),
+                           col.mat,
                            groupLabels = c('Cluster',colnames(COVARIATES.tmp)))
 
 tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[tree == 0], collapse = ','))
@@ -266,7 +334,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative)
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
-```{r iterative.adjusted.voom.normalisation, results='asis', echo=FALSE}
+```{r iterative.adjusted.voom.normalisation, results='asis'}
 postAdjustCovars = c('BrainRegion.Diagnosis')
 randomCovariates = 'Donor_ID'
 
@@ -326,6 +394,44 @@ modelStr <-paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=','), 'as fi
 tmp <- paste('Using following covariates in the final model:', modelStr, 'and Donor_ID as random effects')
 ```
 `r tmp`
+### Normalisation (manual design)
+Since there is a strong association of case control status with Source and flowcell information we are manually including them. Also, to be consistent with other brain banks we are including AgeAtDeath as a covariate.
+```{r manual.adjusted.voom.normalisation, results='asis', echo=FALSE}
+postAdjustCovars = c(postAdjustCovars, c('Source','FLOWCELL','AgeAtDeath')) %>% unique
+randomCovariates = 'Donor_ID'
+
+writeLines(paste('Using following covariates in the model:', 
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects and',
+                 paste(randomCovariates, collapse=', '),
+                 'random effect'))
+  
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+    
+# Estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F)
+  
+# Calculate correlation values of random effects
+correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$Donor_ID)
+  
+# Re-estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F, 
+                                     block = COVARIATES$Donor_ID, correlation = correlation$cor)
+  
+# Fit a mixed effect linear model
+FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+  
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES,
+                                              'all adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
+```
 
 ### Sanity Check
 Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
@@ -382,8 +488,11 @@ clust = clust[rownames(COVARIATES)]
 # Tree based clustering
 COVARIATES.tmp = COVARIATES
 COVARIATES.tmp[, FactorCovariates] = sapply(COVARIATES.tmp[,FactorCovariates], as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
+
 plotDendroAndColors(sampleTrees, 
-                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES.tmp)), 
+                    colors = col.mat, 
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES))
@@ -392,9 +501,6 @@ tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[clust == 0], co
 tmp = base::gsub('_','\\\\_',tmp)
 writeLines(tmp)
 tmp = paste('Samples in cluster 3 are', paste(sampleTrees$labels[clust == 3], collapse = ','))
-tmp = base::gsub('_','\\\\_',tmp)
-writeLines(tmp)
-tmp = paste('Samples in cluster 4 are', paste(sampleTrees$labels[clust == 4], collapse = ','))
 tmp = base::gsub('_','\\\\_',tmp)
 writeLines(tmp)
 ```
@@ -437,7 +543,7 @@ VOOM.ADJUSTED.GENE_EXPRESSION$E <- rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRE
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=25, fig.width=25}
+```{r diffExp, fig.height=10, fig.width=20}
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
   "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
@@ -490,7 +596,8 @@ CODE <- Folder(name = 'UFL_Mayo_ISB RNASeq Reprocessed Counts', parentId = paren
 CODE <- synStore(CODE)
 
 # Store covariates
-COVARIATES = rownameToFirstColumn(COVARIATES, 'ID')
+COVARIATES = rownameToFirstColumn(COVARIATES, 'ID') %>%
+  dplyr::select(-PMI)
 write.table(COVARIATES, file = 'MAYOcovariates.tsv', sep = '\t', row.names=F, quote=F)
 COV_OBJ = File('MAYOcovariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
@@ -508,6 +615,7 @@ RAWCPM_OBJ = synStore(RAWCPM_OBJ,
                       activityDescription = activityDescription)
 
 # Design Matrix
+DM1$design = DM1$design[,!(colnames(DM1$design) %in% c('PMI'))]
 write.table(DM1$design, file='MAYOdesign.tsv', sep = '\t', row.names=F, quote=F)
 DM_OBJ = File('MAYOdesign.tsv', 
                   name = 'Design Matrix',

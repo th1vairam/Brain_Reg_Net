@@ -17,12 +17,11 @@ knit2synapse::knitToFolderEntity(file = "./Mayo_RNASeq_SVA_Reprocessed.Rmd",
                                  entityName = 'UFL_Mayo_ISB RNASeq Reprocessed Counts (with SVA adjustments)')
 ```
 
-
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
-library(CovariateAnalysis)
+library(CovariateAnalysis) ## install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
 library(tidyr)
 library(plyr)
@@ -42,11 +41,13 @@ library(edgeR)
 library(biomaRt)
 library(fpc)
 
-# library(doParallel)
-# library(foreach)
-# 
-# cl = makeCluster(14)
-# registerDoParallel(cl)
+library(glmnet)
+
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(14)
+registerDoParallel(cl)
 
 options(xtable.type="html")
 
@@ -138,6 +139,66 @@ rownames(METADATA) = METADATA$ID
 METADATA = METADATA[indToRetain,]
 ```
 `r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. Following samples were removed `r indRemoved`
+### Predict missing PMI
+```{r predict.pmi}
+PMI = read.table('Mayo_PMI.tsv', header=T, fill=T) %>%
+  dplyr::select(-Source) %>% 
+  right_join(METADATA %>%
+               dplyr::mutate(SubjectId_Synpase = paste(Donor_ID, BrainRegion, sep = '_')))
+rownames(PMI) = PMI$SubjectId_Synpase
+
+# Get genes that are predictors of PMI and use them as control probes
+CONTROL.PROBES_ID = 'syn6145639'
+ALL_USED_IDs = c(ALL_USED_IDs, CONTROL.PROBES_ID)
+CONTROL.PROBES = fread(synGet(CONTROL.PROBES_ID)@filePath, data.table = F)
+
+# Remove genes
+EXPR <- getGeneFilteredGeneExprMatrix(COUNT, 
+                                      MIN_GENE_CPM=0,
+                                      MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0,
+                                      verbose=T)
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=NULL, plot=F)
+
+ind = sapply(rownames(VOOM.GENE_EXPRESSION$E), function(x){str_split(x, '\\.')[[1]][1]}) %in% CONTROL.PROBES$x 
+EXPR = VOOM.GENE_EXPRESSION$E[ind,]
+PMI = PMI[colnames(EXPR),]
+
+expr = dlply(PMI, .(Donor_ID), function(mtd, expr){
+  if (dim(mtd)[1] > 1)
+    expr = rowMeans(expr[, mtd$SubjectId_Synpase]) %>% rownameToFirstColumn('GeneID')
+  else
+    expr = expr[, mtd$SubjectId_Synpase] %>% rownameToFirstColumn('GeneID')
+  expr = expr %>% plyr::rename(c('DF' = unique(mtd$Donor_ID)))
+  return(expr)
+}, EXPR) %>%
+  join_all
+rownames(expr) = expr$GeneID
+
+PMI = PMI[,colnames(PMI) %in% c('Donor_ID','PMI')] %>% unique
+rownames(PMI) = PMI$Donor_ID
+
+PMI = PMI[intersect(rownames(PMI), colnames(expr)), ]
+expr = expr[,intersect(rownames(PMI), colnames(expr))]
+
+# Split data into trainining and prediction set
+x.train = expr[,!is.na(PMI$PMI)]
+x.predict = expr[,is.na(PMI$PMI)]
+
+y.train = PMI[!is.na(PMI$PMI),]
+
+plr.model = cv.glmnet(t(x.train), y.train$PMI, family = 'gaussian')
+coeff = as.matrix(coef.glmnet(plr.model, s = 'lambda.min'))
+mse = sum((predict(plr.model, t(x.train), s = 'lambda.min', type = 'response') - y.train$PMI)^2)/length(y.train$PMI)
+y.predict = predict(plr.model, t(x.predict), s = 'lambda.min', type = 'response') %>%
+  rownameToFirstColumn('Donor_ID') %>%
+  plyr::rename(c('1' = 'PMI'))
+
+PMI = rbindlist(list(y.train, y.predict), use.names = T, fill = T)
+
+METADATA = left_join(METADATA, PMI)
+```
 
 ```{r diagnosisPlots, fig.height=10, fig.width = 15}
 # RIN
@@ -148,8 +209,11 @@ p[[1]] = p[[1]] + ggtitle('RIN') + theme(legend.position = 'top')
 # AgeAtDeath
 p[[2]] = ggplot(METADATA, aes(x = Diagnosis, y = as.numeric(AgeAtDeath), fill = Tissue)) + geom_boxplot()
 p[[2]] = p[[2]] + ggtitle('AgeAtDeath') + theme(legend.position = 'top')
+# PMI
+p[[3]] = ggplot(METADATA, aes(x = Diagnosis, y = as.numeric(PMI), fill = Tissue)) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PMI') + theme(legend.position = 'top')
 
-multiplot(plotlist = p, cols = 2)
+multiplot(plotlist = p, cols = 3)
 
 # Source
 vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
@@ -159,7 +223,7 @@ vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AgeAtDeath")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath", "PMI")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -229,9 +293,11 @@ tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 135, minSize=10)
 
 COVARIATES.tmp = COVARIATES
 COVARIATES.tmp[,FactorCovariates] = lapply(COVARIATES.tmp[,FactorCovariates], as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
 
 WGCNA::plotDendroAndColors(sampleTrees, 
-                           labels2colors(cbind(tree,COVARIATES.tmp)),
+                           col.mat,
                            groupLabels = c('Cluster',colnames(COVARIATES.tmp)))
 
 tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[tree == 0], collapse = ','))
@@ -259,68 +325,44 @@ Significant covariates to adjust at FDR 0.1 are `r paste(gsub('_','\\\\_',adjust
 ```{r preAdjustedSigCovars.NULL.ALL, fig.width=25, fig.height=12}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
-### Normalisation (iterative)
-Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
-```{r iterative.adjusted.voom.normalisation, results='asis', echo=FALSE}
-postAdjustCovars = c('BrainRegion.Diagnosis')
+### Normalisation (manual design)
+RIN and PMI. Since there is a strong association of case control status with Source and flowcell information we are manually including them. Also, to be consistent with other brain banks we are including AgeAtDeath as a covariate.
+```{r manual.adjusted.voom.normalisation, results='asis', echo=FALSE}
+postAdjustCovars = c('BrainRegion.Diagnosis', 'RIN', 'PMI', 'Source', 'FLOWCELL', 'AgeAtDeath')
 randomCovariates = 'Donor_ID'
 
-# Assign residual covariates
-residualSigCovars = preAdjustedSigCovars
-significantCovars = residualSigCovars$significantCovars
-covariatesEffects = residualSigCovars$Effects.significantCovars
-covariatesEffects = covariatesEffects[setdiff(significantCovars, c(postAdjustCovars, randomCovariates))]
-
-postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
-
-loopCount = 0 
-while(length(significantCovars)!=0 && loopCount <= 100){
-  writeLines(paste('Using following covariates in the model:', 
-                   paste(postAdjustCovars, collapse=', '),
-                   'as fixed effects'))
+writeLines(paste('Using following covariates in the model:', 
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects and',
+                 paste(randomCovariates, collapse=', '),
+                 'random effect'))
   
-  # Post adjusted design matrix
-  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
-  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
     
-  # Estimate voom weights
-  VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F)
+# Estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F)
   
-  # Calculate correlation values of random effects
-  correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$Donor_ID)
+# Calculate correlation values of random effects
+correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$Donor_ID)
   
-  # Re-estimate voom weights
-  VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F, 
-                                       block = COVARIATES$Donor_ID, correlation = correlation$cor)
+# Re-estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(EXPR$filteredExprMatrix, design=DM1$design, plot=F, 
+                                     block = COVARIATES$Donor_ID, correlation = correlation$cor)
   
-  # Fit a mixed effect linear model
-  FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+# Fit a mixed effect linear model
+FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
   
-  # Residuals after normalisation
-  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
-  
-  # Residual covariates to choose from
-  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, randomCovariates))
-  
-  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                COVARIATES,
-                                                'all adjusted design(voom-normalized)',
-                                                isKeyPlot=TRUE)
-  
-  # Add postadjusted covariates (if any)
-  significantCovars = residualSigCovars$significantCovars
-  covariatesEffects = residualSigCovars$Effects.significantCovars
-  covariatesEffects = covariatesEffects[setdiff(significantCovars,c(postAdjustCovars, randomCovariates))]
-  
-  postAdjustCovars = c(postAdjustCovars,names(which.max(covariatesEffects)))
-  loopCount = loopCount + 1
-}
-modelStr <-paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=','), 'as fixed effects')
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
 
-tmp <- paste('Using following covariates in the final model:', modelStr, 'and Donor_ID as random effects')
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES,
+                                              'all adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
 ```
-`r tmp`
 ### Sanity Check
 Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
 ```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
@@ -330,39 +372,40 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 ```{r sva}
 MODEL0 = getDesignMatrix(COVARIATES[,setdiff(postAdjustCovars, "BrainRegion.Diagnosis"),drop=F],Intercept = F)$design # Get null model by removing variable of interest
 MODEL1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
-## Calculate the number of surrogate variables
-# Get number of surrogate variables (for details of the algorithm refer http://biorxiv.org/content/biorxiv/suppl/2016/05/09/052209.DC1/052209-1.pdf)
-SINGULAR.VAL.DECOM <- svd(RESIDUAL.GENE_EXPRESSION)
-NUM.DEG.FREEDOM = dim(RESIDUAL.GENE_EXPRESSION)[2] - dim(MODEL1)[2] + 1
-SING.VALS <- SINGULAR.VAL.DECOM$d^2/sum(SINGULAR.VAL.DECOM$d)
-SING.VALS = SING.VALS[1:NUM.DEG.FREEDOM]
-
-# Permute and calculate the permuted singular values
-PERM.SING.VALS <- foreach (i = 1:100,
-         .combine = rbind,
-         .packages = c('limma','CovariateAnalysis'),
-         .export = c('EXPR','MODEL1')) %dopar% {
-           
-           # Permute expression counts
-           PERM.COUNTS <- t(apply(EXPR$filteredExprMatrix, 1, sample, replace = FALSE))
-           
-           # Estimate voom weights
-           VOOM.ADJUSTED.PERM.GENE_EXPRESSION = voom(PERM.COUNTS, design=MODEL1, plot=F)
-           
-           # Fit linear model using new weights and new design
-           VOOM.ADJUSTED.PERM.FIT = lmFit(VOOM.ADJUSTED.PERM.GENE_EXPRESSION)
-           
-           # Residuals after normalisation
-           RESIDUAL.PERM.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.PERM.FIT,VOOM.ADJUSTED.PERM.GENE_EXPRESSION$E)
-           
-           PERM.SINGULAR.VAL.DECOM <- svd(RESIDUAL.PERM.GENE_EXPRESSION)
-           PERM.SING.VALS <- PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2/sum(PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2)
-        }
-num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
+# ## Calculate the number of surrogate variables
+# # Get number of surrogate variables (for details of the algorithm refer http://biorxiv.org/content/biorxiv/suppl/2016/05/09/052209.DC1/052209-1.pdf)
+# SINGULAR.VAL.DECOM <- svd(RESIDUAL.GENE_EXPRESSION)
+# NUM.DEG.FREEDOM = dim(RESIDUAL.GENE_EXPRESSION)[2] - dim(MODEL1)[2] + 1
+# SING.VALS <- SINGULAR.VAL.DECOM$d^2/sum(SINGULAR.VAL.DECOM$d)
+# SING.VALS = SING.VALS[1:NUM.DEG.FREEDOM]
+# 
+# # Permute and calculate the permuted singular values
+# PERM.SING.VALS <- foreach (i = 1:100,
+#          .combine = rbind,
+#          .packages = c('limma','CovariateAnalysis'),
+#          .export = c('EXPR','MODEL1')) %dopar% {
+#            
+#            # Permute expression counts
+#            PERM.COUNTS <- t(apply(EXPR$filteredExprMatrix, 1, sample, replace = FALSE))
+#            
+#            # Estimate voom weights
+#            VOOM.ADJUSTED.PERM.GENE_EXPRESSION = voom(PERM.COUNTS, design=MODEL1, plot=F)
+#            
+#            # Fit linear model using new weights and new design
+#            VOOM.ADJUSTED.PERM.FIT = lmFit(VOOM.ADJUSTED.PERM.GENE_EXPRESSION)
+#            
+#            # Residuals after normalisation
+#            RESIDUAL.PERM.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.PERM.FIT,VOOM.ADJUSTED.PERM.GENE_EXPRESSION$E)
+#            
+#            PERM.SINGULAR.VAL.DECOM <- svd(RESIDUAL.PERM.GENE_EXPRESSION)
+#            PERM.SING.VALS <- PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2/sum(PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2)
+#         }
+# num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
 
 num.sv2 = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456)
-NUM.SV = min(num.sv1, num.sv2)
+NUM.SV = num.sv2#min(num.sv1, num.sv2)
 
 SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, n.sv = NUM.SV, method = "two-step", B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
@@ -435,21 +478,14 @@ clust = clust[rownames(COVARIATES)]
 # Tree based clustering
 COVARIATES.tmp = COVARIATES
 COVARIATES.tmp[, FactorCovariates] = sapply(COVARIATES.tmp[,FactorCovariates], as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
+
 plotDendroAndColors(sampleTrees, 
-                    colors = labels2colors(cbind(data.frame(clust = clust), COVARIATES.tmp)), 
+                    colors = col.mat,
                     abHeight = 0.80, 
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES))
-
-tmp = paste('Samples in cluster 0 are', paste(sampleTrees$labels[clust == 0], collapse = ','))
-tmp = base::gsub('_','\\\\_',tmp)
-writeLines(tmp)
-tmp = paste('Samples in cluster 3 are', paste(sampleTrees$labels[clust == 3], collapse = ','))
-tmp = base::gsub('_','\\\\_',tmp)
-writeLines(tmp)
-tmp = paste('Samples in cluster 4 are', paste(sampleTrees$labels[clust == 4], collapse = ','))
-tmp = base::gsub('_','\\\\_',tmp)
-writeLines(tmp)
 ```
 
 ```{r temp1, include=FALSE}
@@ -488,7 +524,7 @@ VOOM.ADJUSTED.GENE_EXPRESSION$E <- rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRE
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=15, fig.width=25}
+```{r diffExp, fig.height=10, fig.width=20}
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
   "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
@@ -542,7 +578,8 @@ CODE <- Folder(name = 'UFL_Mayo_ISB RNASeq Reprocessed Counts (with SVA adjustme
 CODE <- synStore(CODE)
 
 # Store covariates
-COVARIATES = rownameToFirstColumn(COVARIATES, 'ID')
+COVARIATES = rownameToFirstColumn(COVARIATES, 'ID') %>%
+  dplyr::select(-PMI)
 write.table(COVARIATES, file = 'MAYOcovariates.tsv', sep = '\t', row.names=F, quote=F)
 COV_OBJ = File('MAYOcovariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
@@ -554,6 +591,19 @@ RAWCPM_OBJ = File('MAYOlogCPM.tsv',
                   name = 'Raw logCPM',
                   parentId = CODE$properties$id)
 RAWCPM_OBJ = synStore(RAWCPM_OBJ,
+                      used = ALL_USED_IDs, 
+                      activityName = activityName, 
+                      executed = thisFile, 
+                      activityDescription = activityDescription)
+
+# Design Matrix
+DM = VOOM.ADJUSTED.GENE_EXPRESSION$design
+DM = DM[,!(colnames(DM) %in% c('PMI'))]
+write.table(DM, file='MAYOdesign.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MAYOdesign.tsv', 
+                  name = 'Design Matrix',
+                  parentId = CODE$properties$id)
+DM_OBJ = synStore(DM_OBJ,
                       used = ALL_USED_IDs, 
                       activityName = activityName, 
                       executed = thisFile, 

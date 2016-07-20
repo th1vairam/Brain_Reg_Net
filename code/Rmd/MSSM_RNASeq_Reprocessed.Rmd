@@ -116,6 +116,12 @@ SampleID = SampleID %>%
   dplyr::select(SampleID, ID) %>%
   dplyr::mutate(ID = as.numeric(ID))
 
+# Get sample ids that are to be retained (data from Noam on 29th June) 
+tmp = read.table('MSSM_SampleIDs.txt', header = T)
+removeID = setdiff(SampleID$ID, tmp$x)
+writeLines(paste('Removed',length(removeID),'samples from MSSM'))
+SampleID = filter(SampleID, ID %in% tmp$x)
+
 # Get technical metadata
 METADATA_ID <- 'syn5898489'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
@@ -147,7 +153,7 @@ METADATA = left_join(METADATA_TECHNICAL %>%
                                      -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
                        filter(!is.na(ID)) %>%
                        dplyr::mutate(ID = as.numeric(ID))) %>%
-  left_join(SampleID) %>%
+  inner_join(SampleID) %>%
   filter(!is.na(SampleID)) %>%
   unique
 rownames(METADATA) = METADATA$SampleID
@@ -159,6 +165,8 @@ indRemoved <- setdiff(colnames(COUNT), METADATA$SampleID)
 METADATA <- METADATA[ind,]
 COUNT <- COUNT[, ind]
 ```
+`r paste('In total',length(indRemoved),'samples were removed')`
+`r paste(indRemoved, collapse = ',')`
 ### Covariate clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering, cache=TRUE}
@@ -392,6 +400,39 @@ modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
 tmp <- paste('Using following covariates in the final model:', modelStr)
 ```
 `r tmp`
+### Normalisation (manual design)
+Adding AOD as a covariate to the identified covariates (for cross brain bank comparison)
+```{r manualNorm}
+# Primary variable of interest
+postAdjustCovars = c(postAdjustCovars, 'Batch', 'PMI', 'AOD') %>% unique
+
+writeLines(paste('Using following covariates in the model:',
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects'))
+  
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+# Estimate correlation of random effects
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
+correlation <- parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block=COVARIATES$BB)
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F,
+                                     block=COVARIATES$BB, correlation = correlation$cor)
+
+# Re-calculate linear fit using new weights and new design
+VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+  
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+  
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES, 'all adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
+```
 ### Sanity check
 ```{r residualSigCovars.manual, fig.width=20, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
@@ -436,6 +477,7 @@ WGCNA::plotDendroAndColors(tree,
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
 ```
+
 ```{r get.gene.symbols, cache=TRUE, eval=TRUE}
 # Define biomart object
 mart <- useMart('ENSEMBL_MART_ENSEMBL', dataset = "hsapiens_gene_ensembl", host = 'dec2015.archive.ensembl.org')
@@ -457,6 +499,7 @@ VOOM.ADJUSTED.GENE_EXPRESSION$E <- rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRE
   left_join(Ensemble2HGNC) %>% 
   dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
+
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
 tmp = summary(COVARIATES$BrainRegion.Diagnosis) %>%

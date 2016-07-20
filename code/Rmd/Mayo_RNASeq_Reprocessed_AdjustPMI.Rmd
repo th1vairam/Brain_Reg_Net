@@ -546,8 +546,10 @@ p
 
 tmp = DE %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(Gene.ID)))
+  dplyr::mutate(D = logFC/abs(logFC)) %>%
+  group_by(Comparison, D) %>%
+  dplyr::summarize(nDiffExpGenes = length(unique(Gene.ID))) %>%
+  spread(D, nDiffExpGenes)
 kable(tmp)
 
 DE = DE %>%

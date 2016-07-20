@@ -48,6 +48,7 @@ cl = makeCluster(14)
 registerDoParallel(cl)
 
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+source('../R/num.sv.R') # Source parallel version of num.sv from local repo
 
 source('../R/lib/num.sv')
 
@@ -118,6 +119,12 @@ SampleID = SampleID %>%
   dplyr::select(SampleID, ID) %>%
   dplyr::mutate(ID = as.numeric(ID))
 
+# Get sample ids that are to be retained (data from Noam on 29th June) 
+tmp = read.table('MSSM_SampleIDs.txt', header = T)
+removeID = setdiff(SampleID$ID, tmp$x)
+writeLines(paste('Removed',length(removeID),'samples from MSSM'))
+SampleID = filter(SampleID, ID %in% tmp$x)
+
 # Get technical metadata
 METADATA_ID <- 'syn5898489'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
@@ -149,7 +156,7 @@ METADATA = left_join(METADATA_TECHNICAL %>%
                                      -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
                        filter(!is.na(ID)) %>%
                        dplyr::mutate(ID = as.numeric(ID))) %>%
-  left_join(SampleID) %>%
+  inner_join(SampleID) %>%
   filter(!is.na(SampleID)) %>%
   unique
 rownames(METADATA) = METADATA$SampleID
@@ -161,6 +168,8 @@ indRemoved <- setdiff(colnames(COUNT), METADATA$SampleID)
 METADATA <- METADATA[ind,]
 COUNT <- COUNT[, ind]
 ```
+`r paste('In total',length(indRemoved),'samples were removed')`
+`r paste(indRemoved, collapse = ',')`
 ### Covariate clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering, cache=TRUE}
@@ -337,63 +346,42 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
-### Normalisation (iterative design)
+### Normalisation (manual design)
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix. Here BB (Donor Information) is chosen as random effect
-```{r iterativeNorm}
+```{r manualNorm}
 # Primary variable of interest
-postAdjustCovars = 'BrainRegion.Diagnosis'
+postAdjustCovars = c("BrainRegion.Diagnosis", "RIN", "Batch", "PMI", "AOD")
 
-# Assign residual covariates
-residualSigCovars = preAdjustedSigCovars
+writeLines(paste('Using following covariates in the model:',
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects'))
+  
+# Post adjusted design matrix
+DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+# Estimate correlation of random effects
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
+correlation <- parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block=COVARIATES$BB)
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F,
+                                     block=COVARIATES$BB, correlation = correlation$cor)
 
-covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, c(postAdjustCovars, 'BB'))]
-
-postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
-
-loopCount = 0 
-while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
-  writeLines(paste('Using following covariates in the model:',
-                   paste(postAdjustCovars, collapse=', '),
-                   'as fixed effects'))
+# Re-calculate linear fit using new weights and new design
+VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
   
-  # Post adjusted design matrix
-  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
-  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
   
-  # Estimate correlation of random effects
-  VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
-  correlation <- parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block=COVARIATES$BB)
+# Residual covariates to choose from
+residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, 'BB'))
   
-  # Re-calculate voom weights with correlation of random effects
-  VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F,
-                                       block=COVARIATES$BB, correlation = correlation$cor)
-
-  # Re-calculate linear fit using new weights and new design
-  VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
-  
-  # Residuals after normalisation
-  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
-  
-  # Residual covariates to choose from
-  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, 'BB'))
-  
-  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                COVARIATES[, residCovars, drop=F], 'all adjusted design(voom-normalized)',
-                                                isKeyPlot=TRUE)
-  
-  # Add postadjusted covariates (if any)
-  covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, c(postAdjustCovars, 'BB'))]
-
-  postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
-  loopCount = loopCount + 1
-}
-modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
-                  'as fixed effects')
-
-tmp <- paste('Using following covariates in the final model:', modelStr)
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES, 'all adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
 ```
-`r tmp`
 ### Sanity check
 ```{r residualSigCovars.manual, fig.width=20, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
@@ -404,7 +392,7 @@ MODEL0 = DM1$design[,-grep('BrainRegion.Diagnosis',colnames(DM1$design))] # Get 
 MODEL1 = DM1$design
 
 ## Calculate the number of surrogate variables
-NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456, LINPACK = TRUE, B = 10)
+NUM.SV = num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, method = 'be', seed = 123456, B = 10)
 
 SURR.VAR = sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0, method = "irw", n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
