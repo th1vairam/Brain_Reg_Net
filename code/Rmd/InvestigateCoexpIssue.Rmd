@@ -1,0 +1,142 @@
+---
+title: "Investigate co-expression issue in reprocessed RNASeq"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+# Investigate co-expression issue
+# Knitting code (commented)
+knit2synapse::knitToFolderEntity(file = "./InvestigateCoexpIssue.Rmd",
+                                 parentId = 'syn5569102',
+                                 entityName = 'RNASeq Reprocessing Coexpression Quality Control')
+```
+
+```{r libload}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(Biobase)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+```
+### Data download
+#### Obtain adjusted FPKM/logcpm residual matrix from synapse
+```{r data.download}
+original.residuals.id = c('ROSMAP' = 'syn5581268', 'MAYO' = 'syn6088523', 'MSSM' = 'syn6120103')
+all.used.ids = original.residuals.id
+original.residuals = lapply(original.residuals.id, downloadFile)
+original.residuals.cor = lapply(original.residuals, function(x){cor(t(x[,-(1:2)]))})
+
+h = mapply(function(x,y){ hist(x, main = y) }, original.residuals.cor,  names(original.residuals.cor), SIMPLIFY = F)
+writeLines('Adjusted residuals of original data deposited from the individual sites')
+plot(h[[1]], main = names(original.residuals.cor)[1])
+plot(h[[2]], main = names(original.residuals.cor)[2])
+plot(h[[3]], main = names(original.residuals.cor)[3])
+```
+#### Obtain adjusted residual matrix from reprocessed counts in synapse
+```{r data.download2}
+reproc.residuals.id = c('ROSMAP' = 'syn6114451', 'MAYO' = 'syn6128271', 'MSSM' = 'syn6131415')
+all.used.ids = c(all.used.ids, reproc.residuals.id)
+reproc.residuals = lapply(reproc.residuals.id, downloadFile)
+reproc.residuals.cor = lapply(reproc.residuals, function(x){cor(t(x[,-(1:3)]))})
+
+h = lapply(reproc.residuals.cor, hist)
+writeLines('Adjusted residuals of reprocessed data deposited by KKDang')
+plot(h[[1]], main = names(reproc.residuals.cor)[1])
+plot(h[[2]], main = names(reproc.residuals.cor)[2])
+plot(h[[3]], main = names(reproc.residuals.cor)[3])
+```
+### Extract PC's and find the loading genes in the reprocessed data from each site
+#### From the reprocessed data
+```{r sample}
+reproc.pc.samples = lapply(reproc.residuals, function(x){
+  x = x[!duplicated(x$Gene.ID),]
+  rownames(x) = x$Gene.ID
+  x = x[,-(1:3)]
+  
+  PC = prcomp(x, scale. = T, center = T)
+  writeLines('Percent variance explained by top 10 PCs are')
+  print(((PC$sdev^2/sum(PC$sdev^2)) * 100)[1:10])
+  
+  return(PC)
+})
+pairs(reproc.pc.samples$ROSMAP$rotation[,1:4], main = 'ROSMAP')
+pairs(reproc.pc.samples$MSSM$rotation[,1:4], main = 'MSSM')
+pairs(reproc.pc.samples$MAYO$rotation[,1:4], main = 'MAYO')
+```
+##### Find all samples deviating from 2 SD in the first PC
+```{r gene}
+dev.samples = lapply(reproc.pc.samples, function(x){
+  mn = mean(x$rotation[,1]); sdev = sd(x$rotation[,1]);
+  zscr = (x$rotation[,1] - mn)/sdev
+  print(names(zscr)[abs(zscr) >= 2])
+})
+
+reproc.pc.genes = lapply(reproc.residuals, function(x){
+  x = x[!duplicated(x$Gene.ID),]
+  rownames(x) = x$Gene.ID
+  x = x[,-(1:3)]
+  
+  PC = prcomp(t(x), scale. = T, center = T)
+  
+  writeLines('Percent variance explained by top 10 PCs are')
+  print(((PC$sdev^2/sum(PC$sdev^2)) * 100)[1:10])
+  
+  return(PC)
+})
+pairs(reproc.pc.genes$ROSMAP$rotation[,1:4], main = 'ROSMAP')
+pairs(reproc.pc.genes$MSSM$rotation[,1:4], main = 'MSSM')
+pairs(reproc.pc.genes$MAYO$rotation[,1:4], main = 'MAYO')
+
+##### Find all samples deviating from 2 SD in the first PC
+dev.genes = mapply(function(x,y){
+  mn = mean(x$rotation[,y]); sdev = sd(x$rotation[,y]);
+  zscr = (x$rotation[,y] - mn)/sdev
+  genes = (names(zscr)[abs(zscr) >= 2])
+}, reproc.pc.genes, c(1,2,1), SIMPLIFY = F)
+tmp = Venn(dev.genes)
+writeLines('Number of top deviating genes (2 SD)')
+plot(tmp, doWeights = F)
+writeLines('14 genes that are common to all three data sets are')
+genes = intersect(intersect(dev.genes$ROSMAP,dev.genes$MAYO), dev.genes$MSSM)
+paste(genes, collapse = ',') %>% print()
+```
+## Store results in Synapse
+```{r syn.store}
+parentId = 'syn5569102';
+activityName = 'Quality control';
+
+thisFileName <- 'InvestigateCoexpIssue.Rmd'
+
+### Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+
+### Store results in synapse
+CODE = Folder(name='RNASeq Reprocessing Coexpression Quality Control', parentId = parentId)
+CODE = synStore(CODE)
+
+save(list = ls(), file = 'investigate.RData')
+obj = File(file = 'investigate.RData', name = 'RNASeq Reprocessing Coexpression Quality Control', parentId = CODE$properties$id)
+obj = synStore(obj, activityName = activityName, used = as.character(all.used.ids), executed = thisFile)
+```
