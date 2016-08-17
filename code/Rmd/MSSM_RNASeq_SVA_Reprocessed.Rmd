@@ -50,6 +50,8 @@ registerDoParallel(cl)
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 source('../R/num.sv.R') # Source parallel version of num.sv from local repo
 
+source('../R/lib/num.sv')
+
 options(xtable.type="html")
 
 knitr::opts_chunk$set(
