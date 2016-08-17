@@ -35,7 +35,16 @@ library(ComplexHeatmap)
 library(RankProd)
 library(githubr)
 
+library(Vennerable)
+library(colorfulVennPlot)
+
 synapseLogin()
+
+library(doParallel)
+library(foreach)
+
+clust = makeCluster(14)
+registerDoParallel(clust)
 
 options(xtable.type="html")
 
@@ -78,9 +87,13 @@ fishersPvalue <- function(pvalue){
 
 ### Get covariates/sample metadata from synapse
 ```{r covariates}
-covariates.id = c('ROSMAP' = 'syn6114444',
-                  'MSBB' = 'syn6131421',
-                  'MAYO' = 'syn6128267')
+# covariates.id = c('ROSMAP' = 'syn6114444',
+#                   'MSBB' = 'syn6131421',
+#                   'MAYO' = 'syn6128267')
+# SVA Normalised
+covariates.id = c('ROSMAP' = 'syn6129368',
+                  'MSBB' = 'syn7059296',
+                  'MAYO' = 'syn6128630')
 
 covariates = lapply(covariates.id, downloadFile)
 
@@ -112,15 +125,17 @@ covariates$MAYO = covariates$MAYO %>%
   dplyr::filter(Status %in% c('Control', 'AD'))
 
 covariates = rbindlist(covariates, use.names = T, fill = T, idcol = 'Study')
-
-
 ```
 
 ### Get logCPM counts from synapse
 ```{r counts}
-logcpm.id = c('ROSMAP' = 'syn6114447' ,
-              'MSBB' = 'syn6131419',
-              'MAYO' = 'syn6128269')
+# logcpm.id = c('ROSMAP' = 'syn6114447' ,
+#               'MSBB' = 'syn6131419',
+#               'MAYO' = 'syn6128269')
+# Get SVA adjusted data
+logcpm.id = c('ROSMAP' = 'syn6129370',
+              'MSBB' = 'syn7059294',
+              'MAYO' = 'syn6128632')
 
 logcpm = lapply(logcpm.id, downloadFile) %>%
   lapply(function(x){
@@ -132,33 +147,55 @@ logcpm[is.na(logcpm)] = dplyr::select(logcpm, -Gene.ID, -ensembl_gene_id) %>%
   min
 ```
 
+### Get residual expression from synapse
+```{r counts1}
+# Get SVA adjusted data
+resid.expr.id = c('ROSMAP' = 'syn6129372',
+                  'MSBB' = 'syn7059289',
+                  'MAYO' = 'syn6128634')
+
+resid.expr = lapply(resid.expr.id, downloadFile) %>%
+  lapply(function(x){
+    x = dplyr::select(x, -hgnc_symbol)
+    }) %>%
+  join_all(type = 'full') %>%
+  dplyr::select(Gene.ID, ensembl_gene_id, one_of(covariates$ID)) 
+resid.expr[is.na(resid.expr)] = dplyr::select(resid.expr, -Gene.ID, -ensembl_gene_id) %>%
+  min(na.rm=T)
+```
+
 ### Download differential expression data
 ```{r download.data}
-diffexp.id = c('ROSMAP' = 'syn6114453',
-               'MSBB' = 'syn6131423',
-               'MAYO' = 'syn6128273')
+# diffexp.id = c('ROSMAP' = 'syn6114453',
+#                'MSBB' = 'syn6131423',
+#                'MAYO' = 'syn6128273')
+# Get SVA adjusted differential expression
+diffexp.id = c('ROSMAP' = 'syn6129374',
+               'MSBB' = 'syn7059298',
+               'MAYO' = 'syn6128636')
 
 diffexp = lapply(diffexp.id, downloadFile)
 
 diffexp$ROSMAP = diffexp$ROSMAP %>%
   filter(Comparison == 'cogdx1-cogdx4') %>%
-  dplyr::select(Gene.ID, logFC, P.Value, adj.P.Val) %>%
+  dplyr::select(ensembl_gene_id, logFC, P.Value, adj.P.Val) %>%
+  # dplyr::select(Gene.ID, logFC, P.Value, adj.P.Val) %>%
   dplyr::mutate(Tissue = 'DLPFC', Contrast = 'NCI-AD')
    
 diffexp$MSBB = diffexp$MSBB %>%
   dplyr::filter(Name == 'ND-SD') %>%
-  dplyr::select(Gene.ID, logFC, P.Value, adj.P.Val, BrainRegion, Name) %>%
+  dplyr::select(ensembl_gene_id, logFC, P.Value, adj.P.Val, BrainRegion, Name) %>%
   dplyr::mutate(BrainRegion = factor(BrainRegion, labels = c('BM_10' = 'FP', 'BM_22' = 'STG', 
                                                              'BM_36' = 'PHG', 'BM_44' = 'IFG'))) %>%
   dplyr::rename(Tissue = BrainRegion, Contrast = Name)
   
 diffexp$MAYO = diffexp$MAYO %>%
   dplyr::filter(Name == 'Control-AD') %>%
-  dplyr::select(genes, logFC, P.Value, adj.P.Val, BrainRegion, Name) %>%
-  dplyr::rename(Tissue = BrainRegion, Gene.ID = genes, Contrast = Name)
+  tidyr::separate(Gene.ID, c('ensembl_gene_id', 'position'), sep = '\\.') %>%
+  dplyr::select(ensembl_gene_id, logFC, P.Value, adj.P.Val, BrainRegion, Name) %>%
+  dplyr::rename(Tissue = BrainRegion, Contrast = Name)
 
-diffexp = rbindlist(diffexp, use.names = T, fill = T, idcol = 'Study') %>%
-  tidyr::separate(Gene.ID, c('ensembl_gene_id','position'),sep = '\\.')
+diffexp = rbindlist(diffexp, use.names = T, fill = T, idcol = 'Study') 
 
 diffexp$DE = 'NONE'
 diffexp$DE[diffexp$adj.P.Val <= 0.05 & diffexp$logFC >= log2(1.2)] = 'UP'
@@ -192,9 +229,30 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
 logcpm = logcpm %>%
   left_join(Ensemble2HGNC)
 
+# Add hgnc_symbols to the resid.mat matrix
+resid.expr = resid.expr %>%
+  left_join(Ensemble2HGNC)
+
 # Add hgnc_symbols to the diffexp matrix
 diffexp = diffexp %>%
   left_join(Ensemble2HGNC)
+
+diffexp$Direction = 'UP'
+diffexp$Direction[diffexp$logFC < 0] = 'DOWN'
+
+writeLines('Differentially expressed at an fdr of 0.05')
+diffexp %>%
+  filter(adj.P.Val <= 0.05) %>%
+  group_by(Tissue, Direction) %>%
+  summarise(n = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, n)
+
+writeLines('Differentially expressed at an fdr of 0.05 and fold change of 1.2')
+diffexp %>%
+  filter(adj.P.Val <= 0.05, (logFC >= log2(1.2) | logFC <= -log2(1.2))) %>%
+  group_by(Tissue, Direction) %>%
+  summarise(n = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, n)
 ```
 
 ### Pathway enrichment
@@ -255,7 +313,6 @@ tmp = filter(diffexp, adj.P.Val <= 0.05, logFC > 0, Tissue == 'CER') %>%
   filter(hgnc_symbol != '')
 ### Enrichr results are here: 
 
-
 ## Down regulated
 tmp = filter(diffexp, adj.P.Val <= 0.05, logFC < 0, Tissue == 'PHG') %>%
   dplyr::left_join(Ensemble2HGNC %>% as.data.table()) %>%
@@ -263,11 +320,11 @@ tmp = filter(diffexp, adj.P.Val <= 0.05, logFC < 0, Tissue == 'PHG') %>%
 ### Enrichr results are here: http://amp.pharm.mssm.edu/Enrichr/enrich?dataset=6xge
 ```
 
-
 ### Meta Analysis
 ```{r metaanalysis}
 P.Value = diffexp %>% 
   # filter(Tissue %in% c('DLPFC', 'PHG', 'TCX')) %>%
+  filter(ensembl_gene_id != '') %>%
   dplyr::select(ensembl_gene_id, P.Value, Tissue, Contrast) %>%
   tidyr::unite(Tissue.Contrast, Tissue, Contrast, sep = '_') %>%
   tidyr::spread(Tissue.Contrast, P.Value)
@@ -291,113 +348,169 @@ fb.pval = dplyr::select(P.Value, -ensembl_gene_id) %>%
   data.frame(ensembl_gene_id = P.Value$ensembl_gene_id,
              fb.pval = .)
 
-metaAnal = join_all(list(min.pval, max.pval, fb.pval), type = 'full')
-tmp = metaAnal %>% gather(method, pval, -ensembl_gene_id) %>% group_by(method) %>% filter(pval <= 0.05, method == 'fb.pval') %>%
-  left_join(Ensemble2HGNC) %>%
-  dplyr::select(hgnc_symbol) %>%
-  unique
+# Rank prod based analysis
+expr = resid.expr[!duplicated(resid.expr$ensembl_gene_id),-c(1:2)]
+rownames(expr) = resid.expr$ensembl_gene_id[!duplicated(resid.expr$ensembl_gene_id)]
+
+cl = covariates$Status
+names(cl) = covariates$ID
+cl[cl == 'NCI'] = 'Control'
+cl[cl == 'ND'] = 'Control'
+cl[cl == 'SD'] = 'AD'
+cl = cl[cl %in% c('Control','AD')] %>% droplevels 
+cl.tmp = -as.numeric(cl)+2
+names(cl.tmp) = names(cl)
+
+origin = covariates$BrainRegion %>% as.numeric
+names(origin) = covariates$ID
+origin = origin[names(cl)]
+
+expr = expr[, names(cl)]
+
+rankprod.pfp = RPadvance(expr, cl.tmp, origin, num.perm = 100, gene.names = rownames(expr), plot=T, rand = 123456, huge=T)
+rankprod.pval = apply(rankprod.pfp$pfp, 1, min) %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  dplyr::rename(rankprod.pval = DF)
+
+metaAnal = join_all(list(min.pval, max.pval, fb.pval, rankprod.pval), type = 'full')
+metaAnal$weight = -log10(metaAnal[,-c(1,6)]) %>% rowSums %>% rank
+metaAnal = metaAnal %>% arrange(desc(weight))
+
+writeLines('Number of genes differentially expressed between AD and control at an FDR of 0.05 are')
+tmp = metaAnal %>% 
+  dplyr::select(-weight) %>%
+  gather(method, pval, -ensembl_gene_id) %>% 
+  group_by(method) %>% 
+  filter(pval <= 0.05) %>%
+  dplyr::select(ensembl_gene_id) %>%
+  unique %>%
+  dlply(.(method), .fun = function(x){unique(x$ensembl_gene_id)})
+kable(sapply(tmp, length) %>% as.data.frame)
+
+tmp1 = Venn(tmp)
+
+plotVenn3d(tmp1@IndicatorWeight[-(1),'.Weight'], labels = names(tmp))
+```
+### Heatmap of expression
+```{r heatmap}
+# Get the overlapping gene sets from all three methods
+tmp.expr = t(scale(t(expr)))
+tmp.expr = scale(tmp.expr)
+tmp.expr = tmp.expr[intersect(intersect(tmp$fb.pval, tmp$min.pval), tmp$rankprod.pval),]
+
+tmp.covariates = dplyr::select(covariates, BrainRegion, Status)
+tmp.covariates$Status[tmp.covariates$Status == 'NCI'] = 'Control'
+tmp.covariates$Status[tmp.covariates$Status == 'ND'] = 'Control'
+tmp.covariates$Status[tmp.covariates$Status == 'SD'] = 'AD'
+tmp.covariates = tmp.covariates %>% droplevels
+rownames(tmp.covariates) = covariates$ID
+
+h1 = HeatmapAnnotation(tmp.covariates)
+Heatmap(tmp.expr, top_annotation = h1, show_row_names = F, show_column_names = F,
+        show_row_dend = F, show_column_dend = F)
 ```
 
+### Pathway enrichment analysis
+```{r pathway.enrich}
+setsToTest = diffexp %>%
+  filter(adj.P.Val <= 0.05) %>%
+  dlply(.(Tissue, Direction), .fun = function(x){
+    unique(x$ensembl_gene_id)
+  })
 
-```{r plotDE}
-tmp = lapply(DEXP, function(x){
-  x$observed.P.val = p.adjust(x$P.Value, 'fdr')
-  x = arrange(x, observed.P.val)
-  x = mutate(x, expected.P.val = seq(0,1,1/(dim(x)[1]-1)))
-  x$dexp = 0;
-  x$dexp[x$observed.P.val <= 0.05 & x$logFC > 0] = 1;
-  x$dexp[x$observed.P.val <= 0.05 & x$logFC < 0] = -1;
-  dplyr::select(x, observed.P.val, expected.P.val, dexp)
-}) 
+tmp1 = rankprod.pfp$pfp[intersect(intersect(tmp$fb.pval, tmp$min.pval), tmp$rankprod.pval),] <= 0.05
+setsToTest$META.UP = rownames(tmp1)[which(tmp1[,1])]
+setsToTest$META.DOWN = rownames(tmp1)[which(tmp1[,2])]
 
-p = list()
-for (i in 1:length(tmp)){
-  p[[i]] = ggplot(tmp[[i]], aes(x = -log10(expected.P.val), y = -log10(observed.P.val))) + geom_point(aes(color = factor(dexp))) 
-  p[[i]] = p[[i]] + scale_colour_manual(values=c('green','grey','red')) + theme(legend.position="none")
-  x = -log10(tmp[[i]]$expected.P.val)
-  x[4]-x[1]/
-  p[[i]] = p[[i]] + geom_abline(slope=1, intercept=0) + ggtitle(names(tmp)[i])
+# Convert ensembl id to hgnc_symbols
+setsToTest = lapply(setsToTest, function(x, Ensemble2HGNC){
+  Ensemble2HGNC$hgnc_symbol[Ensemble2HGNC$ensembl_gene_id %in% x] %>%
+    unique()
+}, Ensemble2HGNC)
+
+# Get Background genes
+backgroundGenes = Ensemble2HGNC$hgnc_symbol[Ensemble2HGNC$ensembl_gene_id %in% rownames(expr)] %>% unique()
+
+############################################################################################################
+# Function to perform Fishers enrichment analysis
+fisherEnrichment <- function(genesInSignificantSet, # A character vector of differentially expressed or some significant genes to test
+                             genesInGeneSet, # A character vector of genes in gene set like GO annotations, pathways etc...
+                             genesInBackground # Background genes that are 
+){
+  genesInSignificantSet = intersect(genesInSignificantSet, genesInBackground) # back ground filtering
+  genesInNonSignificantSet = base::setdiff(genesInBackground, genesInSignificantSet)
+  genesInGeneSet = intersect(genesInGeneSet, genesInBackground) # back ground filtering
+  genesOutGeneSet = base::setdiff(genesInBackground,genesInGeneSet)
+  
+  pval = fisher.test(
+    matrix(c(length(intersect(genesInGeneSet, genesInSignificantSet)),             
+             length(intersect(genesInGeneSet, genesInNonSignificantSet)),
+             length(intersect(genesOutGeneSet, genesInSignificantSet)),
+             length(intersect(genesOutGeneSet, genesInNonSignificantSet))), 
+           nrow=2, ncol=2), alternative="greater")
+  OR = (length(intersect(genesInGeneSet, genesInSignificantSet)) * length(intersect(genesOutGeneSet, genesInNonSignificantSet))) / (length(intersect(genesInGeneSet, genesInNonSignificantSet)) * length(intersect(genesOutGeneSet, genesInSignificantSet))) %>% as.numeric()
+  return(data.frame(pval = pval$p.value,
+                    ngenes = length(genesInGeneSet),
+                    noverlap = length(intersect(genesInGeneSet, genesInSignificantSet)),
+                    Odds.Ratio = OR,
+                    Genes = paste(intersect(genesInGeneSet, genesInSignificantSet), collapse = '|')))}
+############################################################################################################
+
+############################################################################################################
+#### Get gene sets ####
+# Download enrichr gene sets from synapse
+GL_OBJ = synGet('syn4867851')
+ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
+load(GL_OBJ@filePath)
+
+gsets = c("BioCarta_2015", "GO_Biological_Process", "Reactome_2015", "TargetScan_microRNA", "WikiPathways_2015")
+GeneSets.Enrichr = GeneSets[gsets]
+
+# Download AD related gene sets from synapse
+GL_OBJ = synGet('syn4893059');
+ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
+load(GL_OBJ@filePath)
+
+GeneSets.CM = list(CellTypeMarkers = GeneSets[grep('Zhang', names(GeneSets))],
+                   AD = GeneSets['AD:GeneticLoci'])
+GeneSets = c(GeneSets.Enrichr, GeneSets.CM)
+
+# Filter gene list
+GeneSets = filterGeneSets(GeneSets, backgroundGenes, minSize = 3, maxSize = 5000)
+
+enrichResults = list()
+for (name in names(setsToTest)){
+  genesInModule = setsToTest[[name]]  
+  enrichResults[[name]] = lapply(GeneSets,
+                                    function(x, genesInModule, genesInBackground, fisherEnrichment, rownameToFirstColumn){
+                                      tmp = as.data.frame(t(sapply(x, fisherEnrichment, genesInModule, genesInBackground)))
+                                      tmp = rownameToFirstColumn(tmp,'GeneSetName')
+                                      return(tmp)
+                                    }, unique(genesInModule), unique(backgroundGenes), fisherEnrichment, rownameToFirstColumn) %>%
+    rbindlist(use.names=TRUE, idcol = 'Category') %>%
+    dplyr::mutate(fdr = p.adjust(pval, 'fdr'))
+  writeLines(paste0('Completed ',name))  
 }
-multiplot(plotlist = p, cols = 4)
-```
 
-```{r uniqGenes}
-GNames = DEXP[[1]]$hgnc_symbol
-for (i in 2: length(DEXP)){
-  GNames = intersect(GNames, DEXP[[i]]$hgnc_symbol)
-}
-GNames = GNames[!is.na(GNames)]
-GNames = GNames[GNames != '']
+# Write results to file
+tmp1 = rbindlist(enrichResults, use.names = TRUE, idcol = 'ComparisonName', fill = TRUE) %>%
+  filter(!is.na(Category))
 
-DEXP = lapply(DEXP, function(dexp, GNames){
-  dexp = dexp %>%
-    dplyr::filter(hgnc_symbol %in% GNames) %>%
-    group_by(hgnc_symbol) %>%
-    dplyr::summarise(P.Value = min(P.Value)) %>%
-    data.frame
-  rownames(dexp) = dexp$hgnc_symbol
-  dexp = dexp[GNames,]
-  }, GNames)
+tmp1$pval = unlist(tmp1$pval)
+tmp1$ngenes = unlist(tmp1$ngenes)
+tmp1$noverlap = unlist(tmp1$noverlap)
+tmp1$Odds.Ratio = unlist(tmp1$Odds.Ratio)
+tmp1$Genes = unlist(tmp1$Genes)
 
-DEXP = mapply(function(dexp, dataName){
-  colnames(dexp) = c('hgnc_symbol', dataName)
-  return(dexp)
-}, DEXP, names(DEXP), SIMPLIFY = F)
-
-DEXP = join_all(DEXP, by = "hgnc_symbol")
-```
-Overall `r dim(DEXP)[1]` genes in `r dim(DEXP)[2]-1` studies are analysed
-### Differential expression analysis
-```{r diffExp, results = 'asis'}
-Adj.P.Value = apply(DEXP[,-(1)], 2, p.adjust, method = "fdr")
-rownames(Adj.P.Value) = DEXP$hgnc_symbol
-
-writeLines('Total number of genes that are differentially expressed at a FDR <= 0.05 are')
-tmp = (data.frame(colSums(Adj.P.Value <= 0.05)))
-colnames(tmp) = 'No. of Genes'
-kable(tmp)
-
-writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 8/8 datasets')
-paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==8)], collapse = ',')
-
-writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 7/8 datasets')
-paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value<=0.05)==7)], collapse = ',')
-
-writeLines('Genes that are differentially expressed at a FDR <= 0.05 in 6/6 RNASeq datasets')
-paste(rownames(Adj.P.Value)[which(rowSums(Adj.P.Value[,-(4:5)]<=0.05)==6)], collapse = ',')
-```
-
-### Minimum Pvalue meta analysis
-```{r minP}
-Pval = DEXP
-
-Pmin = data.frame(hgnc_symbols = Pval[,1], Pmin = rowMin(data.matrix(Pval[,-(1)])))
-Pmin$Pmin = p.adjust(Pmin$Pmin, method = 'fdr')
-
-tmp = dplyr::filter(Pmin, Pmin <= 0.05) 
-tmp = data.frame(No.of.Genes = dim(tmp)[1], 
-                 GeneList = tmp %>%
-                   dplyr::select(hgnc_symbols) %>%
-                   unlist %>% paste(collapse = ','))
-writeLines("Genes that are atleast differentially expressed at an FDR <= 0.05 in one study are")
-kable(tmp)
-```
-
-
-```{r fisher.brown}
-Pfb = data.frame(hgnc_symbols = Pval[,1], 
-                 Pfb = p.adjust(fishersPvalue(Pval[,-(1)]), method = 'fdr'))
-
-Pfb$Pfb = p.adjust(Pfb$Pfb, method = 'fdr')
-
-tmp = dplyr::filter(Pfb, Pfb <= 0.05) 
-tmp = data.frame(No.of.Genes = dim(tmp)[1], 
-                 GeneList = tmp %>%
-                   dplyr::select(hgnc_symbols) %>%
-                   unlist %>% paste(collapse = ','))
-
-writeLines("Genes that are differentially expressed in the meta analysis at an FDR <= 0.05 are")
-kable(tmp)
+# Store logcpm in synapse
+write.table(tmp1, file = 'enrich.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('enrich.tsv', 
+           name = 'Pathway Enrichment Results (AD and Control)', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = as.character(c(covariates.id)),
+               executed = thisFile,
+               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
 ```
 
 ### Store results in synapse
@@ -432,10 +545,30 @@ OBJ = synStore(OBJ,
                executed = thisFile,
                activityName = 'MetaAnalysis of AMP-AD reprocessed data')
 
+# Store residual expression in synapse
+write.table(expr, file = 'ALLExpr.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('ALLExpr.tsv', 
+           name = 'Residual Expression (AD and Control)', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = as.character(c(covariates.id)),
+               executed = thisFile,
+               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
+
 # Store diffexp in synapse
 write.table(diffexp, file = 'ALLDiffExp.tsv', sep = '\t', row.names=F, quote=F)
 OBJ = File('ALLDiffExp.tsv', 
            name = 'Differential Expression (AD and Control)', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = as.character(c(covariates.id)),
+               executed = thisFile,
+               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
+
+# Store meta analysis in synapse
+write.table(metaAnal, file = 'ALLMetaAnal.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('ALLMetaAnal.tsv', 
+           name = 'Meta Analysis (AD and Control)', 
            parentId = CODE$properties$id)
 OBJ = synStore(OBJ,
                used = as.character(c(covariates.id)),
