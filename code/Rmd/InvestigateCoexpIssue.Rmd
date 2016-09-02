@@ -37,11 +37,22 @@ library(synapseClient)
 library(knitr)
 library(githubr)
 
+library(Vennerable)
 synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = FALSE)
 ```
 ### Data download
 #### Obtain adjusted FPKM/logcpm residual matrix from synapse
-```{r data.download}
+```{r data.download, cache = F}
 original.residuals.id = c('ROSMAP' = 'syn5581268', 'MAYO' = 'syn6088523', 'MSSM' = 'syn6120103')
 all.used.ids = original.residuals.id
 original.residuals = lapply(original.residuals.id, downloadFile)
@@ -54,7 +65,7 @@ plot(h[[2]], main = names(original.residuals.cor)[2])
 plot(h[[3]], main = names(original.residuals.cor)[3])
 ```
 #### Obtain adjusted residual matrix from reprocessed counts in synapse
-```{r data.download2}
+```{r data.download2, cache=F}
 reproc.residuals.id = c('ROSMAP' = 'syn6114451', 'MAYO' = 'syn6128271', 'MSSM' = 'syn6131415')
 all.used.ids = c(all.used.ids, reproc.residuals.id)
 reproc.residuals = lapply(reproc.residuals.id, downloadFile)
@@ -137,6 +148,7 @@ CODE = Folder(name='RNASeq Reprocessing Coexpression Quality Control', parentId 
 CODE = synStore(CODE)
 
 save(list = ls(), file = 'investigate.RData')
-obj = File(file = 'investigate.RData', name = 'RNASeq Reprocessing Coexpression Quality Control', parentId = CODE$properties$id)
-obj = synStore(obj, activityName = activityName, used = as.character(all.used.ids), executed = thisFile)
+# system('zip investigate investigate.RData')
+# obj = File('./InvestigateCoexpIssue.Rmd', name = 'RNASeq Reprocessing Coexpression Quality Control', parentId = CODE$properties$id)
+# obj = synStore(obj, activityName = activityName, used = as.character(all.used.ids), executed = thisFile)
 ```
