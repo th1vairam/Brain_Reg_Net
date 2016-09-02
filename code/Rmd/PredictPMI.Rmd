@@ -4,7 +4,6 @@ author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
 ---
-  
 ```{r knit2synapse, eval=FALSE}
 library(knitr)
 library(knit2synapse)
