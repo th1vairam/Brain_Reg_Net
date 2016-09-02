@@ -13,7 +13,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Reprocessed_NonConditionedCogdx.Rmd",
                                  parentId ="syn5570291",
-                                 entityName = 'ROSMAP RNASeq Reprocessed Counts 2 (Based on cogdx)')
+                                 entityName = 'ROSMAP RNASeq Reprocessed Counts UnConditioned (Based on cogdx)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -455,7 +455,7 @@ VOOM.ADJUSTED.GENE_EXPRESSION$E <- VOOM.ADJUSTED.GENE_EXPRESSION$E %>%
   dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 
 # Code
-CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts 2 (Based on cogdx)", parentId = parentId)
+CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts UnConditioned (Based on cogdx)", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
