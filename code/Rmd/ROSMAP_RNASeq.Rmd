@@ -20,36 +20,25 @@ knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq.Rmd",
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
-library(synapseClient)
-library(ggplot2)
-library(reshape2)
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
+library(tidyr)
+library(plyr)
 library(dplyr)
 library(stringr)
+
+library(ggplot2)
+library(reshape2)
 library(limma)
-library(knitr)
 library(Biobase)
-library(GEOquery)
-library(RColorBrewer)
 library(gplots)
 library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
-library(ggplot2)
-library(WGCNA)
-
-## Needs the dev branch
-library(rGithubClient)
 
 ## Requires ggdendro
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
-
-synapseLogin()
-
-# source utility files from ../R/lib folder
-file.sources = list.files('../R/lib',pattern="*.R", full.names=T)
-tmp = sapply(file.sources,source,.GlobalEnv)
 
 options(xtable.type="html")
 
@@ -108,20 +97,41 @@ ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.TECH_ID
 METADATA.TECH_OBJ <- synGet(METADATA.TECH_ID)
 METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
 
+# Fix error in technical covariates data
+KEY_ID <- 'syn3382527'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = KEY_ID  
+KEY <- read.csv(synGet(KEY_ID)@filePath) %>% 
+  filter(mrna_data == 1) %>%
+  dplyr::select(projid, mrna_id) %>%
+  separate(mrna_id, c('a','b','batch'), sep = '_') %>% 
+  unite(Sampleid, a, b) %>%
+  dplyr::select(-batch) %>%
+  unique
+
 # Match technical and clinical covariates
-METADATA <- dplyr::inner_join(METADATA.CLINICAL,METADATA.TECH)
+METADATA <- METADATA.TECH %>% 
+  dplyr::select(-projid) %>%
+  dplyr::left_join(KEY) %>%
+  dplyr::left_join(METADATA.CLINICAL)
+
+# Pick higher quality RIN batch for sample 492_120515
+METADATA <- METADATA %>%
+  group_by(Sampleid) %>%
+  top_n(1, RINcontinuous)
 ```
 
 ### Data preprocessing
 ```{r preprocess.data,cache=TRUE, echo=TRUE}
 # Remove samples with no cogdx, RIN and PMI scores
 METADATA <- METADATA %>%
+  ungroup %>%
   mutate(Sampleid = paste(Sampleid, Batch, sep = '_')) %>%
   filter(Sampleid %in% colnames(COUNT)) %>%
   filter(!is.na(cogdx)) %>%
   filter(!is.na(RINcontinuous)) %>%
   filter(!is.na(pmi)) %>%
-  filter(!(Sampleid %in% c('380_120503_1')))
+  filter(!(Sampleid %in% c('380_120503_1'))) %>%
+  as.data.frame()
 ```
 Sample id 380\_120503\_1 is considered as outlier and removed
 ```{r preprocess.data1,cache=TRUE}
@@ -173,6 +183,12 @@ EXPR <- EXPR[(rowSums(EXPR>0)/dim(EXPR)[2] >= 0.5),]
 EXPR <- log2(EXPR+1e-3)
 ```
 `r dim(EXPR)[1]` number of genes and `r dim(EXPR)[2]` number of samples are considered for the analysis
+
+Coexpression of genes 
+```{r coexp1, cache=FALSE}
+cr = cor(t(EXPR))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+```
 
 ### Outliers detection
 ```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
@@ -258,6 +274,12 @@ RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'Ensem
   tidyr::separate(col = EnsemblGeneID, into = c('ensembl_gene_id','position'), sep = '\\.')
 ```
 
+Coexpression of genes 
+```{r coexp2, cache=FALSE}
+cr = cor(t(RESIDUAL.GENE_EXPRESSION[, !(colnames(RESIDUAL.GENE_EXPRESSION) %in% c('ensembl_gene_id','position'))]))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+```
+
 ### Clustering residual gene expression
 ```{r decompse.normalise.data3, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
@@ -278,16 +300,6 @@ p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
-```
-```{r decompse.normalise.data4, fig.height=8, fig.width=16, results='asis'}
-tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION[,-(1:2)])))
-WGCNA::plotDendroAndColors(tree, 
-                    colors = labels2colors(COVARIATES.tmp), 
-                    dendroLabels = FALSE, 
-                    abHeight = 0.80, 
-                    main = "Sample dendrogram",
-                    groupLabels = colnames(COVARIATES.tmp))
-dev.off()
 ```
 
 ```{r summary, results='asis', echo=FALSE}
