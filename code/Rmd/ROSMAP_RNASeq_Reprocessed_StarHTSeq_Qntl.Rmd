@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of ROSMAP Reprocessed RNASeq"
+title: "Covariate analysis of ROSMAP Reprocessed RNASeq data aligned using STAR and quantified using HTSeq with quantile normalisation"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -11,9 +11,9 @@ library(synapseClient)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Reprocessed_StarHTSeq.Rmd",
+knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Reprocessed_StarHTSeq_Qntl.Rmd",
                                  parentId ="syn5570291",
-                                 entityName = 'ROSMAP RNASeq Reprocessed Counts Star-HTSeq (Based on cogdx)')
+                                 entityName = 'ROSMAP RNASeq Reprocessed Counts Star-HTSeq Qntl (Based on cogdx)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -57,7 +57,7 @@ parentId = 'syn5570291';
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of ROSMAP reprocessed RNASeq data';
 
-thisFileName <- 'ROSMAP_RNASeq_Reprocessed_StarHTSeq.Rmd'
+thisFileName <- 'ROSMAP_RNASeq_Reprocessed_StarHTSeq_Qntl.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
@@ -195,7 +195,7 @@ PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT,MIN_GENE_CPM=1, MIN_SAMPL
 Initial normalisation usign voom (with NULL design)
 ```{r initial.voom.normalisation}
 # Initial normalisation of gene expression
-VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=NULL, plot=T)
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=NULL, plot=T, normalize.method = "quantile")
 ```
 Coexpression of genes 
 ```{r coexp1, cache=FALSE}
@@ -278,7 +278,7 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
   DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
   
   # Estimate correlation of random effects
-  VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
+  VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F, normalize.method = "quantile")
   
   # Fit linear model using new weights and new design
   VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
@@ -452,7 +452,7 @@ p
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts Star-HTSeq (Based on cogdx)", parentId = parentId)
+CODE <- Folder(name = "ROSMAP RNASeq Reprocessed Counts Star-HTSeq Qntl (Based on cogdx)", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
