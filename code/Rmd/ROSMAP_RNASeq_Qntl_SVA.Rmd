@@ -16,7 +16,7 @@ knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Qntl_SVA.Rmd",
                                  entityName = 'ROSMAP RNASeq Qntl SVA (Based on cogdx)')
 ```
 
-```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache = FALSE}
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
@@ -36,7 +36,7 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
-library(Rcolorbrewer)
+library(RColorBrewer)
 
 library(sva)
 
