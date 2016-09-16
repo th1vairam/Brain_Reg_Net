@@ -1,0 +1,92 @@
+---
+title: "Format DREAM5 network prediction data for reuse with metanetwork pipeline"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knit2synapse)
+library(synapseClient)
+library(knitr)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./curateDREAM5DataSets.Rmd",
+                                 parentId ="syn5569099",
+                                 entityName = 'DREAM5 Networks')
+```
+#### Initialise libraries
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+library(CovariateAnalysis)
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(githubr) ## Needs the dev branch
+
+synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = FALSE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn5569099';
+activityName = 'Curate DREAM5 networks';
+activityDescription = 'Curate DREAM5 data for reuse';
+
+thisFileName <- 'curateDREAM5DataSets.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='synNet')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+
+# Create folder to store results
+FOLD = Folder(name = 'DREAM5 Networks', parentId = parentId)
+FOLD = synStore(FOLD)
+```
+#### Extract data and network
+```{r extractNet, cache=FALSE}
+all.folders = synQuery('select * from Folder where parentId == "syn2787212"')
+all.expr.obj = dlply(all.folders, .(Folder.id), .fun = function(x){
+  all.files = synQuery(paste0('select * from File where parentId == "',x$Folder.id,'"'))
+  
+  # Get expression data
+  ind.expr = grep('expression', all.files$File.name)
+  expr = read.table(synGet(all.files$File.id[ind.expr])@filePath, sep = '\t', header = T, fill=NA)
+  
+  # Get gene names
+  ind.genes = grep('gene', all.files$File.name)
+  genes = read.table(synGet(all.files$File.id[ind.genes])@filePath, sep = '\t', header = F, fill=NA)
+  
+  colnames(expr) = genes$V2
+  rownames(expr) = paste0('EXPR',1:dim(expr)[1])
+  expr = t(expr)
+  
+  # Store expression matrix in synapse
+  fold.obj = Folder(name = x$Folder.name, parentId = FOLD@properties$id)
+  fold.obj = synStore(fold.obj)
+  
+  write.table(expr %>% rownameToFirstColumn('GeneNames'), 'Expression.tsv',sep = '\t',row.names = F, quote=F)
+  expr.obj = File('Expression.tsv', name = 'Expression Matrix', parentId = fold.obj@properties$id)
+  expr.obj = synStore(expr.obj, activityName = activityName, activityDescription = activityDescription,
+                      executed = thisFile, used = all.files$File.id)
+})
+```
