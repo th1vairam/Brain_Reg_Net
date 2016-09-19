@@ -13,7 +13,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_DLPFC_StarAligned_TMM.Rmd",
                                  parentId ="syn5569976",
-                                 entityName = 'CMC - DLPFC - STAR Reprocessed - with TMM')
+                                 entityName = 'DLPFC - STAR Reprocessed - with TMM')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -317,7 +317,7 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
 }
 
 # Add primary variable to the list (in case not chosen by iterative method)
-postAdjustCovars = unique(c(postAdjustCovars, 'Dx'))
+postAdjustCovars = unique(c('Dx', postAdjustCovars))
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
@@ -475,7 +475,7 @@ p
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "CMC - DLPFC - STAR Reprocessed - with TMM", parentId = parentId)
+CODE <- Folder(name = "DLPFC - STAR Reprocessed - with TMM", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
