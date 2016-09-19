@@ -101,7 +101,8 @@ METADATA = METADATA %>%
                 LibraryBatch = ACC_RNA_report__Library_Batch) %>%
   dplyr::filter(SampleID %in% colnames(COUNT)) %>%
   droplevels() %>%
-  dplyr::mutate(LibraryBatch = as.factor(LibraryBatch),
+  dplyr::mutate(LibraryBatch = gsub('[^[:alnum:]]','_',LibraryBatch),
+                LibraryBatch = as.factor(LibraryBatch),
                 IsolationBatch = as.factor(IsolationBatch))
 ```
 
@@ -509,9 +510,9 @@ DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
                     executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*                |  *SynapseID*                     |
-  |  -------                  |   ---------                      |
-  |  Covariates               |  `r COV_OBJ$properties$id`       |
-  |  Raw counts (log CPM)     |  `r COUNT_OBJ$properties$id`     |
-  |  Design Matrix            |  `r DM_OBJ$properties$id`        |
-  |  Residual Expression      |  `r EXP_OBJ$properties$id`       |
-  |  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
+|  -------                  |   ---------                      |
+|  Covariates               |  `r COV_OBJ$properties$id`       |
+|  Raw counts (log CPM)     |  `r COUNT_OBJ$properties$id`     |
+|  Design Matrix            |  `r DM_OBJ$properties$id`        |
+|  Residual Expression      |  `r EXP_OBJ$properties$id`       |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`      |
