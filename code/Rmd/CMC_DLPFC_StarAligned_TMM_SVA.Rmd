@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of CMC RNASeq data reprocessed with Star-HTSeq pipeline (ACC with TMM and SVA normlaisation)"
+title: "Covariate analysis of CMC RNASeq data reprocessed with Star-HTSeq pipeline (DLPFC with TMM and SVA normlaisation)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -11,9 +11,9 @@ library(synapseClient)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./CMC_ACC_StarAligned_TMM_SVA.Rmd",
+knit2synapse::knitToFolderEntity(file = "./CMC_DLPFC_StarAligned_TMM_SVA.Rmd",
                                  parentId ="syn5569976",
-                                 entityName = 'ACC - STAR Reprocessed - with TMM and SVA')
+                                 entityName = 'DLPFC - STAR Reprocessed - with TMM and SVA')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -52,9 +52,9 @@ knitr::opts_chunk$set(
 # Synapse parameters
 parentId = 'syn5569976';
 activityName = 'Covariate adjustments';
-activityDescription = 'Covariate analysis of star aligned CMC reprocessed RNASeq data with TMM normalisation (ACC)';
+activityDescription = 'Covariate analysis of star aligned CMC reprocessed RNASeq data with TMM and SVA normalisation (DLPFC)';
 
-thisFileName <- 'CMC_ACC_StarAligned_TMM_SVA.Rmd'
+thisFileName <- 'CMC_DLPFC_StarAligned_TMM_SVA.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
@@ -63,8 +63,8 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ### Data download
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
-# Download reprocessed counts (ACC)
-COUNT_ID <- 'syn7217917';
+# Download reprocessed counts (DLPFC)
+COUNT_ID <- 'syn7217916';
 ALL_USED_IDs <- COUNT_ID
 COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F, nrows = 56632) %>%
   dplyr::select(-chr, -start, -end, -strand, -length)
@@ -79,9 +79,9 @@ METADATA <- read.csv(synGet(METADATA_ID)@filePath, fill = T, header = F)
 
 ## Metadata with specific information for RNASeq processing
 metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Ethnicity", "Age of Death", "PMI (in hours)", 
-                          "pH", "Dx", "CDR", "CauseOfDeath", "ACC_RNA_isolation: Exclude?", "ACC_RNA_isolation: Sample RNA ID",
-                          "ACC_RNA_isolation: RNA Isolation Batch", "ACC_RNA_isolation: RIN", "ACC_RNA_report: Exclude?",
-                          "ACC_RNA_report: Library Batch")
+                  "pH", "Dx", "CDR", "CauseOfDeath", "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
+                  "DLPFC_RNA_isolation: RNA Isolation Batch", "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?",
+                  "DLPFC_RNA_report: Library Batch")
 
 # Filter metadata 
 ind = as.character(METADATA[1,] %>% unlist) %in% metadataVarOfInterest
@@ -90,19 +90,18 @@ colnames(METADATA) = gsub('[^[:alnum:]]','_',as.character(METADATA[1,] %>% unlis
 
 METADATA = METADATA %>%
   dplyr::select(Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, PMI__in_hours_, pH, Dx, CDR, CauseOfDeath,
-                ACC_RNA_isolation__Exclude_, ACC_RNA_isolation__Sample_RNA_ID, ACC_RNA_isolation__RNA_Isolation_Batch,
-                ACC_RNA_isolation__RIN, ACC_RNA_report__Exclude_, ACC_RNA_report__Library_Batch) %>%
+                DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RNA_Isolation_Batch,
+                DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_, DLPFC_RNA_report__Library_Batch) %>%
   dplyr::rename(PMI = PMI__in_hours_, 
-                IsolationExclude = ACC_RNA_isolation__Exclude_, 
-                SampleID = ACC_RNA_isolation__Sample_RNA_ID, 
-                IsolationBatch = ACC_RNA_isolation__RNA_Isolation_Batch,
-                RIN = ACC_RNA_isolation__RIN, 
-                ReportExclude = ACC_RNA_report__Exclude_, 
-                LibraryBatch = ACC_RNA_report__Library_Batch) %>%
+                IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
+                SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
+                IsolationBatch = DLPFC_RNA_isolation__RNA_Isolation_Batch,
+                RIN = DLPFC_RNA_isolation__RIN, 
+                ReportExclude = DLPFC_RNA_report__Exclude_, 
+                LibraryBatch = DLPFC_RNA_report__Library_Batch) %>%
   dplyr::filter(SampleID %in% colnames(COUNT)) %>%
   droplevels() %>%
-  dplyr::mutate(LibraryBatch = gsub('[^[:alnum:]]','_',LibraryBatch),
-                LibraryBatch = as.factor(LibraryBatch),
+  dplyr::mutate(LibraryBatch = as.factor(LibraryBatch),
                 IsolationBatch = as.factor(IsolationBatch))
 ```
 
@@ -116,7 +115,8 @@ METADATA <- METADATA %>%
   filter(!is.na(Gender)) %>%
   filter(!is.na(Ethnicity)) %>%
   filter(!is.na(RIN)) %>%
-  filter(!(SampleID %in% c('MSSM_RNA_ACC_250', 'MSSM_RNA_ACC_170'))) %>%
+  filter(!(SampleID %in% c('MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_60', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_361', 
+                           'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_389', 'PENN_RNA_PFC_56', 'PENN_RNA_PFC_59'))) %>%
   as.data.frame()
 ```
 
@@ -231,7 +231,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Dx, shape=Institution, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:9)
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 
 # Eucledian tree based analysis
@@ -269,38 +269,38 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
-### Normalisation (Custom design)
-Since many covariates are correlated, re-normalising COUNTS with a custom design matrix. Here "Dx" is chosen as the primary variable of interest
-```{r custom.norm}
+### Normalisation (iterative design)
+Since many covariates are correlated, re-normalising COUNTS with an iterative design matrix. Here "Dx" is chosen as the primary variable of interest
+```{r iterativeNorm}
 # Primary variable of interest
-postAdjustCovars = c('Dx', 'RIN', 'RIN2', 'Age_of_Death', 'PMI', 'LibraryBatch')
+postAdjustCovars = c('Dx', 'RIN', 'RIN2', 'Age_of_Death', 'PMI', 'IsolationBatch')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
                  'as fixed effects'))
-
+  
 # Post adjusted design matrix
 DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
 DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
-
+  
 # Estimate voom weights
 VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F)
-
+  
 # Fit linear model using new weights and new design
 VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
-
+  
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
-
+  
 # Residual covariates to choose from
 residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars))
-
+  
 # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
 residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
                                               COVARIATES[, residCovars, drop=F], 
                                               'adjusted design(voom-normalized)',
                                               isKeyPlot=TRUE)
-
+  
 modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
                   'as fixed effects')
 
@@ -362,7 +362,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Dx, shape = Institution, size=RIN))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:9)
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 
 # Eucledian tree based analysis
@@ -453,37 +453,37 @@ p
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "ACC - STAR Reprocessed - with TMM and SVA", parentId = parentId)
+CODE <- Folder(name = "DLPFC - STAR Reprocessed - with TMM and SVA", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
-write.table(COVARIATES, file = 'CMC_ACC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('CMC_ACC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+write.table(COVARIATES, file = 'CMC_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('CMC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store logCPM
-write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'CMC_ACC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('CMC_ACC_logCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'CMC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('CMC_DLPFC_logCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
 COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                      executed = thisFile, activityDescription = activityDescription)
 
 # Store design matrix
-write.table(DM1$design, file = 'CMC_ACC_Design.tsv', sep = '\t', row.names=F, quote=F)
-DM_OBJ = File('CMC_ACC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+write.table(DM1$design, file = 'CMC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('CMC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                   executed = thisFile, activityDescription = activityDescription)
 
 # Store residual gene expression
-write.table(RESIDUAL.GENE_EXPRESSION, file = 'CMC_ACC_Expression.tsv', sep = '\t', row.names=F, quote=F)
-EXP_OBJ = File('CMC_ACC_Expression.tsv', name = 'Normalised Adjusted Residual Expression (Dx added)', parentId = CODE$properties$id)
+write.table(RESIDUAL.GENE_EXPRESSION, file = 'CMC_DLPFC_Expression.tsv', sep = '\t', row.names=F, quote=F)
+EXP_OBJ = File('CMC_DLPFC_Expression.tsv', name = 'Normalised Adjusted Residual Expression (Dx added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results
-write.table(DE, file = 'CMC_ACC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('CMC_ACC_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+write.table(DE, file = 'CMC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('CMC_DLPFC_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)
 ```
