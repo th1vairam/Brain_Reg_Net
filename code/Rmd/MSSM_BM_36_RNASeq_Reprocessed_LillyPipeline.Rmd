@@ -11,9 +11,9 @@ library(githubr)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./MSSM_BM_36_RNASeq_Realigned_StarHTSeq.Rmd",
+knit2synapse::knitToFolderEntity(file = "./MSSM_BM_36_RNASeq_Reprocessed_LillyPipeline.Rmd",
                                  parentId ="syn5570248",
-                                 entityName = 'MSBB BM 36 RNASeq RealignedFromSource StarHTSeq')
+                                 entityName = 'MSBB BM 36 RNASeq Reprocessed LillyPipeline')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -63,7 +63,7 @@ parentId = 'syn5570248';
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of MSBB BM 36 RNASeq samples';
 
-thisFileName <- 'MSSM_BM_36_RNASeq_Realigned_StarHTSeq.Rmd'
+thisFileName <- 'MSSM_BM_36_RNASeq_Reprocessed_LillyPipeline.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
@@ -73,30 +73,33 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Download expression data
-COUNT_ID <- 'syn7224673'
-ALL_USED_IDs <- COUNT_ID
-COUNT <- read.table(synGet(COUNT_ID)@filePath, quote = '', header = T, sep = '\t')
+COUNT_B1_ID <- 'syn6114414'
+ALL_USED_IDs <- COUNT_B1_ID
+COUNT_B1 <- read.table(synGet(COUNT_B1_ID)@filePath, quote = '', header = T, sep = '\t')
+
+COUNT_B2_3_ID <- 'syn6125203'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_B2_3_ID
+COUNT_B2_3 <- read.table(synGet(COUNT_B2_3_ID)@filePath, quote = '', header = T, sep = '\t')
+
+# Download expression data
+COUNT_B4_ID <- 'syn6130073'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_B4_ID
+COUNT_B4 <- read.table(synGet(COUNT_B4_ID)@filePath, quote = '', header = T, sep = '\t')
+
+# Remove samples in Batch 2&3 if they present in batch 4
+COUNT_B2_3 = COUNT_B2_3[,setdiff(colnames(COUNT_B2_3), colnames(COUNT_B4))]
+
+COUNT = cbind(COUNT_B1, COUNT_B2_3[rownames(COUNT_B1),], COUNT_B4[rownames(COUNT_B1),])
 
 # Get sample ids
 SampleID = data.frame(SampleID = colnames(COUNT),
-                      ID = colnames(COUNT)) %>% 
-  tidyr::separate(ID, c('A','B','ID', 'C'), sep = '_') 
+                 ID = colnames(COUNT)) %>% 
+  tidyr::separate(ID, c('A','B','ID'), sep = '_') 
+SampleID$ID[SampleID$ID == 'HISEQ'] = SampleID$B[SampleID$ID == 'HISEQ']
 
 SampleID = SampleID %>%
   dplyr::select(SampleID, ID) %>%
-  dplyr::mutate(ID = as.numeric(ID),
-                Sample.ID = SampleID,
-                SampleID = paste0('BM_36_',ID))
-  
-# Sum counts from multiple lanes
-COUNT = dlply(SampleID, .(ID), .fun = function(x, count){
-  rowSums(count[,x$Sample.ID,drop=F]) %>%
-    rownameToFirstColumn('Gene.ID') %>%
-    plyr::rename(c('DF' = paste0('BM_36_',unique(x$ID)))) %>%
-    dplyr::select(-Gene.ID)
-}, COUNT) %>%
-  Reduce(cbind, .)
-COUNT = data.matrix(COUNT)
+  dplyr::mutate(ID = as.numeric(ID))
 
 # # Get sample ids that are to be retained (data from Noam on 29th June) 
 # tmp = read.table('MSSM_SampleIDs.txt', header = T)
@@ -105,8 +108,8 @@ COUNT = data.matrix(COUNT)
 # SampleID = filter(SampleID, ID %in% tmp$x)
 
 # Get technical metadata
-METADATA_TECHNICAL_ID <- 'syn5898489'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECHNICAL_ID
+METADATA_ID <- 'syn5898489'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
 METADATA_TECHNICAL <- read.table(synGet(METADATA_ID)@filePath,sep='\t',header=T, row.names=1) %>%
   rownameToFirstColumn('OldBarcode')
 
@@ -125,17 +128,20 @@ METADATA = left_join(METADATA_TECHNICAL %>%
                        dplyr::mutate(ID = gsub('hB_RNA_','',NewBarcode),
                                      ID = as.numeric(ID)),
                      METADATA_CLINICAL %>%
-                       dplyr::select(BB, BM36.Fnl, PMI, RACE, 
+                       dplyr::select(BB, BM.44.Barcode, BM36.Fnl, BM22.Fnl, BM10.Fnl, PMI, RACE, 
                                      AOD, CDR, SEX, NP.1, PlaqueMean, bbscore) %>%
-                       dplyr::rename(BM_36 =  BM36.Fnl) %>%
+                       dplyr::rename(BM_44 = BM.44.Barcode,
+                                     BM_10 = BM10.Fnl,
+                                     BM_22 = BM22.Fnl,
+                                     BM_36 = BM36.Fnl) %>%
                        tidyr::gather(BrainRegion, ID, -BB, -PMI, -RACE, 
                                      -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
                        filter(!is.na(ID)) %>%
                        dplyr::mutate(ID = as.numeric(ID))) %>%
-  inner_join(SampleID %>% dplyr::select(-Sample.ID)) %>%
+  inner_join(SampleID) %>%
   filter(!is.na(SampleID)) %>%
-  filter(!(ID %in% c(335, 338, 339, 341))) %>%
-  unique
+  unique %>%
+  filter(BrainRegion == 'BM_36', !(SampleID %in% c('hB_RNA_8565', 'hB_RNA_4919', 'hB_RNA_9005')))
 rownames(METADATA) = METADATA$SampleID
 
 # Filter data
@@ -206,7 +212,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=CDR, shape=SEX, size=PMI))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:7)
-p <- p + geom_text(aes(label= ID), size=4, hjust=1)
+p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
@@ -362,7 +368,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=factor(Batch), shape=as.factor(CDR), size=as.numeric(PMI)))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:7)
-p <- p + geom_text(aes(label= ID), size=4, hjust=1)
+# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
@@ -438,13 +444,14 @@ tmp = DE %>%
   group_by(Comparison) %>%
   dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
                    DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
+
 kable(tmp)
 ```
 
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
-CODE <- Folder(name = "MSBB BM 36 RNASeq  RealignedFromSource StarHTSeq", parentId = parentId)
+CODE <- Folder(name = 'MSBB BM 36 RNASeq Reprocessed LillyPipeline', parentId = parentId)
 CODE <- synStore(CODE)
 
 # Expression
