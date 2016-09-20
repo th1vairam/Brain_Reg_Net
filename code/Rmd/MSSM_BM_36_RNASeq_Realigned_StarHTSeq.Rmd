@@ -84,7 +84,19 @@ SampleID = data.frame(SampleID = colnames(COUNT),
 
 SampleID = SampleID %>%
   dplyr::select(SampleID, ID) %>%
-  dplyr::mutate(ID = as.numeric(ID))
+  dplyr::mutate(ID = as.numeric(ID),
+                Sample.ID = SampleID,
+                SampleID = paste0('BM_36_',ID))
+  
+# Sum counts from multiple lanes
+COUNT = dlply(SampleID, .(ID), .fun = function(x, count){
+  rowSums(count[,x$Sample.ID,drop=F]) %>%
+    rownameToFirstColumn('Gene.ID') %>%
+    plyr::rename(c('DF' = paste0('BM_36_',unique(x$ID)))) %>%
+    dplyr::select(-Gene.ID)
+}, COUNT) %>%
+  Reduce(cbind, .)
+COUNT = data.matrix(COUNT)
 
 # # Get sample ids that are to be retained (data from Noam on 29th June) 
 # tmp = read.table('MSSM_SampleIDs.txt', header = T)
@@ -93,8 +105,8 @@ SampleID = SampleID %>%
 # SampleID = filter(SampleID, ID %in% tmp$x)
 
 # Get technical metadata
-METADATA_ID <- 'syn5898489'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
+METADATA_TECHNICAL_ID <- 'syn5898489'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECHNICAL_ID
 METADATA_TECHNICAL <- read.table(synGet(METADATA_ID)@filePath,sep='\t',header=T, row.names=1) %>%
   rownameToFirstColumn('OldBarcode')
 
@@ -120,9 +132,9 @@ METADATA = left_join(METADATA_TECHNICAL %>%
                                      -AOD, -CDR, -SEX, -NP.1, -PlaqueMean, -bbscore) %>%
                        filter(!is.na(ID)) %>%
                        dplyr::mutate(ID = as.numeric(ID))) %>%
-  inner_join(SampleID) %>%
+  inner_join(SampleID %>% dplyr::select(-Sample.ID)) %>%
   filter(!is.na(SampleID)) %>%
-  filter(!(ID %in% c(335:341, 10567, 10622, 10577))) %>%
+  filter(!(ID %in% c(335, 338, 339, 341))) %>%
   unique
 rownames(METADATA) = METADATA$SampleID
 
@@ -194,7 +206,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=CDR, shape=SEX, size=PMI))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:7)
-# p <- p + geom_text(aes(label= ID), size=4, hjust=1)
+p <- p + geom_text(aes(label= ID), size=4, hjust=1)
 p
 
 COVARIATES.tmp = data.matrix(COVARIATES)
@@ -338,7 +350,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ### Clustering residual data
 ```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(ID=rownames(PC$rotation), 
@@ -426,7 +438,6 @@ tmp = DE %>%
   group_by(Comparison) %>%
   dplyr::summarise(nDiffExp = length(unique(hgnc_symbol)), 
                    DiffExpGenes = paste(unique(hgnc_symbol), collapse = ','))
-
 kable(tmp)
 ```
 
