@@ -475,6 +475,12 @@ write.table(DE, file = 'diffExpression.tsv', sep = '\t', row.names=F, quote=F)
 dexp_obj = File('diffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 dexp_obj = synStore(dexp_obj, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)
+
+# Store logcpm values
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'logCPM.tsv', sep = '\t', row.names=F, quote=F)
+exp1_obj = File('logCPM.tsv', name = 'Raw logCPM', parentId = CODE$properties$id)
+exp1_obj = synStore(exp1_obj, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
 ```
 |  *Results*                |  *SynapseID*                    |
 |  -------                  |   ---------                     |
