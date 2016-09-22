@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of CMC RNASeq data reprocessed with Star-HTSeq pipeline (DLPFC with TMM and SVA normlaisation)"
+title: "Covariate analysis of CMC RNASeq data reprocessed with Star-Feature counts pipeline (DLPFC with TMM and SVA normlaisation)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -36,6 +36,16 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
+library(RColorBrewer)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
+## Requires ggdendro
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 
 options(xtable.type="html")
 
@@ -78,10 +88,10 @@ ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
 METADATA <- read.csv(synGet(METADATA_ID)@filePath, fill = T, header = F)
 
 ## Metadata with specific information for RNASeq processing
-metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Ethnicity", "Age of Death", "PMI (in hours)", 
-                  "pH", "Dx", "CDR", "CauseOfDeath", "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
-                  "DLPFC_RNA_isolation: RNA Isolation Batch", "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?",
-                  "DLPFC_RNA_report: Library Batch")
+metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", 
+                          "Dx", "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
+                          "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?", "DLPFC_RNA_report: Library Batch",
+                          'DNA_genotyping_report: Genotyping Sample_ID')
 
 # Filter metadata 
 ind = as.character(METADATA[1,] %>% unlist) %in% metadataVarOfInterest
@@ -89,34 +99,52 @@ METADATA = METADATA[,ind]
 colnames(METADATA) = gsub('[^[:alnum:]]','_',as.character(METADATA[1,] %>% unlist))
 
 METADATA = METADATA %>%
-  dplyr::select(Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, PMI__in_hours_, pH, Dx, CDR, CauseOfDeath,
-                DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RNA_Isolation_Batch,
-                DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_, DLPFC_RNA_report__Library_Batch) %>%
+  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, DLPFC_RNA_isolation__Exclude_,
+                DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_,
+                DLPFC_RNA_report__Library_Batch, DNA_genotyping_report__Genotyping_Sample_ID) %>%
   dplyr::rename(PMI = PMI__in_hours_, 
                 IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
                 SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
-                IsolationBatch = DLPFC_RNA_isolation__RNA_Isolation_Batch,
                 RIN = DLPFC_RNA_isolation__RIN, 
                 ReportExclude = DLPFC_RNA_report__Exclude_, 
-                LibraryBatch = DLPFC_RNA_report__Library_Batch) %>%
+                LibraryBatch = DLPFC_RNA_report__Library_Batch,
+                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID) %>%
   dplyr::filter(SampleID %in% colnames(COUNT)) %>%
   droplevels() %>%
-  dplyr::mutate(LibraryBatch = as.factor(LibraryBatch),
-                IsolationBatch = as.factor(IsolationBatch))
+  dplyr::mutate(LibraryBatch = as.factor(LibraryBatch)) 
+
+# Replace AFF and BP samples as other
+levels(METADATA$Dx) = c("Other", "Other", "Control", "SCZ")
 ```
 
 ### Data preprocessing
-```{r preprocess.data, echo=TRUE}
+```{r preprocess.data}
 # Remove samples marked as exclude and samples with no Gender, Ethnicity, PMI, and RIN
-METADATA <- METADATA %>%
-  filter(SampleID %in% colnames(COUNT)) %>%
-  filter(IsolationExclude == 0, ReportExclude == 0) %>%
-  filter(!is.na(PMI)) %>%
-  filter(!is.na(Gender)) %>%
-  filter(!is.na(Ethnicity)) %>%
-  filter(!is.na(RIN)) %>%
-  filter(!(SampleID %in% c('MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_60', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_361', 
-                           'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_389', 'PENN_RNA_PFC_56', 'PENN_RNA_PFC_59'))) %>%
+writeLines('Following counts are missing any metadata')
+writeLines(paste(setdiff(colnames(COUNT), levels(METADATA$SampleID)), collapse = ', '))
+METADATA <- METADATA %>% filter(SampleID %in% colnames(COUNT)) 
+
+writeLines('Following samples are marked exclude')
+writeLines(paste(METADATA$SampleID[METADATA$IsolationExclude == 1 | METADATA$ReportExclude == 1], collapse = ', '))
+METADATA <- METADATA  %>% filter(IsolationExclude == 0, ReportExclude == 0) 
+
+writeLines('Following samples are missing PMI information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$PMI)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(PMI)) 
+
+writeLines('Following samples are missing gender information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$Gender)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(Gender)) 
+
+writeLines('Following samples are missing RIN information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$RIN)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(RIN)) 
+
+writeLines('Following samples are tagged as outliers')
+METADATA <- METADATA  %>% filter(!(SampleID %in% c('MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_60', 
+                                                   'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_361', 
+                                                   'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_389', 
+                                                   'PENN_RNA_PFC_56', 'PENN_RNA_PFC_59'))) %>%
   as.data.frame()
 ```
 
@@ -141,12 +169,12 @@ Following sample are removed `r paste(removedIDs, collapse = ',')`
 ### Covariate clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c("Institution", "Gender", "Ethnicity", "CDR", "CauseOfDeath", "IsolationBatch", "LibraryBatch", "Dx")
-ContCovariates <- c("Age_of_Death", "PMI", "pH", "RIN")
+FactorCovariates <- c("Institution", "Gender", "LibraryBatch", "Dx")
+ContCovariates <- c("Age_of_Death", "PMI", "RIN")
 
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
-COVARIATES <- data.frame(lapply(COVARIATES,function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'\\+','')})}))
+COVARIATES[,FactorCovariates] <- data.frame(lapply(COVARIATES[,FactorCovariates],function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'[^[:alnum:]]','_')})}))
 rownames(COVARIATES) <- METADATA$SampleID
 
 # Convert factor covariates to factors
@@ -180,11 +208,7 @@ p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + my.theme
 p[[3]] = ggplot(COVARIATES, aes(x = Dx, y = PMI)) + geom_boxplot()
 p[[3]] = p[[3]] + ggtitle('PMI (in hours)') + my.theme
 
-# pH
-p[[4]] = ggplot(COVARIATES, aes(x = Dx, y = pH)) + geom_boxplot()
-p[[4]] = p[[4]] + ggtitle('pH') + my.theme
-
-multiplot(plotlist = p, cols = 2)
+multiplot(plotlist = p, cols = 3)
 ```
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
@@ -204,6 +228,20 @@ PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GE
 ### Normalisation (with NULL)
 Initial normalisation usign voom (with NULL design)
 ```{r initial.voom.normalisation}
+# TMM normalisation
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix)
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+
+# Set gene counts in specific samples that are deviating 3 sd from other samples to NA
+log.mat = apply(VOOM.GENE_EXPRESSION$E, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+}) %>% t
+PROCESSED_COUNTS$filteredExprMatrix[log.mat] = NA
+
 # TMM normalisation
 TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix)
 
@@ -269,11 +307,11 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
-### Normalisation (iterative design)
-Since many covariates are correlated, re-normalising COUNTS with an iterative design matrix. Here "Dx" is chosen as the primary variable of interest
-```{r iterativeNorm}
-# Primary variable of interest
-postAdjustCovars = c('Dx', 'RIN', 'RIN2', 'Age_of_Death', 'PMI', 'IsolationBatch')
+### Normlaisation (Custom design)
+To be consistent with DLPFC Nature Neuroscience article we performed a custom adjustment with Dx, RIN, RIN2, Age of Death, PMI, Library Batch, Institution, Gender
+```{r custom.design}
+# Add primary variable to the list (in case not chosen by iterative method)
+postAdjustCovars = c('Dx', c(FactorCovariates, ContCovariates)) %>% unique()
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
@@ -292,25 +330,12 @@ VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
   
-# Residual covariates to choose from
-residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars))
-  
-# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                              COVARIATES[, residCovars, drop=F], 
-                                              'adjusted design(voom-normalized)',
-                                              isKeyPlot=TRUE)
-  
 modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
                   'as fixed effects')
 
 tmp <- paste('Using following covariates in the final model:', modelStr)
 ```
 `r tmp`
-### Sanity check
-```{r residualSigCovars.manual, fig.width=20, fig.height=12}
-residualSigCovars[["PC_res"]][[2]]$plotData
-```
 ### Estimate surrogate variables using SVA package
 ```{r sva}
 MODEL0 = DM1$design[,-grep('Dx',colnames(DM1$design))] # Get null model by removing variable of interest
@@ -332,6 +357,10 @@ VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
 
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+```
+### Sanity check
+```{r residualSigCovars.manual, fig.width=20, fig.height=12}
+residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Residual calculation
 Calculate weighted residuals and add back "Dx" to the residuals
@@ -362,7 +391,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Dx, shape = Institution, size=RIN))
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:9)
-p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 
 # Eucledian tree based analysis
@@ -389,7 +418,7 @@ gc()
 backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "jul2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "mar2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -411,15 +440,15 @@ VOOM.ADJUSTED.GENE_EXPRESSION$E <- VOOM.ADJUSTED.GENE_EXPRESSION$E %>%
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=8, fig.width=16}
 # Fit contrast
-contrast = makeContrasts(contrasts=c("DxControl-DxAFF", "DxControl-DxBP",
-                                     "DxControl-DxSCZ", "DxAFF-DxBP",
-                                     "DxAFF-DxSCZ", "DxBP-DxSCZ"),
+contrast = makeContrasts(contrasts=c("DxControl-DxOther",
+                                     "DxControl-DxSCZ",
+                                     "DxOther-DxSCZ"),
                          levels = colnames(VOOM.ADJUSTED.FIT$coefficients))
 FIT.CONTR = contrasts.fit(VOOM.ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:6, function(i, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, Ensemble2HGNC){
+DE = lapply(1:3, function(i, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, Ensemble2HGNC){
   topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1]) %>%
     rownameToFirstColumn('ensembl_gene_id') %>%
     left_join(Ensemble2HGNC) %>%
