@@ -38,6 +38,12 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 
 options(xtable.type="html")
@@ -176,7 +182,7 @@ plotdata <- data.frame(ID=rownames(PC$rotation),
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color = as.factor(SMCENTER), size = SMRIN))
+p <- p + geom_point(aes(color = SMNABTCH, shape = GENDER, size = SMRIN))
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
