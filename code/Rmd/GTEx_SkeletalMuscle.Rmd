@@ -1,0 +1,356 @@
+---
+title: "Covariate adjustments on GTEx data (Skeletal Muscle)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knit2synapse)
+library(synapseClient)
+library(knitr)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./GTEx_SkeletalMuscle.Rmd",
+                                 parentId = "syn7250653",
+                                 entityName = "GTEx (Skeletal Muscle)")
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(RColorBrewer)
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(Biobase)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn7250653';
+activityName = 'Covariate analysis of GTEx';
+activityDescription = 'Covariate analysis of GTEx RNASeq data from skeletal muscle';
+
+thisFileName <- 'GTEx_SkeletalMuscle.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='GTEX')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+#### Obtain count matrix and metadata from synapse (Phil's downloaded version from syn6172827)
+```{r download.data, cache=TRUE}
+# Download reprocessed counts (paired end)
+COUNT_ID <- 'syn7250659'
+ALL_USED_IDs <- COUNT_ID
+COUNT <- read.table(gzfile(synGet(COUNT_ID)@filePath), header=T, fill = T, skip = 2, sep = '\t', check.names = F)
+Gene.Description <- COUNT[,c('Name', 'Description')]
+rownames(COUNT) = COUNT$Name
+COUNT = COUNT[,-(1:2)]
+
+# Get sample phenotypes
+METADATA_CLINICAL_ID <- 'syn7250661'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
+METADATA_CLINICAL <- read.table(synGet(METADATA_CLINICAL_ID)@filePath, sep='\t', header=T)
+
+# Get sample metadata
+METADATA_TECHNICAL_ID <- 'syn7250662'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECHNICAL_ID
+METADATA_TECHNICAL <- read.table(synGet(METADATA_TECHNICAL_ID)@filePath, sep = '\t', header=T)
+
+# Match technical and clinical covariates
+METADATA <- METADATA_TECHNICAL %>%
+  filter(SAMPID %in% colnames(COUNT)) %>%
+  tidyr::separate(SAMPID, c('a','b','c','d','e'), sep = '-') %>%
+  dplyr::mutate(SUBJID = paste(a,b, sep = '-')) %>%
+  tidyr::unite(SAMPID, a,b,c,d,e, sep = '-') %>%
+  dplyr::left_join(METADATA_CLINICAL)
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=TRUE, echo=TRUE}
+# Remove samples that are not from brain tissue and has missing RIN scores
+METADATA <- METADATA %>%
+  filter(SMTSD == 'Muscle - Skeletal') %>%
+  filter(!is.na(SMRIN))
+```
+
+```{r preprocess.data1,cache=TRUE}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$SAMPID, colnames(COUNT))
+removedIDs = setdiff(colnames(COUNT), METADATA$SAMPID)
+
+COUNT = COUNT[,indToRetain]
+
+rownames(METADATA) = METADATA$SAMPID
+METADATA = METADATA[indToRetain,]
+```
+
+### Covariate clustering
+Determine relationship between covariates. 
+```{r covariates.clustering, cache=TRUE}
+FactorCovariates <- c("SMNABTCH", "AGE", "GENDER")
+ContCovariates <- c("SMTSISCH", "SMRIN", "SMMPPD", "SMATSSCR")
+
+# Find inter relation between factor covariates
+COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
+COVARIATES <- data.frame(lapply(COVARIATES,function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'\\+','')})}))
+rownames(COVARIATES) <- METADATA$SAMPID
+
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates,drop=F], factor)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
+
+# Add in RIN^2 values
+COVARIATES$SMRIN2 = COVARIATES$SMRIN^2
+ContCovariates = c(ContCovariates, 'SMRIN2')
+```
+Explanation of covariates
+
+1. SAMPID:	Sample ID, GTEx Public Sample ID
+2. SMNABTCH:	Nucleic Acid Isolation Batch ID
+3. SMATSSCR:	Autolysis Score
+4. SMRIN:	RIN Number
+5. SMTSISCH:	Total Ischemic time for a sample in 4 hour intervals
+6. SMMPPD:	Total number of reads aligned/mapped
+7. AGE:
+8. GENDER:
+
+Correlation/association between covariates at an FDR <= 0.1
+```{r covariates.correlation, fig.width=10, fig.height=10}
+COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
+ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
+```
+
+### CPM Normalisation
+Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
+
+Remove genes that have less than 1 cpm counts in at least 50% of samples.
+```{r cpmnormalisation, cache=TRUE}
+PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT,MIN_GENE_CPM=1, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
+```
+### Normalisation (with NULL)
+Initial normalisation usign voom (with NULL design)
+```{r initial.voom.normalisation}
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=NULL, plot=T)
+```
+### Outlier analysis
+Clustering of voom adjusted data (with NULL design)
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale.=T, center = T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(ID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color = as.factor(SMCENTER), size = SMRIN))
+p <- p + theme_bw() + theme(legend.position="top") 
+# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
+p
+
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,FactorCovariates])
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(VOOM.GENE_EXPRESSION$E)))
+cols = WGCNA::labels2colors(COVARIATES.tmp);
+
+WGCNA::plotDendroAndColors(tree, 
+                           colors = cols, 
+                           dendroLabels = FALSE, 
+                           abHeight = 0.80, 
+                           main = "Sample dendrogram",
+                           groupLabels = colnames(COVARIATES.tmp[,FactorCovariates]))
+```
+```{r temp, include = F}
+dev.off()
+gc()
+```
+
+### Significant Covariates
+Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
+```{r preAdjusted.covariates, cache=TRUE}
+# Find correlation between PC's of gene expression with covariates
+preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, 
+                                                 COVARIATES,
+                                                 'NULL design(voom-normalized)', 
+                                                 isKeyPlot=TRUE, 
+                                                 MIN_PVE_PCT_PC = 1)
+```
+Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
+```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
+preAdjustedSigCovars[["PC_res"]][[2]]$plotData
+```
+
+### Normalisation (iterative design)
+Since many covariates are correlated, re-normalising COUNTS with an iterative design matrix.
+```{r iterativeNorm}
+# Assign residual covariates
+residualSigCovars = preAdjustedSigCovars
+covariatesEffects = residualSigCovars$Effects.significantCovars
+postAdjustCovars = c('AGE','GENDER', names(which.max(covariatesEffects)))
+
+loopCount = 0 
+while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
+  writeLines(paste('Using following covariates in the model:',
+                   paste(postAdjustCovars, collapse=', '),
+                   'as fixed effects'))
+  
+  # Post adjusted design matrix
+  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+  # Estimate correlation of random effects
+  VOOM.ADJUSTED.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix, design=DM1$design, plot=F)
+  
+  # Fit linear model using new weights and new design
+  VOOM.ADJUSTED.FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+  
+  # Residuals after normalisation
+  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+  
+  # Residual covariates to choose from
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates), postAdjustCovars)
+  
+  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                                COVARIATES[, residCovars, drop=F], 
+                                                'adjusted design(voom-normalized)',
+                                                isKeyPlot=TRUE)
+  
+  # Add postadjusted covariates (if any)
+  covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, postAdjustCovars)]
+  
+  postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
+  loopCount = loopCount + 1
+}
+modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
+                  'as fixed effects')
+
+tmp <- paste('Using following covariates in the final model:', modelStr)
+```
+`r tmp`
+### Sanity check
+```{r residualSigCovars.manual, fig.width=20, fig.height=12}
+residualSigCovars[["PC_res"]][[2]]$plotData
+```
+
+### Clustering residual data
+```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(ID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=SMNABTCH, shape = GENDER, size=SMRIN))
+p <- p + theme_bw() + theme(legend.position="none")
+# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
+p
+
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,FactorCovariates])
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(VOOM.GENE_EXPRESSION$E)))
+cols = WGCNA::labels2colors(COVARIATES.tmp);
+
+WGCNA::plotDendroAndColors(tree, 
+                           colors = cols, 
+                           dendroLabels = FALSE, 
+                           abHeight = 0.80, 
+                           main = "Sample dendrogram",
+                           groupLabels = colnames(COVARIATES.tmp[,FactorCovariates]))
+```
+```{r temp1, include=F}
+dev.off()
+gc()
+```
+
+```{r get.gene.symbols, cache=TRUE, eval=T}
+# Add gene names
+RESIDUAL.GENE_EXPRESSION <- RESIDUAL.GENE_EXPRESSION %>%
+  rownameToFirstColumn('Name') %>%
+  left_join(Gene.Description) %>%
+  dplyr::select(Name, Description, one_of(rownames(COVARIATES)))
+
+VOOM.ADJUSTED.GENE_EXPRESSION$E <- VOOM.ADJUSTED.GENE_EXPRESSION$E %>%
+  rownameToFirstColumn('Name') %>%
+  left_join(Gene.Description) %>%
+  dplyr::select(Name, Description, one_of(rownames(COVARIATES)))
+```
+### Store files in synapse
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Code
+CODE <- Folder(name = "GTEx (Skeletal Muscle)", parentId = parentId)
+CODE <- synStore(CODE)
+
+# Store covariates
+COVARIATES = rownameToFirstColumn(COVARIATES, 'SAMPLEID')
+write.table(COVARIATES, file = 'GTExSMCovariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('GTExSMCovariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
+# Store logCPM
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'GTExSMlogCPM.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('GTExSMlogCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
+COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                     executed = thisFile, activityDescription = activityDescription)
+
+# Store design matrix
+write.table(DM1$design, file = 'GTExSMDesign.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('GTExSMDesign.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                  executed = thisFile, activityDescription = activityDescription)
+
+# Store residual gene expression
+write.table(RESIDUAL.GENE_EXPRESSION, file = 'GTExSMExpression.tsv', sep = '\t', row.names=F, quote=F)
+EXP_OBJ = File('GTExSMExpression.tsv', name = 'Normalised Adjusted Residual Expression', parentId = CODE$properties$id)
+EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+```
+|  *Results*                |  *SynapseID*                     |
+|  -------                  |   ---------                      |
+|  Covariates               |  `r COV_OBJ$properties$id`       |
+|  Raw counts (log CPM)     |  `r COUNT_OBJ$properties$id`     |
+|  Design Matrix            |  `r DM_OBJ$properties$id`        |
+|  Residual Expression      |  `r EXP_OBJ$properties$id`       |
