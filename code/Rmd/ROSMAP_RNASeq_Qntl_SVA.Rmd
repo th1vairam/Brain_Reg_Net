@@ -133,7 +133,7 @@ METADATA <- METADATA %>%
   filter(!is.na(cogdx)) %>%
   filter(!is.na(RINcontinuous)) %>%
   filter(!is.na(pmi)) %>%
-  filter(!(Sampleid %in% c('380_120503_1'))) %>%
+  filter(!(Sampleid %in% c('380_120503_1', '792_130530_7', '15_120410_3', '256_120426_5'))) %>%
   as.data.frame()
 ```
 Sample id 380\_120503\_1 is considered as outlier and removed
@@ -185,6 +185,14 @@ EXPR <- EXPR[(rowSums(EXPR>0)/dim(EXPR)[2] >= 0.5),]
 # To avoid taking log of zero add 1e-4 to the FPKM counts
 EXPR <- log2(EXPR+1e-3)
 
+# Set gene counts in specific samples that are deviating 3 sd from other samples to NA
+log.mat = apply(EXPR, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+}) %>% t
+EXPR[log.mat] = NA
+
 # Between sample quantile normalisation
 EXPR = normalizeBetweenArrays(data.matrix(EXPR), method = 'quantile')
 ```
@@ -192,14 +200,16 @@ EXPR = normalizeBetweenArrays(data.matrix(EXPR), method = 'quantile')
 
 Coexpression of genes 
 ```{r coexp1, cache=FALSE}
-cr = cor(t(EXPR))
+EXPR.tmp = EXPR
+EXPR.tmp[is.na(EXPR)] = 0
+cr = cor(t(EXPR.tmp))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Outliers detection
 ```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(EXPR, scale.=T)
+PC <- prcomp(EXPR.tmp, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(Sampleid=rownames(PC$rotation), 
@@ -218,7 +228,7 @@ COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 ```
 ```{r decompse.normalise.data2, fig.height=8, fig.width=16, results='asis'}
-tree = hclust(as.dist(t(EXPR)))
+tree = hclust(as.dist(t(EXPR.tmp)))
 plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
                     dendroLabels = FALSE, 
@@ -226,19 +236,17 @@ plotDendroAndColors(tree,
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
 dev.off()
+gc()
 ```
 
 ### Significant Covariates
 Correlation between pca of normalised mRNA expression and covariates
 ```{r preAdjusted.covariates, cache=TRUE, results='asis', echo=FALSE}
 # Find correlation between PC's of gene expression with covariates
-DM = getDesignMatrix(COVARIATES, Intercept = F)
-DESIGN = getDesignMat2Fact(DM$design,FactorCovariates)
-rownames(DESIGN) = rownames(COVARIATES)
-preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR, DESIGN,'non-normalized', isKeyPlot=TRUE)
+preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR.tmp, COVARIATES,'non-normalized', isKeyPlot=TRUE)
 
 # Find significant covariates
-adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$significantCovars)
+adjustCovars = preAdjustedSigCovars$significantCovars
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
 ```{r preAdjustedSigCovars.NULL.ALL, fig.width=15, fig.height=8}
@@ -272,9 +280,10 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
   RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,EXPR)
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-  rownames(DESIGN) <- rownames(COVARIATES)
-  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
-                                                DESIGN,
+  RESIDUAL.GENE_EXPRESSION.tmp = RESIDUAL.GENE_EXPRESSION
+  RESIDUAL.GENE_EXPRESSION.tmp[is.na(RESIDUAL.GENE_EXPRESSION)] = 0
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION.tmp,
+                                                COVARIATES,
                                                 'all adjusted design',
                                                 isKeyPlot=TRUE)
   
@@ -300,38 +309,10 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 MODEL0 = DM1$design[,-grep('cogdx',colnames(DM1$design))] # Get null model by removing variable of interest
 MODEL1 = DM1$design
 
-## Calculate the number of surrogate variables
-# Get number of surrogate variables (for details of the algorithm refer http://biorxiv.org/content/biorxiv/suppl/2016/05/09/052209.DC1/052209-1.pdf)
-# SINGULAR.VAL.DECOM <- svd(RESIDUAL.GENE_EXPRESSION)
-# NUM.DEG.FREEDOM = dim(RESIDUAL.GENE_EXPRESSION)[2] - dim(MODEL1)[2] + 1
-# SING.VALS <- SINGULAR.VAL.DECOM$d^2/sum(SINGULAR.VAL.DECOM$d)
-# SING.VALS = SING.VALS[1:NUM.DEG.FREEDOM]
-
-# # Permute and calculate the permuted singular values
-# PERM.SING.VALS <- foreach (i = 1:100,
-#          .combine = rbind,
-#          .packages = c('limma','CovariateAnalysis'),
-#          .export = c('PROCESSED_COUNTS','MODEL1')) %dopar% {
-#   PERM.COUNTS <- t(apply(PROCESSED_COUNTS$filteredExprMatrix, 1, sample, replace = FALSE))
-#   # Estimate voom weights
-#   VOOM.ADJUSTED.PERM.GENE_EXPRESSION = voom(PERM.COUNTS, design=MODEL1, plot=F)
-#   
-#   # Fit linear model using new weights and new design
-#   VOOM.ADJUSTED.PERM.FIT = lmFit(VOOM.ADJUSTED.PERM.GENE_EXPRESSION)
-#   
-#   # Residuals after normalisation
-#   RESIDUAL.PERM.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.PERM.FIT,VOOM.ADJUSTED.PERM.GENE_EXPRESSION$E)
-#   
-#   PERM.SINGULAR.VAL.DECOM <- svd(RESIDUAL.PERM.GENE_EXPRESSION)
-#   PERM.SING.VALS <- PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2/sum(PERM.SINGULAR.VAL.DECOM$d[1:NUM.DEG.FREEDOM]^2)
-# }
-# num.sv1 = sum(SING.VALS > t(rowMeans(t(PERM.SING.VALS)))[1,1])
-
-num.sv2 = num.sv(EXPR, MODEL1, method = 'be', seed = 123456)
-NUM.SV = num.sv2 #min(num.sv1, num.sv2)
+num.sv = num.sv(EXPR.tmp, MODEL1, method = 'be', seed = 123456)
 
 ## Compute surrogate variables 
-SURR.VAR = sva(EXPR, MODEL1, MODEL0, method = "irw", n.sv = NUM.SV, B = 30)$sv
+SURR.VAR = sva(EXPR.tmp, MODEL1, MODEL0, method = "irw", n.sv = num.sv, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 
 # Fit linear model using estimated surrogate variables and postadjust covariates
@@ -352,14 +333,16 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 
 Coexpression of genes 
 ```{r coexp2, cache=FALSE}
-cr = cor(t(RESIDUAL.GENE_EXPRESSION))
+RESIDUAL.GENE_EXPRESSION.tmp = RESIDUAL.GENE_EXPRESSION
+RESIDUAL.GENE_EXPRESSION.tmp[is.na(RESIDUAL.GENE_EXPRESSION)] = 0
+cr = cor(t(RESIDUAL.GENE_EXPRESSION.tmp))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Clustering residual gene expression
 ```{r decompse.normalise.data3, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION.tmp, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(Sampleid=rownames(PC$rotation), 
