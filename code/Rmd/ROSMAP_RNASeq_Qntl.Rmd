@@ -129,10 +129,10 @@ METADATA <- METADATA %>%
   filter(!is.na(cogdx)) %>%
   filter(!is.na(RINcontinuous)) %>%
   filter(!is.na(pmi)) %>%
-  filter(!(Sampleid %in% c('380_120503_1'))) %>%
+  filter(!(Sampleid %in% c('380_120503_1', '792_130530_7', '15_120410_3', '256_120426_5'))) %>%
   as.data.frame()
 ```
-Sample id 380\_120503\_1 is considered as outlier and removed
+
 ```{r preprocess.data1,cache=TRUE}
 indToRetain = intersect(METADATA$Sampleid, colnames(COUNT))
 
@@ -181,6 +181,14 @@ EXPR <- EXPR[(rowSums(EXPR>0)/dim(EXPR)[2] >= 0.5),]
 # To avoid taking log of zero add 1e-4 to the FPKM counts
 EXPR <- log2(EXPR+1e-3)
 
+# Set gene counts in specific samples that are deviating 3 sd from other samples to NA
+log.mat = apply(EXPR, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+}) %>% t
+EXPR[log.mat] = NA
+
 # Between sample quantile normalisation
 EXPR = normalizeBetweenArrays(data.matrix(EXPR), method = 'quantile')
 ```
@@ -188,14 +196,16 @@ EXPR = normalizeBetweenArrays(data.matrix(EXPR), method = 'quantile')
 
 Coexpression of genes 
 ```{r coexp1, cache=FALSE}
-cr = cor(t(EXPR))
+EXPR.tmp = EXPR
+EXPR.tmp[is.na(EXPR)] = 0
+cr = cor(t(EXPR.tmp))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Outliers detection
 ```{r decompse.normalise.data1, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(EXPR, scale.=T)
+PC <- prcomp(EXPR.tmp, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(Sampleid=rownames(PC$rotation), 
@@ -214,7 +224,7 @@ COVARIATES.tmp = data.matrix(COVARIATES)
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 ```
 ```{r decompse.normalise.data2, fig.height=8, fig.width=16, results='asis'}
-tree = hclust(as.dist(t(EXPR)))
+tree = hclust(as.dist(t(EXPR.tmp)))
 plotDendroAndColors(tree, 
                     colors = labels2colors(COVARIATES.tmp), 
                     dendroLabels = FALSE, 
@@ -222,70 +232,95 @@ plotDendroAndColors(tree,
                     main = "Sample dendrogram",
                     groupLabels = colnames(COVARIATES.tmp))
 dev.off()
+gc()
 ```
 
 ### Significant Covariates
 Correlation between pca of normalised mRNA expression and covariates
 ```{r preAdjusted.covariates, cache=TRUE, results='asis', echo=FALSE}
 # Find correlation between PC's of gene expression with covariates
-DM = getDesignMatrix(COVARIATES, Intercept = F)
-DESIGN = getDesignMat2Fact(DM$design,FactorCovariates)
-rownames(DESIGN) = rownames(COVARIATES)
-preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR, DESIGN,'non-normalized', isKeyPlot=TRUE)
+preAdjustedSigCovars = runPCAandPlotCorrelations(EXPR.tmp, COVARIATES,'non-normalized', isKeyPlot=TRUE)
 
 # Find significant covariates
-adjustCovars = designMatVarsToCovars(getCovariatesMap(DM),preAdjustedSigCovars$significantCovars)
+adjustCovars = preAdjustedSigCovars$significantCovars
 ```
 Significant covariates to adjust at FDR 0.1 are `r adjustCovars`
 ```{r preAdjustedSigCovars.NULL.ALL, fig.width=15, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
-### Normalisation (custom design)
-Fitting a linear model with cogdx, Batch, RINcontinuous, and pmi 
-```{r iterative.normalisation, cache=TRUE, results='asis', echo=FALSE}
-postAdjustCovars <- c('cogdx', 'Batch', 'RINcontinuous', 'pmi')
+### Normalisation (iterative design)
+Since many covariates are correlated, re-normalising FPKM with an iterative design matrix. Here "cogdx" is chosen as the primary variable of interest
+```{r iterativeNorm}
+# Primary variable of interest
+postAdjustCovars = 'cogdx'
 
-writeLines(paste('Using following covariates in the final model',paste(postAdjustCovars,collapse=','),'as fixed effects',sep=' '))
+# Assign residual covariates
+residualSigCovars = preAdjustedSigCovars
+covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, postAdjustCovars)]
+postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
 
-# Post adjusted design matrix
-DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
-DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
-    
-# Re-calculate linear fit using new weights and new design
-FIT = lmFit(EXPR, design=DM1$design)
+loopCount = 0 
+while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 100){
+  writeLines(paste('Using following covariates in the model:',
+                   paste(postAdjustCovars, collapse=', '),
+                   'as fixed effects'))
+  
+  # Post adjusted design matrix
+  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+  
+  # Re-calculate linear fit using new weights and new design
+  FIT = lmFit(EXPR, design=DM1$design)
+  
+  # Residuals after normalisation
+  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,EXPR)
+  
+  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  RESIDUAL.GENE_EXPRESSION.tmp = RESIDUAL.GENE_EXPRESSION
+  RESIDUAL.GENE_EXPRESSION.tmp[is.na(RESIDUAL.GENE_EXPRESSION)] = 0
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION.tmp,
+                                                COVARIATES,
+                                                'all adjusted design',
+                                                isKeyPlot=TRUE)
+  
+  # Add postadjusted covariates (if any)
+  covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, postAdjustCovars)]
+  
+  postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
+  loopCount = loopCount + 1
+}
+modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
+                  'as fixed effects')
 
-# Residuals after normalisation
-RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,EXPR)
-
-# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-rownames(DESIGN) <- rownames(COVARIATES)
-residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
-                                              DESIGN,
-                                              'all adjusted design',
-                                              isKeyPlot=TRUE)
+tmp <- paste('Using following covariates in the final model:', modelStr)
 ```
-
-```{r residualSigCovars.manual.ALL, fig.width=15, fig.height=8}
+`r tmp`
+### Sanity check
+```{r residualSigCovars.manual, fig.width=20, fig.height=12}
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
-Adding cogdx back to the residuals
-```{r addVarsBack}
-varsToAddBackIn <- c("cogdx1",  "cogdx2", "cogdx3", "cogdx4", "cogdx5", "cogdx6")
-RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + t(data.matrix(DESIGN[,varsToAddBackIn]) %*% t(FIT$coefficients[,varsToAddBackIn]))
-RESIDUAL.GENE_EXPRESSION = rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'EnsemblGeneID') %>%
-  tidyr::separate(col = EnsemblGeneID, into = c('ensembl_gene_id','position'), sep = '\\.')
+
+### Residual calculation
+Calculate weighted residuals and add back "cogdx" to the residuals
+```{r varsToAddBack}
+# Add variable of interest back to the residuals
+varsToAddIn = grep("cogdx", colnames(DM1$design), value = T)
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
+  FIT$coefficients[,varsToAddIn] %*% t(FIT$design[,varsToAddIn])
 ```
 
 Coexpression of genes 
 ```{r coexp2, cache=FALSE}
-cr = cor(t(RESIDUAL.GENE_EXPRESSION[, !(colnames(RESIDUAL.GENE_EXPRESSION) %in% c('ensembl_gene_id','position'))]))
+RESIDUAL.GENE_EXPRESSION.tmp = RESIDUAL.GENE_EXPRESSION
+RESIDUAL.GENE_EXPRESSION.tmp[is.na(RESIDUAL.GENE_EXPRESSION)] = 0
+cr = cor(t(RESIDUAL.GENE_EXPRESSION.tmp))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Clustering residual gene expression
 ```{r decompse.normalise.data3, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION[,-(1:2)], scale.=T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION.tmp, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(Sampleid=rownames(PC$rotation), 
@@ -299,9 +334,6 @@ p <- p + geom_point(aes(color=factor(Batch), shape=as.factor(cogdx), size=as.num
 p <- p + theme_bw() + theme(legend.position="top") 
 # p <- p + geom_text(aes(label= Sampleid), size=4, hjust=1)
 p
-
-COVARIATES.tmp = data.matrix(COVARIATES)
-COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 ```
 
 ```{r summary, results='asis', echo=FALSE}
@@ -321,7 +353,10 @@ Interpretation of cogdx scores
 
 ```{r get.gene.symbols, cache=TRUE, eval=T}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = 'mar2016.archive.ensembl.org')
+
+RESIDUAL.GENE_EXPRESSION <- rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id.position') %>%
+  tidyr::separate(ensembl_gene_id.position, c('ensembl_gene_id', 'position'), sep = '\\.')
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -368,6 +403,7 @@ tmp = DE %>%
 
 kable(tmp)
 ```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
@@ -385,6 +421,13 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 write.table(RESIDUAL.GENE_EXPRESSION, file = 'expression.tsv', sep = '\t', row.names=F, quote=F)
 EXP_OBJ = File('expression.tsv', name = 'FPKM Normalised Adjusted Residual Expression (cogdx added)', parentId = CODE$properties$id)
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
+# Store design matrix
+MODEL1 = rownameToFirstColumn(MODEL1, 'Sampleid_batch')
+write.table(MODEL1, file = 'designMatrix.tsv', sep = '\t', row.names=F, quote=F)
+DES_OBJ = File('designMatrix.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+DES_OBJ = synStore(DES_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results

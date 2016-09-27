@@ -375,7 +375,7 @@ Interpretation of cogdx scores
 
 ```{r get.gene.symbols, cache=TRUE, eval=T}
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = 'mar2016.archive.ensembl.org')
 
 RESIDUAL.GENE_EXPRESSION <- rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'ensembl_gene_id.position') %>%
   tidyr::separate(ensembl_gene_id.position, c('ensembl_gene_id', 'position'), sep = '\\.')
