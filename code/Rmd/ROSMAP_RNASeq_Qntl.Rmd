@@ -36,6 +36,12 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
 ## Requires ggdendro
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 
@@ -380,7 +386,7 @@ FIT.CONTR = eBayes(FIT.CONTR)
 DE = list()
 p = list()
 for (i in 1:3){
-  DE[[i]] = topTable(FIT.CONTR, coef=i, number = dim(EXPR)[1])
+  DE[[i]] = topTable(FIT.CONTR, coef=i, number = dim(EXPR)[1], confint = T)
   DE[[i]] = rownameToFirstColumn(DE[[i]], "ensembl_gene_id") 
   p[[i]] <- ggplot(DE[[i]], aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
   p[[i]] <- p[[i]] + ggtitle(colnames(contrast)[i])# + xlim(c(-1.5,1.5)) + ylim(c(0,6))
