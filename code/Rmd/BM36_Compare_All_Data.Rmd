@@ -1,0 +1,97 @@
+---
+title: "Compare different versions of BM 36 from MSSM"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./BM36_Compare_All_Data.Rmd",
+                                 parentId ="syn5570248",
+                                 entityName = 'MSBB BM 36 Comparison between all versions')
+```
+
+### Download all versions of LogCPM from synapse
+```{r data.download}
+library(CovariateAnalysis)
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
+lcpm.fromPortal = read.table(synGet('syn7255229')@filePath, row.names = 1, header = T)
+lcpm.fromFASTQ = read.table(synGet('syn7255101')@filePath, row.names = 1, header = T)
+lcpm.fromBAM = read.table(synGet('syn7255067')@filePath, row.names = 1, header = T)
+lcpm.fromSynapseBAM = read.table(synGet('syn7437407')@filePath, row.names = 1, header = T)
+```
+
+```{r curate}
+Gene.ID = data.frame(Gene.ID = c(rownames(lcpm.fromPortal), 
+                                 rownames(lcpm.fromFASTQ), 
+                                 rownames(lcpm.fromBAM),
+                                 rownames(lcpm.fromSynapseBAM))) %>%
+  dplyr::mutate(GeneID = Gene.ID) %>%
+  tidyr::separate(Gene.ID, c('ensembl_gene_id','position'), sep = '\\.')
+
+tmp = filter(Gene.ID, GeneID %in% rownames(lcpm.fromBAM)) %>% unique
+lcpm.fromBAM = WGCNA::collapseRows(lcpm.fromBAM, tmp$ensembl_gene_id, tmp$GeneID)$datETcollapsed
+
+tmp = filter(Gene.ID, GeneID %in% rownames(lcpm.fromFASTQ)) %>% unique
+lcpm.fromFASTQ = WGCNA::collapseRows(lcpm.fromFASTQ, tmp$ensembl_gene_id, tmp$GeneID)$datETcollapsed
+
+tmp = filter(Gene.ID, GeneID %in% rownames(lcpm.fromSynapseBAM)) %>% unique
+lcpm.fromSynapseBAM = WGCNA::collapseRows(lcpm.fromSynapseBAM, tmp$ensembl_gene_id, tmp$GeneID)$datETcollapsed
+
+genes = intersect(rownames(lcpm.fromSynapseBAM), rownames(lcpm.fromFASTQ)) %>% 
+  intersect(rownames(lcpm.fromBAM)) %>%
+  intersect(rownames(lcpm.fromPortal))
+
+colnames(lcpm.fromPortal) = gsub('hB_RNA_','BM_36_',colnames(lcpm.fromPortal))
+colnames(lcpm.fromSynapseBAM) = gsub('hB_RNA_','BM_36_',colnames(lcpm.fromSynapseBAM))
+samples = intersect(colnames(lcpm.fromPortal), colnames(lcpm.fromFASTQ)) %>%
+  intersect(colnames(lcpm.fromBAM)) %>%
+  intersect(colnames(lcpm.fromSynapseBAM))
+
+lcpm.fromSynapseBAM = lcpm.fromSynapseBAM[genes, samples]
+lcpm.fromBAM = lcpm.fromBAM[genes, samples]
+lcpm.fromFASTQ = lcpm.fromFASTQ[genes, samples]
+lcpm.fromPortal = lcpm.fromPortal[genes, samples]
+```
+
+```{r correlate}
+# par(mfrow = c(3,1))
+cr.por.bam = stats::cor(lcpm.fromPortal, lcpm.fromBAM)
+# hist(diag(cr.dep.bam), main = 'Correlation between sinaiDeposit and fromBAM')
+# 
+cr.por.fastq = stats::cor(lcpm.fromPortal, lcpm.fromFASTQ)
+# hist(diag(cr.dep.fastq), main = 'Correlation between sinaiDeposit and fromFASTQ')
+# 
+cr.por.synbam = stats::cor(lcpm.fromPortal, lcpm.fromSynapseBAM)
+# hist(diag(cr.dep.synbam), main = 'Correlation between sinaiDeposit and fromSynapseBAM')
+# 
+cr.fastq.synbam = stats::cor(lcpm.fromFASTQ, lcpm.fromSynapseBAM)
+# hist(diag(cr.bam.fastq), main = 'Correlation between fromBAM and fromFASTQ')
+
+cr.fastq.bam = stats::cor(lcpm.fromFASTQ, lcpm.fromBAM)
+
+tmp = rbind(data.frame(Comp = 'Portal_vs_BAM', values = diag(cr.por.bam)),
+            data.frame(Comp = 'Portal_vs_FASTQ', values = diag(cr.por.fastq)),
+            data.frame(Comp = 'Portal_vs_synBAM', values = diag(cr.por.synbam)),
+            data.frame(Comp = 'FASTQ_vs_synBAM', values = diag(cr.fastq.synbam)),
+            data.frame(Comp = 'FASTQ_vs_BAM', values = diag(cr.fastq.bam)))
+p = ggplot(tmp, aes(x = Comp, y = values)) + geom_boxplot()
+p = p + ylab('Correlation') + xlab('')
+p
+```
