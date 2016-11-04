@@ -31,6 +31,14 @@ library(githubr)
 
 synapseLogin()
 
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+
 lcpm.fromPortal = read.table(synGet('syn7255229')@filePath, row.names = 1, header = T)
 lcpm.fromFASTQ = read.table(synGet('syn7255101')@filePath, row.names = 1, header = T)
 lcpm.fromBAM = read.table(synGet('syn7255067')@filePath, row.names = 1, header = T)
@@ -94,4 +102,6 @@ tmp = rbind(data.frame(Comp = 'Portal_vs_BAM', values = diag(cr.por.bam)),
 p = ggplot(tmp, aes(x = Comp, y = values)) + geom_boxplot()
 p = p + ylab('Correlation') + xlab('')
 p
+
+plot(diag(cr.fastq.synbam), diag(cr.fastq.bam), xlab = 'FASTQ_vs_synBAM', ylab = 'FASTQ_vs_BAM')
 ```
