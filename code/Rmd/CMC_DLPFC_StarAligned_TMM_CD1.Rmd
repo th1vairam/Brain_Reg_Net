@@ -328,16 +328,11 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
 ### Normalisation (custom design)
-Normalising COUNTS with a custom design matrix. Here Instituiton, Gender, LibraryBatch, Age\\_of\\_Death, PMI, RIN, RIN2, EV.1, EV.2, EV.3, EV.4, EV.5 are adjusted conditioned on Dx.Tissue
+Normalising COUNTS with a custom design matrix. Here Instituiton, Gender, LibraryBatch, Age\\_of\\_Death, PMI, RIN, RIN2, EV.1, EV.2, EV.3, EV.4, EV.5 are adjusted conditioned on Dx
 ```{r customNorm, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'LibraryBatch', 'Age_of_Death',
+postAdjustCovars = c('Dx', 'Institution', 'Gender', 'LibraryBatch', 'Age_of_Death',
                      'PMI', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5');
-
-# Assign residual covariates
-residualSigCovars = preAdjustedSigCovars
-covariatesEffects = residualSigCovars$Effects.significantCovars[setdiff(residualSigCovars$significantCovars, postAdjustCovars)]
-postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects))) %>% unique()
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
