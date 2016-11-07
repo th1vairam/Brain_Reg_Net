@@ -353,7 +353,7 @@ RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,VOOM.ADJUSTED.GE
   
 # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
 residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                              COVARIATES[, ind.cov, drop=F], 
+                                              COVARIATES, 
                                               'adjusted design(voom-normalized)',
                                               isKeyPlot=TRUE)
 ```
