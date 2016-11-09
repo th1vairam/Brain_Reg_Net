@@ -553,6 +553,39 @@ p = p + facet_grid(Tissue+.~Comparison, scales = 'fixed')
 p
 ```
 
+### Gene set enrichment analysis
+Using Fisher's exact test for gene set enrichment analysis
+```{r enrich.de, fig.height=16, fig.width=16}
+diffexp.genes = DE %>%
+  dlply(.(Comparison, Tissue), .fun = function(x){
+    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
+    tmp = tmp[!is.na(tmp)]
+  })
+diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
+backgroundGenes = unique(DE$hgnc_symbol)
+
+# Download all related genesets from synapse
+geneset.files = synQuery('select * from file where parentId == "syn3240583"')
+ALL_USED_IDs = c(ALL_USED_IDs, geneset.files$file.id)
+genesets.to.test = sapply(geneset.files$file.id, function(id){
+  tmp = downloadFile(id) %>%
+    dlply(.(Name), .fun = function(x){
+      str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
+    })
+  }) %>%
+  CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
+  do.call(c,.)
+
+# Perform enrichment analysis
+enrich.Results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
+   ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
+     CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
+    }, x, backgroundGenes, .parallel = TRUE) %>%
+    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
+}, genesets.to.test, backgroundGenes) %>%
+  rbindlist(idcol = 'Comparison', use.names = T, fill = T)
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
@@ -588,6 +621,12 @@ EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
 write.table(DE, file = 'CMC_ACC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('CMC_ACC_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                    executed = thisFile, activityDescription = activityDescription)
+
+# Store results of enrichment analysis
+write.table(enrich.Results, file = 'CMC_DLPFC_ACC_Enrichment.tsv', sep = '\t', row.names=F, quote=F)
+ENR_OBJ = File('CMC_DLPFC_ACC_Enrichment.tsv', name = 'Enrichment Analysis', parentId = CODE$properties$id)
+ENR_OBJ = synStore(ENR_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)
 stopCluster(cl)
 ```
