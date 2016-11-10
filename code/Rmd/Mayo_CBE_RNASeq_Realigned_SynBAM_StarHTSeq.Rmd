@@ -150,7 +150,7 @@ ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
 
 Explore metatdata
 
-```{r dataExplore, fig.width = 6, fig.height = 15}
+```{r dataExplore, fig.width = 10, fig.height = 6}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
 
 # RIN
@@ -394,7 +394,7 @@ RESIDUAL.GENE_EXPRESSION <- left_join(RESIDUAL.GENE_EXPRESSION, Ensemble2HGNC) %
 
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=16, fig.width=16}
+```{r diffExp, fig.height=8, fig.width=20}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("BrainRegion.DiagnosisCER_Control-BrainRegion.DiagnosisCER_AD",
                                      "BrainRegion.DiagnosisCER_Control-BrainRegion.DiagnosisCER_Pathologic_Aging",
