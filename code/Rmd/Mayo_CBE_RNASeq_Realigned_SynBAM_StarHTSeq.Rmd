@@ -454,6 +454,25 @@ p = p + facet_grid(Tissue+.~Comparison, scales = 'fixed')
 p
 ```
 
+### Comparison of reprocessed counts with source counts
+```{r comp, fig.height=5, fig.width=5}
+COUNT_OR = downloadFile('syn5201012')
+rownames(COUNT_OR) = COUNT_OR$ensembl_id
+COUNT_OR$ensembl_id = NULL
+
+COUNT = COUNT %>%
+  rownameToFirstColumn('GeneID') %>%
+  dplyr::mutate(gene.id = GeneID) %>%
+  tidyr::separate(GeneID, c('ensembl_gene_id','position'),sep = '\\.') %>%
+  filter(ensembl_gene_id %in% rownames(COUNT_OR))
+rownames(COUNT) = COUNT$ensembl_gene_id
+COUNT = COUNT[intersect(rownames(COUNT), rownames(COUNT_OR)),intersect(colnames(COUNT), colnames(COUNT_OR))]
+COUNT_OR = COUNT_OR[intersect(rownames(COUNT), rownames(COUNT_OR)),intersect(colnames(COUNT), colnames(COUNT_OR))]
+
+cr = cor(COUNT, COUNT_OR, use = 'pairwise.complete.obs')
+boxplot(diag(cr), main = 'Individual sample level correlation', ylab = 'Correlation', xlab = 'n=271')
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
