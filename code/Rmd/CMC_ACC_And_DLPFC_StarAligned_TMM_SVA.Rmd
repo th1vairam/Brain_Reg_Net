@@ -411,7 +411,6 @@ NUM.SV = sva::num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1,
                      method = 'be', seed = 123456, B = 20)
 
 SURR.VAR = sva::sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0,
-                    block = COVARIATES$Individual_ID, 
                     n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 
