@@ -223,7 +223,11 @@ Coexpression of genes
 cr = cor(t(VOOM.GENE_EXPRESSION$E))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 
-boxplot(VOOM.GENE_EXPRESSION$E, main = 'Distribution of expression')
+for (i in 0:8){
+  expr2 = VOOM.GENE_EXPRESSION$E[,rownames(COVARIATES)[(COVARIATES$Batch %in% c(i))]]
+  cr = cor(t(expr2))
+  hist(cr, main = paste('Batch',i))
+}
 ```
 ### Outlier analysis
 Clustering of voom adjusted data (with NULL design)
@@ -238,8 +242,10 @@ plotdata <- data.frame(ID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 
-p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=cogdx, shape=Batch, size=age_death))
+colours <- RColorBrewer::brewer.pal(9, 'Set1')
+p <- ggplot(plotdata, aes(x=PC1, y=PC2, shape=cogdx, color = Batch))
+p <- p + geom_point(aes(size=RINcontinuous))
+p <- p + scale_color_manual(values=colours)
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:9)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
@@ -276,7 +282,7 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E,
 ```
 
 Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
-```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
+```{r preAdjustedSigCovars.NULL, fig.width=12, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
@@ -284,7 +290,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix
 ```{r iterative.norm}
 # Primary variable of interest
-postAdjustCovars = 'cogdx'
+postAdjustCovars = c('cogdx', 'Batch')
 
 # Assign residual covariates
 residualSigCovars = preAdjustedSigCovars
@@ -353,6 +359,12 @@ Coexpression of genes
 ```{r coexp2, cache=FALSE, fig.height=5, fig.width=5}
 cr = cor(t(RESIDUAL.GENE_EXPRESSION))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+
+for (i in 0:8){
+  expr2 = RESIDUAL.GENE_EXPRESSION[,rownames(COVARIATES)[(COVARIATES$Batch %in% c(i))]]
+  cr = cor(t(expr2))
+  hist(cr, main = paste('Batch',i))
+}
 ```
 
 ### Clustering residual data
@@ -367,8 +379,10 @@ plotdata <- data.frame(ID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'ID'))
 
-p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=cogdx, shape = Batch, size=RINcontinuous))
+colours <- RColorBrewer::brewer.pal(9, 'Set1')
+p <- ggplot(plotdata, aes(x=PC1, y=PC2, shape=cogdx, color = Batch))
+p <- p + geom_point(aes(size=RINcontinuous))
+p <- p + scale_color_manual(values=colours)
 p <- p + theme_bw() + theme(legend.position="top") + scale_shape_manual(values = 1:9)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
@@ -415,7 +429,7 @@ backgroundGenes = data.frame(Gene.ID = rownames(COUNT),
   separate(ID, c('ensembl_gene_id','position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ensembl", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(host = "jul2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl", biomart = "ENSEMBL_MART_ENSEMBL")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -480,6 +494,34 @@ p = p + geom_vline(xintercept = -log2(1.2), color = 'red')
 p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 ```
+
+```{r residual.analysis}
+expr = RESIDUAL.GENE_EXPRESSION[!duplicated(RESIDUAL.GENE_EXPRESSION$Gene.ID),-c(1:3)]
+rownames(expr) = RESIDUAL.GENE_EXPRESSION$Gene.ID[!(duplicated(RESIDUAL.GENE_EXPRESSION$Gene.ID))]
+
+PC = prcomp(expr, scale. = T, center = T)
+
+# Plot first 5 PCs
+plotdata <- rownameToFirstColumn(PC$rotation, 'ID') %>% 
+    left_join(rownameToFirstColumn(COVARIATES, 'ID'))
+
+barplot((PC$sdev^2/sum(PC$sdev^2))[1:10], main = 'Fraction variance explained (top 10 PC)')
+p <- GGally::ggpairs(plotdata, mapping = aes(shape=cogdx, color = Batch, size=RINcontinuous),
+                     columns = 2:5, diag = list('continuous' = 'densityDiag'),
+                     title = 'First 4 PCs of residuals')
+p
+
+lb = median(PC$rotation[,1]) - 2*sd(PC$rotation[,1])
+ub = median(PC$rotation[,1]) + 2*sd(PC$rotation[,1])
+
+ind = c(which(PC$rotation[,1] <= lb), which(PC$rotation[,1] >= ub))
+writeLines('Samples deviating 2 SD from median of PC1 are')
+writeLines(paste(rownames(PC$rotation)[ind], collapse = ', '))
+
+writeLines('Distribution of batches of deviating samples')
+kable(rownameToFirstColumn(summary(COVARIATES$Batch[ind]), 'Batch Number'))
+```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
