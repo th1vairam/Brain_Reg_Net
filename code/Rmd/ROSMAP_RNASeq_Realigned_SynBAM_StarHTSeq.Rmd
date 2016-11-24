@@ -37,6 +37,7 @@ library(WGCNA)
 library(psych)
 library(edgeR)
 library(biomaRt)
+library(GGally)
 
 ## Requires ggdendro
 devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
@@ -495,7 +496,7 @@ p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 ```
 
-```{r residual.analysis}
+```{r residual.analysis, fig.height=5, fig.width=5}
 expr = RESIDUAL.GENE_EXPRESSION[!duplicated(RESIDUAL.GENE_EXPRESSION$Gene.ID),-c(1:3)]
 rownames(expr) = RESIDUAL.GENE_EXPRESSION$Gene.ID[!(duplicated(RESIDUAL.GENE_EXPRESSION$Gene.ID))]
 
@@ -506,6 +507,8 @@ plotdata <- rownameToFirstColumn(PC$rotation, 'ID') %>%
     left_join(rownameToFirstColumn(COVARIATES, 'ID'))
 
 barplot((PC$sdev^2/sum(PC$sdev^2))[1:10], main = 'Fraction variance explained (top 10 PC)')
+```
+```{r residual.analysis1, fig.height=15, fig.width=15}
 p <- GGally::ggpairs(plotdata, mapping = aes(shape=cogdx, color = Batch, size=RINcontinuous),
                      columns = 2:5, diag = list('continuous' = 'densityDiag'),
                      title = 'First 4 PCs of residuals')

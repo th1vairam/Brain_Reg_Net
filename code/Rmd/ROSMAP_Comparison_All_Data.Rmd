@@ -1,0 +1,207 @@
+---
+title: "Compare different versions of ROSMAP data"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knitr)
+library(knit2synapse)
+library(synapseClient)
+library(githubr)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./ROSMAP_Comparison_All_Data.Rmd",
+                                 parentId ="syn5570291",
+                                 entityName = 'ROSMAP RNASeq Comparisons')
+```
+
+### Download all versions of LogCPM from synapse
+```{r data.download}
+library(CovariateAnalysis)
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+library(ggplot2)
+library(Vennerable)
+library(edgeR)
+library(geneLenDataBase)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+synapseLogin()
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r get.data}
+fpkm = downloadFile('syn3505720')
+rownames(fpkm) = fpkm$tracking_id
+fpkm = fpkm[,-c(1:2)]
+
+cnames = data.frame(cnames = colnames(fpkm)) %>%
+  dplyr::mutate(cn = cnames) %>%
+  separate(cn, c('c1','c2','c3'), sep = '\\_') %>%
+  unite(cn, c1, c2)
+fpkm = fpkm[,which(!duplicated(cnames$cn))]
+colnames(fpkm) = cnames$cn[which(!duplicated(cnames$cn))]
+
+count = list(Lilly = read.table(synGet('syn6112813')@filePath, sep = '\t', quote = '', check.names = F),
+             Old = read.table(synGet('syn7211360')@filePath, sep = '\t', quote = '', check.names = F),
+             New = read.table(synGet('syn7750270')@filePath, sep = '\t', quote = '', check.names = F))
+
+lcpm = list(Lilly = downloadFile('syn6114447'),
+            Old = downloadFile('syn7211581'),
+            New = downloadFile('syn7765662'))
+```
+
+```{r compute.rpkm}
+# Define biomart object
+mart <- useMart(host = "jul2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl", biomart = "ENSEMBL_MART_ENSEMBL")
+
+# Get genes to query in biomart
+Gene.ID = lapply(count, rownames) %>%
+  Reduce(c, .) %>%
+  unique %>% 
+  data.frame(Gene.ID = .) %>%
+  dplyr::mutate(GeneID = Gene.ID) %>%
+  tidyr::separate(Gene.ID, c('ensembl_gene_id','position'), sep = '\\.') %>% 
+  unique
+
+# Query biomart for transcript length
+Ensemble2GeneLength <- getBM(attributes = c("ensembl_gene_id", "transcript_length"),
+                             filters = "ensembl_gene_id", values = Gene.ID$ensembl_gene_id,
+                             mart = mart) %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(gene.len = median(transcript_length, na.rm = T)) %>%
+  left_join(Gene.ID)
+  
+# Compute fpkm from counts
+all.fpkm = lapply(count, function(x, ens.len){
+  len = ens.len$gene.len
+  names(len) = ens.len$GeneID
+  len = len[rownames(x)]
+
+  x = edgeR::rpkm(x, gene.length = len)
+  rs = rowSums(x, na.rm = T) 
+  x = x[!is.na(rs) & (rs != 0),]
+  return(x)
+}, Ensemble2GeneLength)
+
+# Convert lcpm and fpkm matrices to ensemble ids
+all.fpkm = lapply(all.fpkm, function(x){
+  GeneID = data.frame(Gene.ID = rownames(x)) %>%
+    dplyr::mutate(GeneID = Gene.ID) %>%
+    tidyr::separate(Gene.ID, c('ensembl_gene_id','position'), sep = '\\.')
+  
+  y = WGCNA::collapseRows(x, GeneID$ensembl_gene_id, rownames(x))$datETcollapsed
+  return(y)
+})
+
+lcpm = lapply(lcpm, function(x){
+  x = x[!duplicated(x$Gene.ID),]
+  rownames(x) = x$Gene.ID
+  y = WGCNA::collapseRows(x[,-c(1:3)], x$ensembl_gene_id, x$Gene.ID)$datETcollapsed
+  return(y)
+})
+
+GeneID = data.frame(Gene.ID = rownames(fpkm)) %>%
+  dplyr::mutate(GeneID = Gene.ID) %>%
+  tidyr::separate(Gene.ID, c('ensembl_gene_id','position'), sep = '\\.')
+all.fpkm$Portal = WGCNA::collapseRows(fpkm, GeneID$ensembl_gene_id, rownames(fpkm))$datETcollapsed
+
+###################################################
+# Find unique IDs and samples across all data
+GeneID = lapply(all.fpkm, rownames) %>%
+  Reduce(intersect, .) %>%
+  intersect(lapply(lcpm, rownames) %>%
+              Reduce(intersect,.)) %>%
+  unique
+
+SampleID = lapply(all.fpkm, colnames) %>%
+  Reduce(intersect, .) %>%
+  intersect(lapply(lcpm, colnames) %>%
+              Reduce(intersect, .)) %>%
+  unique
+
+all.fpkm = lapply(all.fpkm, function(x, GeneID, SampleID){
+  x = x[GeneID, SampleID]
+}, GeneID, SampleID)
+
+lcpm = lapply(lcpm, function(x, GeneID, SampleID){
+  x = x[GeneID, SampleID]
+}, GeneID, SampleID)
+```
+
+```{r correlate.fpkm, fig.height=5, fig.width=8}
+cr1 = stats::cor(all.fpkm[['Lilly']],all.fpkm[['Old']], use = 'pairwise.complete.obs') 
+all.cr = data.frame(data = 'Lilly_vs_Old', values = diag(cr1))
+
+cr2 = stats::cor(all.fpkm[['Lilly']],all.fpkm[['New']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Lilly_vs_New', values = diag(cr2)))
+
+cr3 = stats::cor(all.fpkm[['Old']],all.fpkm[['New']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Old_vs_New', values = diag(cr3)))
+
+cr4 = stats::cor(all.fpkm[['Lilly']],all.fpkm[['Portal']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Lilly_vs_Portal', values = diag(cr4)))
+
+cr5 = stats::cor(all.fpkm[['Old']],all.fpkm[['Portal']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Old_vs_Portal', values = diag(cr5)))
+
+cr6 = stats::cor(all.fpkm[['New']],all.fpkm[['Portal']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'New_vs_Portal', values = diag(cr6)))
+
+writeLines('')
+p = ggplot(all.cr, aes(x = data, y = values)) + geom_boxplot()
+p = p + ylab('Correlation') + xlab('') + ggtitle('Correlation between FPKM values')
+p
+```
+
+```{r correlate.lcpm, fig.height=5, fig.width=5}
+cr1 = stats::cor(lcpm[['Lilly']],lcpm[['Old']], use = 'pairwise.complete.obs') 
+all.cr = data.frame(data = 'Lilly_vs_Old', values = diag(cr1))
+
+cr2 = stats::cor(lcpm[['Lilly']],lcpm[['New']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Lilly_vs_New', values = diag(cr2)))
+
+cr3 = stats::cor(lcpm[['Old']],lcpm[['New']], use = 'pairwise.complete.obs') 
+all.cr = rbind(all.cr, data.frame(data = 'Old_vs_New', values = diag(cr3)))
+
+writeLines('')
+p = ggplot(all.cr, aes(x = data, y = values)) + geom_boxplot()
+p = p + ylab('Correlation') + xlab('') + ggtitle('Correlation between lcpm values')
+p
+```
+
+```{r sample.dev, results='asis'}
+PC = lapply(lcpm, function(x){ prcomp(x, center = T, scale. = T)})
+
+writeLines('Percent variance explained by first 10 PCs')
+tmp = sapply(PC, function(x){
+  pv = (x$sdev^2/sum(x$sdev^2))*100
+  pv[1:10]
+}) 
+rownames(tmp) = paste0('PC',1:10)
+kable(tmp)
+
+writeLines('Deviating samples (2SD from PC1 median) in all three cases')
+dev.samples = lapply(PC, function(x){ 
+  lb = median(x$rotation[,1]) - 2*sd(x$rotation[,1]) 
+  ub = median(x$rotation[,1]) + 2*sd(x$rotation[,1]) 
+  rownames(x$rotation)[c(which(x$rotation[,1]<lb), which(x$rotation[,1] > ub))]
+})
+plot(Venn(dev.samples), doWeights = F)
+tmp = mapply(function(x, y){writeLines(y); writeLines(paste(x, collapse = ','))}, dev.samples, names(dev.samples))
+```
