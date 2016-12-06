@@ -79,6 +79,8 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain count matrix and metadata from synapse.
+### Data download
+#### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Download reprocessed counts (ACC)
 COUNT_ACC_ID = 'syn7217917';
@@ -98,7 +100,7 @@ COUNT$geneID = NULL
 COUNT = data.matrix(COUNT)
 
 # Get merged metadata
-METADATA_ID = 'syn2299154'
+METADATA_ID = 'syn7574833';#'syn2299154'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
 METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = F)
 
@@ -109,12 +111,28 @@ ANCESTRY = read.table(synGet(ANCESTRY_ID)@filePath, fill = T, header = T, sep = 
   plyr::rename(c('DNA_report..Genotyping.Sample_ID' = 'GenotypingSampleID'))
 
 ## Metadata with specific information for RNASeq processing
-metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", 
-                          "Dx", "ACC_RNA_isolation: Exclude?", "ACC_RNA_isolation: Sample RNA ID",
+metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", "Dx", 
+                          
+                          "ACC_RNA_isolation: Exclude?", "ACC_RNA_isolation: Sample RNA ID",
                           "ACC_RNA_isolation: RIN", "ACC_RNA_report: Exclude?", "ACC_RNA_report: Library Batch",
+                          "ACC_RNA_report: Ribozero Batch", "ACC_RNA_report: Flowcell Batch", 
+                          "ACC_RNA_report: Mapped Reads", "ACC_RNA_report: Intragenic Rate",
+                          "ACC_RNA_report: Intronic Rate", "ACC_RNA_report: Intergenic Rate",
+                          "ACC_RNA_report: Genes Detected", "ACC_RNA_report: Transcripts Detected",
+                          "ACC_RNA_report: Expression Profiling Efficiency", "ACC_RNA_report: rRNA Rate",
+                          "ACC_RNA_report: Total Reads", "ACC_RNA_report: Percent Aligned", 
+                          
                           "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
                           "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?", "DLPFC_RNA_report: Library Batch",
-                          'DNA_genotyping_report: Genotyping Sample_ID')
+                          "DLPFC_RNA_report: Ribozero Batch", "DLPFC_RNA_report: Flowcell Batch",
+                          "DLPFC_RNA_report: Mapped Reads", "DLPFC_RNA_report: Intragenic Rate",
+                          "DLPFC_RNA_report: Intronic Rate", "DLPFC_RNA_report: Intergenic Rate", 
+                          "DLPFC_RNA_report: Genes Detected", "DLPFC_RNA_report: Transcripts Detected", 
+                          "DLPFC_RNA_report: Expression Profiling Efficiency", "DLPFC_RNA_report: rRNA Rate",
+                          "DLPFC_RNA_report: Total Reads", "DLPFC_RNA_report: Percent Aligned",
+                          
+                          "DNA_genotyping_report: Genotyping Sample_ID",
+                          "DNA_genotyping_report: Exclude?")
 
 # Filter metadata 
 ind = as.character(METADATA[1,] %>% unlist) %in% metadataVarOfInterest
@@ -122,37 +140,74 @@ METADATA = METADATA[,ind]
 colnames(METADATA) = gsub('[^[:alnum:]]','_',as.character(METADATA[1,] %>% unlist))
 
 METADATA_ACC = METADATA %>%
-  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, ACC_RNA_isolation__Exclude_,
-                ACC_RNA_isolation__Sample_RNA_ID, ACC_RNA_isolation__RIN, ACC_RNA_report__Exclude_,
-                ACC_RNA_report__Library_Batch, DNA_genotyping_report__Genotyping_Sample_ID) %>%
+  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
+                ACC_RNA_isolation__Exclude_, ACC_RNA_isolation__Sample_RNA_ID, ACC_RNA_isolation__RIN,
+                ACC_RNA_report__Exclude_, ACC_RNA_report__Ribozero_Batch, ACC_RNA_report__Library_Batch, 
+                ACC_RNA_report__Flowcell_Batch, ACC_RNA_report__Mapped_Reads, ACC_RNA_report__Intragenic_Rate,
+                ACC_RNA_report__Intronic_Rate, ACC_RNA_report__Intergenic_Rate, ACC_RNA_report__Genes_Detected,
+                ACC_RNA_report__Transcripts_Detected, ACC_RNA_report__Expression_Profiling_Efficiency, 
+                ACC_RNA_report__rRNA_Rate, ACC_RNA_report__Total_Reads, ACC_RNA_report__Percent_Aligned,
+                DNA_genotyping_report__Genotyping_Sample_ID, DNA_genotyping_report__Exclude_) %>%
   dplyr::rename(PMI = PMI__in_hours_, 
                 IsolationExclude = ACC_RNA_isolation__Exclude_, 
                 SampleID = ACC_RNA_isolation__Sample_RNA_ID, 
                 RIN = ACC_RNA_isolation__RIN, 
                 ReportExclude = ACC_RNA_report__Exclude_, 
+                RibozeroBatch = ACC_RNA_report__Ribozero_Batch,
                 LibraryBatch = ACC_RNA_report__Library_Batch,
-                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID) %>%
+                FlowcellBatch = ACC_RNA_report__Flowcell_Batch, 
+                MappedReads = ACC_RNA_report__Mapped_Reads, 
+                IntragenicRate = ACC_RNA_report__Intragenic_Rate,
+                IntronicRate = ACC_RNA_report__Intronic_Rate, 
+                IntergenicRate = ACC_RNA_report__Intergenic_Rate, 
+                GenesDetected = ACC_RNA_report__Genes_Detected,
+                TranscriptsDetected = ACC_RNA_report__Transcripts_Detected, 
+                ExpProfEfficiency = ACC_RNA_report__Expression_Profiling_Efficiency, 
+                rRNARate = ACC_RNA_report__rRNA_Rate, 
+                TotalReads = ACC_RNA_report__Total_Reads, 
+                PercentAligned = ACC_RNA_report__Percent_Aligned,
+                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID,
+                GenotypingExclude = DNA_genotyping_report__Exclude_) %>%
   dplyr::filter(SampleID %in% colnames(COUNT)) %>%
   dplyr::mutate(Tissue = 'ACC')
 
 METADATA_DLPFC = METADATA %>%
-  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, DLPFC_RNA_isolation__Exclude_,
-                DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_,
-                DLPFC_RNA_report__Library_Batch, DNA_genotyping_report__Genotyping_Sample_ID) %>%
+  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
+                DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RIN,
+                DLPFC_RNA_report__Exclude_, DLPFC_RNA_report__Ribozero_Batch, DLPFC_RNA_report__Library_Batch, 
+                DLPFC_RNA_report__Flowcell_Batch, DLPFC_RNA_report__Mapped_Reads, DLPFC_RNA_report__Intragenic_Rate,
+                DLPFC_RNA_report__Intronic_Rate, DLPFC_RNA_report__Intergenic_Rate, DLPFC_RNA_report__Genes_Detected,
+                DLPFC_RNA_report__Transcripts_Detected, DLPFC_RNA_report__Expression_Profiling_Efficiency, 
+                DLPFC_RNA_report__rRNA_Rate, DLPFC_RNA_report__Total_Reads, DLPFC_RNA_report__Percent_Aligned,
+                DNA_genotyping_report__Genotyping_Sample_ID, DNA_genotyping_report__Exclude_) %>%
   dplyr::rename(PMI = PMI__in_hours_, 
                 IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
                 SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
                 RIN = DLPFC_RNA_isolation__RIN, 
                 ReportExclude = DLPFC_RNA_report__Exclude_, 
+                RibozeroBatch = DLPFC_RNA_report__Ribozero_Batch,
                 LibraryBatch = DLPFC_RNA_report__Library_Batch,
-                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID) %>%
+                FlowcellBatch = DLPFC_RNA_report__Flowcell_Batch, 
+                MappedReads = DLPFC_RNA_report__Mapped_Reads, 
+                IntragenicRate = DLPFC_RNA_report__Intragenic_Rate,
+                IntronicRate = DLPFC_RNA_report__Intronic_Rate, 
+                IntergenicRate = DLPFC_RNA_report__Intergenic_Rate, 
+                GenesDetected = DLPFC_RNA_report__Genes_Detected,
+                TranscriptsDetected = DLPFC_RNA_report__Transcripts_Detected, 
+                ExpProfEfficiency = DLPFC_RNA_report__Expression_Profiling_Efficiency, 
+                rRNARate = DLPFC_RNA_report__rRNA_Rate, 
+                TotalReads = DLPFC_RNA_report__Total_Reads, 
+                PercentAligned = DLPFC_RNA_report__Percent_Aligned,
+                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID,
+                GenotypingExclude = DNA_genotyping_report__Exclude_) %>%
   dplyr::filter(SampleID %in% colnames(COUNT)) %>%
   dplyr::mutate(Tissue = 'DLPFC')
 
 METADATA = rbindlist(list(METADATA_ACC, METADATA_DLPFC), use.names = T, fill = T) %>%
   droplevels() %>%
   dplyr::mutate(LibraryBatch = as.factor(LibraryBatch)) %>%
-  left_join(ANCESTRY)
+  left_join(ANCESTRY) %>%
+  unique
 
 # Replace AFF and BP samples as other
 levels(METADATA$Dx) = c("Other", "Other", "Control", "SCZ")
@@ -168,6 +223,10 @@ METADATA <- METADATA %>% filter(SampleID %in% colnames(COUNT))
 writeLines('Following samples are marked exclude')
 writeLines(paste(METADATA$SampleID[METADATA$IsolationExclude == 1 | METADATA$ReportExclude == 1], collapse = ', '))
 METADATA <- METADATA  %>% filter(IsolationExclude == 0, ReportExclude == 0) 
+
+writeLines('Following samples are marked excluded in genotyping')
+writeLines(paste(METADATA$SampleID[METADATA$GenotypingExclude == 1], collapse = ', '))
+METADATA <- METADATA  %>% filter(GenotypingExclude == 0) 
 
 writeLines('Following samples are missing PMI information')
 writeLines(paste(METADATA$SampleID[is.na(METADATA$PMI)], collapse = ', '))
@@ -210,12 +269,15 @@ Following sample are removed `r paste(removedIDs, collapse = ',')`
 ### Covariate clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c("Individual_ID", "Institution", "Gender", "LibraryBatch", "Dx.Tissue")
-ContCovariates <- c("Age_of_Death", "PMI", "RIN", "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
+FactorCovariates <- c('Individual_ID', "Institution", "Gender", "RibozeroBatch", "LibraryBatch", "FlowcellBatch", "Dx.Tissue")
+ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
+                    "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
+                    "PercentAligned", "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
 
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
-COVARIATES[,FactorCovariates] <- data.frame(lapply(COVARIATES[,FactorCovariates],function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'[^[:alnum:]]','_')})}))
+COVARIATES[,FactorCovariates] <- data.frame(lapply(COVARIATES[,FactorCovariates],function(x){
+  x <- sapply(x,function(y){str_replace_all(as.character(y),'[^[:alnum:]]','_')})}))
 rownames(COVARIATES) <- METADATA$SampleID
 
 # Convert factor covariates to factors
@@ -226,6 +288,28 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 # Add in RIN^2 values
 COVARIATES$RIN2 = COVARIATES$RIN^2
 ContCovariates = c(ContCovariates, 'RIN2')
+
+## Get GC content from biomart
+backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
+
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "mar2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content", "transcript_length"),
+                       filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
+                       mart = mart)
+GC.CONT = Ensemble2HGNC %>%
+  dplyr::select(ensembl_gene_id, percentage_gc_content) %>%
+  unique
+rownames(GC.CONT) = GC.CONT$ensembl_gene_id
+
+Gx.LEN = Ensemble2HGNC %>%
+  dplyr::select(ensembl_gene_id, transcript_length) %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(transcript_length = max(transcript_length, na.rm=T)) %>%
+  as.data.frame()
+rownames(Gx.LEN) = Gx.LEN$ensembl_gene_id
 ```
 
 Correlation/association between covariates at an FDR <= 0.1
@@ -238,23 +322,61 @@ ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
 
 Explore metatdata
 
-```{r dataExplore, fig.width = 6, fig.height = 15}
-my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+```{r dataExplore, fig.width = 5, fig.height = 5}
+my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1),
+                  plot.title=element_text(hjust=0.5))
 
 # RIN
 p = list()
 p[[1]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = RIN)) + geom_boxplot()
 p[[1]] = p[[1]] + ggtitle('RIN') + my.theme
+p[[1]]
 
 # Age of Death
 p[[2]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = Age_of_Death)) + geom_boxplot()
 p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + my.theme
+p[[2]]
 
 # PMI
 p[[3]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = PMI)) + geom_boxplot()
 p[[3]] = p[[3]] + ggtitle('PMI (in hours)') + my.theme
+p[[3]]
 
-multiplot(plotlist = p, cols = 1)
+# Intronic Rate
+p[[4]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntronicRate)) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('Intronic Rate') + my.theme
+p[[4]]
+
+# IntergenicRate
+p[[5]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntergenicRate)) + geom_boxplot()
+p[[5]] = p[[5]] + ggtitle('Intergenic Rate') + my.theme
+p[[5]]
+
+# Transcripts Detected
+p[[6]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = TranscriptsDetected)) + geom_boxplot()
+p[[6]] = p[[6]] + ggtitle('Transcripts Detected') + my.theme
+p[[6]]
+
+# Mapped Reads
+p[[7]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = MappedReads)) + geom_boxplot()
+p[[7]] = p[[7]] + ggtitle('Mapped Reads') + my.theme
+p[[7]]
+
+# PercentAligned
+p[[8]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = PercentAligned)) + geom_boxplot()
+p[[8]] = p[[8]] + ggtitle('Percent Aligned') + my.theme
+p[[8]]
+
+# rRNARate
+p[[9]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = rRNARate)) + geom_boxplot()
+p[[9]] = p[[9]] + ggtitle('rRNARate') + my.theme
+p[[9]]
+
+# Institution
+vcd::mosaic(~ Institution + Dx.Tissue, data = COVARIATES)
+
+# Gender
+vcd::mosaic(~ Gender + Dx.Tissue, data = COVARIATES)
 ```
 ### CPM Normalisation
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
@@ -357,14 +479,15 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 ```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
-
 ### Normalisation (custom design)
 Normalising COUNTS with a design matrix obtained from an iterative normalisation analysis (see syn7503251 for more details). 
 
-Here Institution, Gender, RIN, Age\\_of\\_Death, PMI, EV.4 were used as fixed effects conditioned on Dx.Tissue with Individual\\_ID as random effects.
+Here Dx.Tissue, Institution, Gender, Intronic Rate, Intergenic Rate, Transcripts Detected, Mapped Reads, Percent Aligned, RIN, PMI, Age\\_of\\_Death, rRNA Rate, Ribozero Batch and EV.1, EV.2, EV.3, EV.4 and EV.5 were chosen as fixed effects and Individual\\_ID as random effects.
 ```{r customNorm, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'RIN', 'Age_of_Death', 'PMI', 'EV.4');
+postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'IntronicRate', 'IntergenicRate', 'TranscriptsDetected', 
+                     'MappedReads', 'PercentAligned', 'RIN', 'PMI', 'Age_of_Death', 'rRNARate', 'RibozeroBatch',
+                     'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5');
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
@@ -411,6 +534,7 @@ NUM.SV = sva::num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1,
                      method = 'be', seed = 123456, B = 20)
 
 SURR.VAR = sva::sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0,
+                    block = COVARIATES$Individual_ID, 
                     n.sv = NUM.SV, B = 30)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 
@@ -437,6 +561,7 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION,
                                               'adjusted design(voom-normalized)',
                                               isKeyPlot=TRUE)
 ```
+
 ### Residual calculation
 Calculate weighted residuals and add back "Dx.Tissue" to the residuals
 ```{r varsToAddBack}

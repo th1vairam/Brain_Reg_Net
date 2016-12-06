@@ -286,13 +286,20 @@ backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
 mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "mar2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
-Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content"),
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content", "transcript_length"),
                        filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
 GC.CONT = Ensemble2HGNC %>%
   dplyr::select(ensembl_gene_id, percentage_gc_content) %>%
   unique
 rownames(GC.CONT) = GC.CONT$ensembl_gene_id
+
+Gx.LEN = Ensemble2HGNC %>%
+  dplyr::select(ensembl_gene_id, transcript_length) %>%
+  group_by(ensembl_gene_id) %>%
+  summarise(transcript_length = max(transcript_length, na.rm=T)) %>%
+  as.data.frame()
+rownames(Gx.LEN) = Gx.LEN$ensembl_gene_id
 ```
 
 Correlation/association between covariates at an FDR <= 0.1
@@ -306,7 +313,8 @@ ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.5, row.width=0.1)
 Explore metatdata
 
 ```{r dataExplore, fig.width = 5, fig.height = 5}
-my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1),
+                  plot.title=element_text(hjust=0.5))
 
 # RIN
 p = list()
@@ -556,7 +564,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2)) 
 p <- p + geom_point(aes(color=Institution, shape = Dx.Tissue, size=RIN)) 
-p <- p + theme_bw() + theme(legend.position="top")
+p <- p + theme_bw() + theme(legend.position = "top")
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=1)
 p
 ```
