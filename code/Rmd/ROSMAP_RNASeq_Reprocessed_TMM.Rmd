@@ -514,7 +514,7 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix %>%
-  rownameToFirstColumn('gene.id') %>%
+  as.matrix() %>% rownameToFirstColumn('gene.id') %>%
   write.table(file = 'ROSMAP_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
 COUNT_OBJ = File('ROSMAP_DLPFC_Counts.tsv', name = 'Raw counts (filtered)', parentId = CODE$properties$id)
 COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
