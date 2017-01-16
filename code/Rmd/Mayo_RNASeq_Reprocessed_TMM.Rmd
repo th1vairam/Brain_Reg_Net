@@ -15,7 +15,7 @@ knit2synapse::knitToFolderEntity(file = "./Mayo_RNASeq_Reprocessed_TMM.Rmd",
                                  entityName = 'UFL_Mayo_ISB Reprocessed RNASeq TMM')
 ```
 
-```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
@@ -123,7 +123,7 @@ METADATA <- METADATA %>%
   dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX", 
                             "11396_TCX", "11294_TCX", "11408_TCX")))
 ```
-Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\\_CER, 1923\\_CER, 1923\\_TCX, 11396\\_TCX, 11294\\_TCX, 11408\\_TCX
+Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
 ```{r preprocess.data1}
 # Match covariates to expression data
 indToRetain = intersect(METADATA$ID, colnames(COUNT))
@@ -134,7 +134,11 @@ COUNT <- COUNT[, indToRetain]
 rownames(METADATA) = METADATA$ID
 METADATA = METADATA[indToRetain,]
 ```
-`r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. Following samples were removed `r indRemoved`
+
+`r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. 
+
+Following samples were removed `r indRemoved`
+
 ### Predict missing PMI
 ```{r predict.pmi}
 PMI = METADATA[,c('PMI', 'ID'), drop = F]
@@ -155,7 +159,7 @@ EXPR <- getGeneFilteredGeneExprMatrix(COUNT,
 TMM.GENE_EXPRESSION = calcNormFactors(EXPR$filteredExprMatrix, method = 'TMM')
 
 # Initial normalisation of gene expression
-VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=F)
 
 ind = sapply(rownames(VOOM.GENE_EXPRESSION$E), function(x){str_split(x, '\\.')[[1]][1]}) %in% CONTROL.PROBES$x 
 EXPR = VOOM.GENE_EXPRESSION$E[ind,]
@@ -198,7 +202,7 @@ METADATA = METADATA %>%
   left_join(PMI)
 ```
 
-```{r diagnosisPlots, fig.height=10, fig.width = 15}
+```{r diagnosisPlots, fig.height=6, fig.width = 10}
 # RIN
 p = list()
 p[[1]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = RIN, fill = Tissue)) + geom_boxplot()
@@ -257,7 +261,6 @@ PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GE
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
-Sample breakup
 ```{r summary, results='asis', echo=FALSE}
 writeLines('Number of samples in each category are')
 tmp = summary(COVARIATES$BrainRegion.Diagnosis) %>%
@@ -269,7 +272,7 @@ kable(tmp)
 
 ### Normalisation (with NULL)
 Initial normalisation usign voom (with NULL design)
-```{r initial.voom.normalisation}
+```{r initial.voom.normalisation, fig.height=5, fig.width=5}
 # TMM normalisation
 TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
 
@@ -292,7 +295,7 @@ VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
 ```
 
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data1, fig.height=15, fig.width=10, results='asis'}
+```{r decompse.normalise.data1, fig.height=14, fig.width=7, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale. = T, center = T)
 
@@ -617,7 +620,7 @@ stopCluster(cl)
 |  *Results*                |  *SynapseID*                    |
 |  -------                  |   ---------                     |
 |  Covariates               |  `r COV_OBJ$properties$id`      |
-|  Raw counts (logCPM)      |  `r RAWCPM_OBJ$properties$id`   |
+|  Raw counts (logCPM)      |  `r LCOUNT_OBJ$properties$id`   |
 |  Design Matrix            |  `r DM_OBJ$properties$id`       |
 |  Residual Expression      |  `r EXP_OBJ$properties$id`      |
 |  Differential Expression  |  `r DEXP_OBJ$properties$id`     |
