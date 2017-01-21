@@ -69,7 +69,7 @@ parentId = 'syn5570248';
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of MSBB RNASeq data';
 
-thisFileName <- 'MSBB_RNASeq_Reprocessed_TMM.Rmd'
+thisFileName <- 'MSSM_RNASeq_Reprocessed_TMM.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
