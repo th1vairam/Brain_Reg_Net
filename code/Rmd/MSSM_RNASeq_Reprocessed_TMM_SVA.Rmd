@@ -44,6 +44,8 @@ library(githubr)
 
 library(parallel)
 library(foreach)
+library(doMC)
+library(doParallel)
 
 cl = makeCluster(detectCores()-2)
 registerDoParallel(cl)
@@ -371,7 +373,7 @@ DM1$design = cbind(MODEL1, SURR.VAR)
 VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F)
 
 # Calculate correlation values of random effects
-correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$Donor_ID)
+correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
 VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F, 
