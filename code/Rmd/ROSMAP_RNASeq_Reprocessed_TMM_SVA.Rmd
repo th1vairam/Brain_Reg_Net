@@ -532,6 +532,24 @@ p
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
 CODE <- Folder(name = "ROSMAP Reprocessed RNASeq TMM SVA (Based on cogdx)", parentId = parentId)
+annotations(CODE) = list(
+  dataType = 'mRNA',
+  dataSubType = 'geneExp',
+  summaryLevel = 'gene',
+  assay	 = 'Reprocessed RNAseq',
+  
+  tissueTypeAbrv	= 'DLPFC', 
+  study = 'ROSMAP', 
+  center = 'BROAD-RUSH',
+  
+  organism = 'HomoSapiens',
+  consortium	= 'AMP-AD',
+   
+  normalizationStatus	= TRUE,
+  modelSystem	= FALSE,
+  
+  normalizationType	= 'TMM and SVA'
+)
 CODE <- synStore(CODE)
 
 # Store covariates

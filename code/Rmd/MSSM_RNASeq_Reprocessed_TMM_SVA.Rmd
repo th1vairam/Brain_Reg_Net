@@ -80,12 +80,12 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 Data were obtained from AMP-AD portal of MSSM, and following brain regions were analysed for differential expression between case and control:
-  | Region | Name                      | 
-  | :----- | ------------------------- | 
-  | BM_10  | Frontal Pole (FP)         |
-  | BM_22  | Superior Temporal Gyrus   |
-  | BM_36  | Parahipocampal Gyrus (PHG)|
-  | BM_44  | inferior frontal Gyrus (IFG)|
+  | Region | Name                           | 
+  | :----- | ------------------------------ | 
+  | BM_10  | Frontal Pole (FP)              |
+  | BM_22  | Superior Temporal Gyrus (STG)  |
+  | BM_36  | Parahipocampal Gyrus (PHG)     |
+  | BM_44  | inferior frontal Gyrus (IFG)   |
   
 * BM 10: frontopolar prefrontal cortex, rostrolateral prefrontal cortex, or anterior prefrontal cortex, 
 * BM 22: In humans it corresponds approximately to the lateral and caudal two thirds of the superior temporal gyrus, 
@@ -348,7 +348,6 @@ FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
 ```
-`r tmp`
 ### SVA 
 Estimate surrogate variables using SVA package
 ```{r sva}
@@ -536,6 +535,24 @@ kable(tmp)
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Code
 CODE <- Folder(name = 'MSBB Reprocessed RNASeq TMM SVA', parentId = parentId)
+annotations(CODE) = list(
+  dataType = 'mRNA',
+  dataSubType = 'geneExp',
+  summaryLevel = 'gene',
+  assay	 = 'Reprocessed RNAseq',
+  
+  tissueTypeAbrv	= 'FP, STG, PHG, IFG', 
+  study = 'MSSM', 
+  center = 'MSBB',
+  
+  organism = 'HomoSapiens',
+  consortium	= 'AMP-AD',
+   
+  normalizationStatus	= TRUE,
+  modelSystem	= FALSE,
+  
+  normalizationType	= 'TMM and SVA'
+)
 CODE <- synStore(CODE)
 
 # Store covariates
