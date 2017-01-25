@@ -1,0 +1,644 @@
+---
+title: "Covariate analysis of MSSM reprocessed counts (with TMM normalisation)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(knit2synapse)
+library(synapseClient)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./MSSM_RNASeq_Reprocessed_TMM_SVA_BinnedCDR.Rmd",
+                                 parentId = "syn5570248",
+                                 entityName = 'MSBB Reprocessed RNASeq TMM SVA Binned CDR')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(Biobase)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+library(RColorBrewer)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+library(parallel)
+library(foreach)
+library(doMC)
+library(foreach)
+library(doParallel)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
+synapseLogin()
+
+## Requires ggdendro
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE}
+# Synapse parameters
+parentId = 'syn5570248';
+activityName = 'Covariate analysis';
+activityDescription = 'Covariate analysis of MSBB RNASeq data';
+
+thisFileName <- 'MSSM_RNASeq_Reprocessed_TMM_SVA_BinnedCDR.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+Data were obtained from AMP-AD portal of MSSM, and following brain regions were analysed for differential expression between case and control:
+  | Region | Name                           | 
+  | :----- | ------------------------------ | 
+  | BM_10  | Frontal Pole (FP)              |
+  | BM_22  | Superior Temporal Gyrus (STG)  |
+  | BM_36  | Parahipocampal Gyrus (PHG)     |
+  | BM_44  | inferior frontal Gyrus (IFG)   |
+  
+* BM 10: frontopolar prefrontal cortex, rostrolateral prefrontal cortex, or anterior prefrontal cortex, 
+* BM 22: In humans it corresponds approximately to the lateral and caudal two thirds of the superior temporal gyrus, 
+* BM 36: Ectorhinal area 36 is a subdivision of the cytoarchitecturally defined temporal region of cerebral cortex,
+* BM 44: pars opercularis (of the inferior frontal gyrus), and it refers to a subdivision of the frontal region of cerebral cortex.
+
+#### Obtain count matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Get reprocessed sample counts for temporal cortex
+COUNT_ID <- 'syn7994853';
+ALL_USED_IDs <- COUNT_ID
+COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F)
+
+# Get sample ids
+SampleID = data.frame(SampleID = colnames(COUNT),
+                 ID = colnames(COUNT)) %>% 
+  tidyr::separate(ID, c('A','B','ID'), sep = '_') 
+
+SampleID = SampleID %>%
+  dplyr::select(SampleID, ID) %>%
+  dplyr::mutate(ID = as.numeric(ID))
+
+# Get technical metadata
+METADATA_TECH_ID <- 'syn6100548'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECH_ID
+METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, row.names=1) %>%
+  group_by(sampleIdentifier) %>%
+  top_n(1, -rRNA.rate) %>%
+  dplyr::select(sampleIdentifier, BrodmannArea, barcode, individualIdentifier, batch, RIN, TotalReads, Mapped, rRNA.rate) %>%
+  unique
+
+# Get clinical metadata
+METADATA_CLINICAL_ID <- 'syn6101474'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
+METADATA_CLINICAL <- read.csv(synGet(METADATA_CLINICAL_ID)@filePath, header = T)
+
+METADATA <- full_join(METADATA_TECH, METADATA_CLINICAL)
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=FALSE, echo=TRUE}
+# Fix metadata
+METADATA$AOD = gsub('\\+','',METADATA$AOD)
+METADATA$Dx[METADATA$CDR <= 1] = 'ND'
+METADATA$Dx[METADATA$CDR == 2 | METADATA$CDR == 3] = 'MD'
+METADATA$Dx[METADATA$CDR >= 4] = 'SD'
+METADATA$BrodmannArea.Dx = paste(METADATA$BrodmannArea, METADATA$Dx, sep = '.')
+METADATA$RIN2 = METADATA$RIN^2
+levels(METADATA$batch)[levels(METADATA$batch) == ''] = 'NoBatch'
+
+METADATA <- METADATA %>%
+  filter(!is.na(BrodmannArea), !is.na(PMI), !is.na(RIN))
+```
+
+```{r preprocess.data1}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$sampleIdentifier, colnames(COUNT))
+indRemoved = setdiff(colnames(COUNT), METADATA$sampleIdentifier)
+
+COUNT <- COUNT[, indToRetain]
+
+METADATA = as.data.frame(METADATA)
+rownames(METADATA) = METADATA$sampleIdentifier
+METADATA = METADATA[indToRetain,]
+```
+`r dim(COUNT)[2]` samples from `r length(unique(METADATA$individualIdentifier))` subjects were obtained from the MSBB cohorts in AMP-AD reprocessed rnaseq project 
+
+Following `r length(indRemoved)` samples are removed:`r paste(indRemoved, collapse = ', ')`
+```{r diagnosisPlots, fig.height=15, fig.width = 10}
+# RIN
+p = list()
+p[[1]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = RIN, fill = BrodmannArea)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('RIN') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# AOD
+p[[2]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = as.numeric(AOD), fill = BrodmannArea)) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('Age At Death') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# PMI
+p[[3]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = as.numeric(PMI), fill = BrodmannArea)) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PMI') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Total Reads
+p[[4]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = as.numeric(TotalReads), fill = BrodmannArea)) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('Total Reads') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Mapped Reads
+p[[5]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = as.numeric(Mapped), fill = BrodmannArea)) + geom_boxplot()
+p[[5]] = p[[5]] + ggtitle('Mapped') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Mapped Reads
+p[[6]] = ggplot(METADATA, aes(x = BrodmannArea.Dx, y = as.numeric(rRNA.rate), fill = BrodmannArea)) + geom_boxplot()
+p[[6]] = p[[6]] + ggtitle('rRNA Rate') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+multiplot(plotlist = p, cols = 2)
+```
+
+### Covariate clustering
+Determine relationship between covariates. 
+```{r covariates.clustering}
+FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrodmannArea.Dx")
+ContCovariates <- c("RIN", "RIN2", "AOD","PMI", "TotalReads", "Mapped", "rRNA.rate")
+  
+# Find inter relation between factor covariates
+COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
+rownames(COVARIATES) <- METADATA$sampleIdentifier
+
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
+```
+Covariate correlation
+```{r covariates.correlation, fig.width=8, fig.height=8}
+COVARIATES.CORRELATION = CovariateAnalysis::getAssociationStatistics(COVARIATES, PVAL = 0.05)
+ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.4, row.width=0.1)
+```
+### Gene Filtering
+Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
+
+Remove genes that have less than 1 cpm counts in at least 50% of samples per BrodmannArea.Dx
+```{r cpmnormalisation}
+genesToAnalyze = COVARIATES %>%
+  rownameToFirstColumn('sampleIdentifier') %>%
+  dlply(.(BrodmannArea.Dx), .fun = function(mtd, count){
+    processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$sampleIdentifier],
+                                                     MIN_GENE_CPM=1, 
+                                                     MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
+    processed.counts$filteredExprMatrix$genes
+    }, COUNT)
+genesToAnalyze = unlist(genesToAnalyze) %>% unique()
+
+PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+```
+Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
+
+```{r summary, results='asis', echo=FALSE}
+writeLines('Number of samples in each category are')
+tmp = summary(COVARIATES$BrodmannArea.Dx) %>%
+  rownameToFirstColumn('BrodmannArea.Dx') %>%
+  tidyr::separate(BrodmannArea.Dx, c('BrodmannArea', 'Dx'), sep = 5) %>%
+  tidyr::spread(Dx, DF)
+kable(tmp)
+```
+
+### Normalisation (with NULL)
+Initial normalisation usign voom (with NULL design)
+```{r initial.voom.normalisation, fig.height=5, fig.width=5}
+# TMM normalisation
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+
+# Set gene counts in specific samples that are deviating 3 sd from other samples to NA
+log.mat = apply(VOOM.GENE_EXPRESSION$E, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+}) %>% t
+PROCESSED_COUNTS$filteredExprMatrix[log.mat] = NA
+
+# TMM normalisation
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+```
+
+Clustering of initial normalised data (with NULL design)
+```{r decompse.normalise.data1, fig.height=14, fig.width=7, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale. = T, center = T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(sampleIdentifier=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2],
+                       PC3=PC$rotation[,3],
+                       PC4=PC$rotation[,4])
+
+plotdata <- left_join(plotdata, METADATA)
+
+pl = list()
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(shape=factor(Dx), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
+p <- p + theme_bw() + theme(legend.position="left") + scale_shape_manual(values = 1:7)
+# p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
+pl[[1]] <- p
+
+p <- ggplot(plotdata, aes(x=PC2, y=PC3))
+p <- p + geom_point(aes(shape=factor(Dx), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
+p <- p + theme_bw() + theme(legend.position="left") + scale_shape_manual(values = 1:7)
+# p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
+pl[[2]] <- p
+
+multiplot(plotlist = pl, cols = 1)
+```
+```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(VOOM.GENE_EXPRESSION$E)), method = "average")
+tree = WGCNA::cutreeStatic(sampleTrees, cutHeight = 100, minSize=10)
+
+COVARIATES.tmp = COVARIATES[, c('batch','RACE','SEX','BrodmannArea.Dx')]
+COVARIATES.tmp = sapply(COVARIATES.tmp, as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
+
+WGCNA::plotDendroAndColors(sampleTrees, 
+                           col.mat,
+                           groupLabels = c('Cluster',colnames(COVARIATES.tmp)))
+```
+
+```{r temp, include=FALSE}
+dev.off()
+gc()
+```
+
+### Significant Covariates
+Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
+```{r preAdjusted.covariates, results='asis', echo=FALSE}
+# Find correlation between PC's of gene expression with covariates
+preAdjustedSigCovars = runPCAandPlotCorrelations(VOOM.GENE_EXPRESSION$E, COVARIATES,
+                                                 'NULL design(voom-normalized)',
+                                                 isKeyPlot=TRUE)
+
+# Find significant covariates
+adjustCovars = preAdjustedSigCovars$significantCovars
+```
+Significant covariates to adjust at FDR 0.1 are `r paste(gsub('_','\\\\_',adjustCovars), collapse= ',')`
+```{r preAdjustedSigCovars.NULL.ALL, fig.width=25, fig.height=12}
+preAdjustedSigCovars[["PC_res"]][[2]]$plotData
+```
+### Normalisation (iterative)
+Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
+```{r iterative.adjusted.voom.normalisation, results='asis'}
+postAdjustCovars = c('BrodmannArea.Dx', 'batch', 'SEX')
+randomCovariates = 'individualIdentifier'
+
+# Assign residual covariates
+residualSigCovars = preAdjustedSigCovars
+significantCovars = residualSigCovars$significantCovars
+covariatesEffects = residualSigCovars$Effects.significantCovars
+covariatesEffects = covariatesEffects[setdiff(significantCovars, c(postAdjustCovars, randomCovariates))]
+
+postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
+
+loopCount = 0 
+while(length(significantCovars)!=0 && loopCount <= 100){
+  writeLines(paste('Using following covariates in the model:', 
+                   paste(postAdjustCovars, collapse=', '),
+                   'as fixed effects and individualIdentifier as random effects'))
+  
+  # Post adjusted design matrix
+  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+    
+  # Estimate voom weights
+  VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F)
+  
+  # Calculate correlation values of random effects
+  correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$individualIdentifier)
+  
+  # Re-estimate voom weights
+  VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F, 
+                                       block = COVARIATES$individualIdentifier, 
+                                       correlation = correlation$cor)
+  
+  # Fit a mixed effect linear model
+  FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+  
+  # Residuals after normalisation
+  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+  
+  # Residual covariates to choose from
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, randomCovariates))
+  
+  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                                COVARIATES,
+                                                'all adjusted design(voom-normalized)',
+                                                isKeyPlot=TRUE)
+  
+  # Add postadjusted covariates (if any)
+  significantCovars = residualSigCovars$significantCovars
+  covariatesEffects = residualSigCovars$Effects.significantCovars
+  covariatesEffects = covariatesEffects[setdiff(significantCovars,c(postAdjustCovars, randomCovariates))]
+  
+  postAdjustCovars = c(postAdjustCovars,names(which.max(covariatesEffects)))
+  loopCount = loopCount + 1
+}
+modelStr <-paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=','), 'as fixed effects')
+
+tmp <- paste('Using following covariates in the final model:', modelStr, 'and Donor_ID as random effects')
+```
+### SVA 
+Estimate surrogate variables using SVA package
+```{r sva}
+MODEL0 = DM1$design[,-grep('BrodmannArea.Dx',colnames(DM1$design))] # Get null model by removing variable of interest
+MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
+MODEL1 = DM1$design
+MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
+
+## Calculate the number of surrogate variables
+NUM.SV = sva::num.sv(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1,
+                     method = 'be', seed = 123456, B = 30)
+
+SURR.VAR = sva::sva(VOOM.ADJUSTED.GENE_EXPRESSION$E, MODEL1, MODEL0,
+                    n.sv = NUM.SV, B = 30)$sv
+
+colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
+rownames(SURR.VAR) = rownames(DM1$design)
+
+DM1$design = cbind(MODEL1, SURR.VAR)
+
+# Estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F)
+
+# Calculate correlation values of random effects
+correlation = parallelDuplicateCorrelation(VOOM.ADJUSTED.GENE_EXPRESSION, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.ADJUSTED.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=DM1$design, plot=F, 
+                                     block = COVARIATES$Donor_ID, correlation = correlation$cor)
+  
+# Fit a mixed effect linear model
+FIT = lmFit(VOOM.ADJUSTED.GENE_EXPRESSION)
+
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
+
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES,
+                                              'all adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
+```
+
+### Sanity Check
+Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
+```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
+residualSigCovars[["PC_res"]][[2]]$plotData
+```
+Adding "BrodmannArea.Dx" back to the residuals
+```{r addVarsBack}
+varsToAddBackIn <-  grep("BrodmannArea.Dx", colnames(FIT$coefficients), value = T)
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
+  t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(FIT$coefficients[,varsToAddBackIn]))
+```
+
+### Clustering residual gene expression
+```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
+
+# Tree based clustering
+sampleTrees = flashClust::hclust(dist(t(RESIDUAL.GENE_EXPRESSION)), method = "average")
+
+# Cluster expression
+clust = cutreeStatic(sampleTrees, cutHeight = 100, minSize = 10)
+
+# Plot first 2 PCs
+plotdata <- data.frame(sampleIdentifier=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2],
+                       PC3=PC$rotation[,3], 
+                       PC4=PC$rotation[,4],
+                       clust = clust)
+
+plotdata <- left_join(plotdata, METADATA)
+
+pl = list()
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(shape=factor(Dx), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
+p <- p + theme_bw() + theme(legend.position="left") +scale_shape_manual(values = 1:7)
+# p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
+pl[[1]] <- p
+
+p <- ggplot(plotdata, aes(x=PC2, y=PC3))
+p <- p + geom_point(aes(shape=factor(Dx), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
+p <- p + theme_bw() + theme(legend.position="left") +scale_shape_manual(values = 1:7)
+# p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
+pl[[2]] <- p
+
+multiplot(plotlist = pl, cols = 1)
+
+names(clust) = sampleTrees$labels
+clust = clust[rownames(COVARIATES)]
+```
+
+```{r decompse.normalise.data4, fig.height=10, fig.width=25, results='asis'}
+# Tree based clustering
+COVARIATES.tmp = COVARIATES
+COVARIATES.tmp = sapply(COVARIATES.tmp[,setdiff(FactorCovariates, 'individualIdentifier')], as.numeric)
+col.mat = labels2colors(cbind(tree,COVARIATES.tmp))
+col.mat = gsub('\\.1', '', col.mat)
+
+plotDendroAndColors(sampleTrees, 
+                    colors = col.mat, 
+                    abHeight = 0.80, 
+                    main = "Sample dendrogram",
+                    groupLabels = colnames(COVARIATES))
+```
+
+```{r temp1, include=FALSE}
+gc()
+dev.off()
+```
+
+```{r get.gene.symbols}
+backgroundGenes = data.frame(gene.id = rownames(COUNT)) %>%
+  dplyr::mutate(ensembl_gene_id = gene.id) %>%
+  tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
+
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
+
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                       filters = "ensembl_gene_id", 
+                       values = backgroundGenes$ensembl_gene_id,
+                       mart = mart)
+
+# Add gene names
+RESIDUAL.GENE_EXPRESSION <- RESIDUAL.GENE_EXPRESSION %>%
+  rownameToFirstColumn('gene.id') %>%
+  left_join(backgroundGenes) %>%
+  left_join(Ensemble2HGNC) %>%
+  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+
+VOOM.ADJUSTED.GENE_EXPRESSION$E <- VOOM.ADJUSTED.GENE_EXPRESSION$E %>%
+  rownameToFirstColumn('gene.id') %>%
+  left_join(backgroundGenes) %>%
+  left_join(Ensemble2HGNC) %>%
+  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+```
+### Differential expression analysis
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp, fig.height=10, fig.width=20}
+# Fit contrast
+cntr = c()
+for (BA in unique(METADATA$BrodmannArea)){
+  tmp = combn(paste0('BrodmannArea.Dx', BA, '.', c('ND','MD','SD')),2)
+  cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
+}
+
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:12, function(i, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION){
+  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], confint = T)
+}, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION)
+names(DE) = gsub('BrodmannArea.Dx','',colnames(contrast))
+
+DE1 = plyr::ldply(DE, .id = 'Comparison') %>%
+  dplyr::mutate(Comparison1 = Comparison) %>%
+  tidyr::separate(Comparison1, c('from.state','to.state'), sep = '-') %>%
+  tidyr::separate(from.state, c('BrodmannArea','From.Dx'), sep = 5) %>%
+  tidyr::separate(to.state, c('BrodmannArea','To.Dx'), sep = 5) %>%
+  tidyr::unite(Dx, From.Dx, To.Dx, sep = '-')
+
+p <- ggplot(DE1, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p <- p + geom_hline(yintercept = -log10(0.05), color = 'red')
+p <- p + geom_vline(xintercept = log2(1.2), color = 'red')
+p <- p + geom_vline(xintercept = -log2(1.2), color = 'red')
+p <- p + facet_grid(BrodmannArea~.+Dx)
+p
+
+tmp = DE1 %>% 
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  group_by(BrodmannArea, Dx) %>%
+  summarise(count = length(unique(genes))) %>%
+  tidyr::spread(BrodmannArea, count)
+kable(tmp)
+```
+
+### Store files in synapse
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Code
+CODE <- Folder(name = 'MSBB Reprocessed RNASeq TMM SVA Binned CDR', parentId = parentId)
+annotations(CODE) = list(
+  dataType = 'mRNA',
+  dataSubType = 'geneExp',
+  summaryLevel = 'gene',
+  assay	 = 'Reprocessed RNAseq',
+  
+  tissueTypeAbrv	= 'FP, STG, PHG, IFG', 
+  study = 'MSSM', 
+  center = 'MSBB',
+  
+  organism = 'HomoSapiens',
+  consortium	= 'AMP-AD',
+   
+  normalizationStatus	= TRUE,
+  modelSystem	= FALSE,
+  
+  normalizationType	= 'TMM and SVA'
+)
+CODE <- synStore(CODE)
+
+# Store covariates
+COVARIATES = rownameToFirstColumn(COVARIATES, 'sampleIdentifier')
+write.table(COVARIATES, file = 'MSBBCovariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('MSBBCovariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
+# Store filtered counts
+PROCESSED_COUNTS$filteredExprMatrix %>%
+  as.matrix() %>% rownameToFirstColumn('gene.id') %>%
+  write.table(file = 'MSBBCounts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('MSBBCounts.tsv', name = 'Raw counts (filtered)', parentId = CODE$properties$id)
+COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                     executed = thisFile, activityDescription = activityDescription)
+
+# Store logCPM
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'MSBBlogCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('MSBBlogCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
+LCOUNT_OBJ = synStore(LCOUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                      executed = thisFile, activityDescription = activityDescription)
+
+# Store design matrix
+write.table(DM1$design, file = 'MSBBDesign.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MSBBDesign.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                  executed = thisFile, activityDescription = activityDescription)
+
+# Store residual gene expression
+write.table(RESIDUAL.GENE_EXPRESSION, file = 'MSBBExpression.tsv', sep = '\t', row.names=F, quote=F)
+EXP_OBJ = File('MSBBExpression.tsv', name = 'Normalised Adjusted Residual Expression (Dx added)', 
+               parentId = CODE$properties$id)
+EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                   executed = thisFile, activityDescription = activityDescription)
+
+# Store differential expression results
+write.table(DE, file = 'MSBBDiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('MSBBDiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                    executed = thisFile, activityDescription = activityDescription)
+
+stopCluster(cl)
+```
+|  *Results*                |  *SynapseID*                    |
+|  -------                  |   ---------                     |
+|  Covariates               |  `r COV_OBJ$properties$id`      |
+|  Raw counts (logCPM)      |  `r LCOUNT_OBJ$properties$id`   |
+|  Design Matrix            |  `r DM_OBJ$properties$id`       |
+|  Residual Expression      |  `r EXP_OBJ$properties$id`      |
+|  Differential Expression  |  `r DEXP_OBJ$properties$id`     |
+
+### Source R Code
+[This File](`r thisFile`)
