@@ -43,6 +43,9 @@ library(githubr)
 
 library(parallel)
 library(foreach)
+library(doMC)
+library(foreach)
+library(doParallel)
 
 cl = makeCluster(detectCores()-2)
 registerDoParallel(cl)
@@ -250,7 +253,7 @@ VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
 ```
 
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data1, fig.height=14, fig.width=7, results='asis'}
+```{r decompse.normalise.data1, fig.height=10, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale. = T, center = T)
 
@@ -267,13 +270,13 @@ pl = list()
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(CDR), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:7)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:7)
 # p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
 pl[[1]] <- p
 
 p <- ggplot(plotdata, aes(x=PC2, y=PC3))
 p <- p + geom_point(aes(shape=factor(CDR), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:7)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:7)
 # p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
 pl[[2]] <- p
 
@@ -384,13 +387,13 @@ residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 Adding "BrodmannArea.CDR" back to the residuals
 ```{r addVarsBack}
-varsToAddBackIn <-  grep("BrainRegion.Diagnosis", colnames(FIT$coefficients), value = T)
+varsToAddBackIn <-  grep("BrodmannArea.CDR", colnames(FIT$coefficients), value = T)
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
   t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(FIT$coefficients[,varsToAddBackIn]))
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
+```{r decompse.normalise.data3, fig.height=10, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
@@ -413,13 +416,13 @@ plotdata <- left_join(plotdata, METADATA)
 pl = list()
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(CDR), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:7)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:7)
 # p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
 pl[[1]] <- p
 
 p <- ggplot(plotdata, aes(x=PC2, y=PC3))
 p <- p + geom_point(aes(shape=factor(CDR), color=as.factor(BrodmannArea), size=as.numeric(RIN)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:7)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:7)
 # p <- p + geom_text(aes(label= sampleIdentifier), size=4, hjust=0)
 pl[[2]] <- p
 
@@ -454,7 +457,7 @@ backgroundGenes = data.frame(gene.id = rownames(COUNT)) %>%
   tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -492,7 +495,7 @@ FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
 DE = lapply(1:84, function(i, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION){
-  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1])
+  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], confint = T)
 }, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION)
 names(DE) = gsub('BrodmannArea.CDR','',colnames(contrast))
 
@@ -577,7 +580,7 @@ EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results
-write.table(DE, file = 'MSBBDiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(DE1, file = 'MSBBDiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('MSBBDiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)

@@ -549,20 +549,27 @@ DE1 = plyr::ldply(DE, .id = 'Comparison') %>%
   tidyr::separate(Comparison1, c('from.state','to.state'), sep = '-') %>%
   tidyr::separate(from.state, c('BrodmannArea','From.Dx'), sep = 5) %>%
   tidyr::separate(to.state, c('BrodmannArea','To.Dx'), sep = 5) %>%
-  tidyr::unite(Dx, From.Dx, To.Dx, sep = '-')
+  tidyr::unite(Dx, From.Dx, To.Dx, sep = '-') %>%
+  dplyr::select(-Comparison) %>%
+  dplyr::rename(Region = BrodmannArea, Comparison = Dx, gene.id = genes) %>%
+  dplyr::mutate(Region = factor(Region, labels = c('FP', 'STG', 'PHG', 'IFG')),
+                Study = 'MSBB') %>%
+  left_join(backgroundGenes) %>%
+  left_join(Ensemble2HGNC) %>%
+  dplyr::select(-position)
 
 p <- ggplot(DE1, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
 p <- p + geom_hline(yintercept = -log10(0.05), color = 'red')
 p <- p + geom_vline(xintercept = log2(1.2), color = 'red')
 p <- p + geom_vline(xintercept = -log2(1.2), color = 'red')
-p <- p + facet_grid(BrodmannArea~.+Dx)
+p <- p + facet_grid(Region~.+Comparison)
 p
 
 tmp = DE1 %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  group_by(BrodmannArea, Dx) %>%
-  summarise(count = length(unique(genes))) %>%
-  tidyr::spread(BrodmannArea, count)
+  group_by(Region, Comparison) %>%
+  summarise(count = length(unique(gene.id))) %>%
+  tidyr::spread(Region, count)
 kable(tmp)
 ```
 
@@ -625,7 +632,7 @@ EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results
-write.table(DE, file = 'MSBBDiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(DE1, file = 'MSBBDiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('MSBBDiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)

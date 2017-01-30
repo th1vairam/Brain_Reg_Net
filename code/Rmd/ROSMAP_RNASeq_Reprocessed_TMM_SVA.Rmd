@@ -254,7 +254,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Batch, shape=cogdx, size=RINcontinuous))
-p <- p + theme_bw() + theme(legend.position="top")
+p <- p + theme_bw() + theme(legend.position="right")
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 ```
@@ -412,7 +412,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2)) 
 p <- p + geom_point(aes(color=Batch, shape=cogdx, size=RINcontinuous))
-p <- p + theme_bw() + theme(legend.position="top")
+p <- p + theme_bw() + theme(legend.position="right")
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=1)
 p
 ```
@@ -444,7 +444,7 @@ backgroundGenes = data.frame(gene.id = rownames(COUNT)) %>%
   tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "mar2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -477,7 +477,7 @@ Interpretation of cogdx scores
 
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=16, fig.width=16}
+```{r diffExp, fig.height=8, fig.width=16}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("cogdx1-cogdx2",
                                      "cogdx1-cogdx4",
@@ -488,17 +488,19 @@ FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
 DE = lapply(1:3, function(i, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, Ensemble2HGNC){
-  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1]) %>%
+  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], confint = T) %>%
     rownameToFirstColumn('gene.id') %>%
     left_join(backgroundGenes) %>%
     left_join(Ensemble2HGNC) %>%
-    dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, logFC, AveExpr, t, P.Value, adj.P.Val, B)
+    dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, logFC, CI.L, CI.R, AveExpr, t, P.Value, adj.P.Val, B)
 }, FIT, VOOM.ADJUSTED.GENE_EXPRESSION, Ensemble2HGNC) 
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
-  dplyr::mutate(Direction = logFC/abs(logFC),
+  dplyr::mutate(Study = 'ROSMAP',
+                Region = 'DLPFC',
+                Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')))
 
 tmp = DE %>%

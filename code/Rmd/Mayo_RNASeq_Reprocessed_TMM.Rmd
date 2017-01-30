@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of MAYO reprocessed counts (with TMM and SVA normalisation)"
+title: "Covariate analysis of MAYO reprocessed counts (with TMM normalisation)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
