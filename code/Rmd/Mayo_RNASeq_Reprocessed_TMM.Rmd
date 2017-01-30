@@ -161,7 +161,7 @@ TMM.GENE_EXPRESSION = calcNormFactors(EXPR$filteredExprMatrix, method = 'TMM')
 # Initial normalisation of gene expression
 VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=F)
 
-ind = sapply(rownames(VOOM.GENE_EXPRESSION$E), function(x){str_split(x, '\\.')[[1]][1]}) %in% CONTROL.PROBES$x 
+ind = rownames(VOOM.GENE_EXPRESSION$E) %in% CONTROL.PROBES$x 
 EXPR = VOOM.GENE_EXPRESSION$E[ind,]
 PMI = PMI[colnames(EXPR),,drop=F]
 
@@ -295,7 +295,7 @@ VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
 ```
 
 Clustering of initial normalised data (with NULL design)
-```{r decompse.normalise.data1, fig.height=14, fig.width=7, results='asis'}
+```{r decompse.normalise.data1, fig.height=14, fig.width=9, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(VOOM.GENE_EXPRESSION$E, scale. = T, center = T)
 
@@ -313,14 +313,14 @@ pl = list()
 plotdata.cer = plotdata[grep('CER', plotdata$ID),]
 p <- ggplot(plotdata.cer, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[1]] <- p
 
 plotdata.tcx = plotdata[grep('TCX', plotdata$ID),]
 p <- ggplot(plotdata.tcx, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[2]] <- p
 
@@ -440,7 +440,7 @@ RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
 ```
 
 ### Clustering residual gene expression
-```{r decompse.normalise.data3, fig.height=10, fig.width=9, results='asis'}
+```{r decompse.normalise.data3, fig.height=10, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
@@ -463,13 +463,13 @@ plotdata <- left_join(plotdata, METADATA, by="ID")
 pl = list()
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[1]] <- p
 
 p <- ggplot(plotdata, aes(x=PC3, y=PC4))
 p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Diagnosis), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="top") +scale_shape_manual(values = 1:2)
+p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 pl[[2]] <- p
 
@@ -499,7 +499,7 @@ dev.off()
 
 ```{r get.gene.symbols}
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "www.ensembl.org")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
 
 # Get background gene ids
 backgroundGenes = data.frame(gene.id = rownames(COUNT), ID = rownames(COUNT)) %>%
@@ -544,28 +544,34 @@ FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
 DE = lapply(1:12, function(i, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION){
-  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1])
+  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], confint = T)
 }, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION)
 names(DE) = gsub('BrainRegion.Diagnosis','',colnames(contrast))
 
-DE = plyr::ldply(DE, .id = 'Comparison') %>%
+DE1 = plyr::ldply(DE, .id = 'Comparison') %>%
   dplyr::mutate(Comparison1 = Comparison) %>%
   tidyr::separate(Comparison1, c('from.state','to.state'), sep = '-') %>%
   tidyr::separate(from.state, c('BrainRegion','reference'), sep = '\\.') %>%
   tidyr::separate(to.state, c('BrainRegion','against'), sep = '\\.') %>%
-  tidyr::unite(Name, reference, against, sep = '-')
+  tidyr::unite(Name, reference, against, sep = '-') %>%
+  dplyr::mutate(Comparison = Name, Study = 'MAYO') %>%
+  dplyr::rename(gene.id = genes, Region = BrainRegion) %>%
+  dplyr::select(-Name) %>%
+  left_join(backgroundGenes) %>%
+  left_join(Ensemble2HGNC)
 
-p <- ggplot(DE, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p <- ggplot(DE1, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
 p <- p + geom_hline(yintercept = -log10(0.05), color = 'red')
 p <- p + geom_vline(xintercept = log2(1.2), color = 'red')
 p <- p + geom_vline(xintercept = -log2(1.2), color = 'red')
-p <- p + facet_grid(BrainRegion~.+Name)
+p <- p + facet_grid(Region~.+Comparison)
 p
 
-tmp = DE %>% 
+tmp = DE1 %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  group_by(Comparison) %>%
-  dplyr::summarize(nDiffExpGenes = length(unique(genes)))
+  group_by(Region, Comparison) %>%
+  dplyr::summarize(nDiffExpGenes = length(unique(gene.id))) %>%
+  spread(Region, nDiffExpGenes)
 kable(tmp)
 ```
 
@@ -615,7 +621,7 @@ LCOUNT_OBJ = synStore(LCOUNT_OBJ, used = ALL_USED_IDs, activityName = activityNa
                       executed = thisFile, activityDescription = activityDescription)
 
 # Store design matrix
-write.table(DM1$design, file = 'MAYO_CBE_TCX_Design.tsv', sep = '\t', row.names=F, quote=F)
+write.table(DM1$design, file = 'MAYO_CBE_TCX_Design.tsv', sep = '\t', row.names=T, quote=F)
 DM_OBJ = File('MAYO_CBE_TCX_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                   executed = thisFile, activityDescription = activityDescription)
@@ -628,7 +634,7 @@ EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName,
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results
-write.table(DE, file = 'MAYO_CBE_TCX_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(DE1, file = 'MAYO_CBE_TCX_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('MAYO_CBE_TCX_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)
