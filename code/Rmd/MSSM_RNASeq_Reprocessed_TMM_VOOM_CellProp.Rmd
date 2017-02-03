@@ -11,7 +11,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./MSSM_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd",
-                                 parentId = "syn5570325",
+                                 parentId = "syn5570248",
                                  entityName = 'MSSM Cell Type Abundance with Reprocessed RNASeq')
 ```
 
@@ -71,7 +71,7 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
-parentId = 'syn5570325';
+parentId = 'syn5570248';
 activityName = 'Cell type abundance in MSSM';
 activityDescription = 'Cell type abundance in MSSM with TMM-VOOM normalised reprocessed RNASeq counts';
 
