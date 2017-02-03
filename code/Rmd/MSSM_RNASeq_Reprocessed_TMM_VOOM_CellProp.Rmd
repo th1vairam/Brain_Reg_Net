@@ -1,5 +1,5 @@
 ---
-title: "Markdown to estimate the abundance of brain cell types with the reprocessed counts from Mayo cohorts (with TMM-VOOM normalisation)"
+title: "Markdown to estimate the abundance of brain cell types with the reprocessed counts from MSSM cohorts (with TMM-VOOM normalisation)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -10,9 +10,9 @@ library(knit2synapse)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./Mayo_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd",
+knit2synapse::knitToFolderEntity(file = "./MSSM_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd",
                                  parentId = "syn5570325",
-                                 entityName = 'MAYO Cell Type Abundance with Reprocessed RNASeq')
+                                 entityName = 'MSSM Cell Type Abundance with Reprocessed RNASeq')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
@@ -72,86 +72,100 @@ knitr::opts_chunk$set(
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
 parentId = 'syn5570325';
-activityName = 'Cell type abundance in Mayo';
-activityDescription = 'Cell type abundance in Mayo with TMM-VOOM normalised reprocessed RNASeq counts';
+activityName = 'Cell type abundance in MSSM';
+activityDescription = 'Cell type abundance in MSSM with TMM-VOOM normalised reprocessed RNASeq counts';
 
-thisFileName <- 'Mayo_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd'
+thisFileName <- 'MSSM_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='celltype')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
 ### Data download
+Data were obtained from AMP-AD portal of MSSM, and following brain regions were analysed for differential expression between case and control:
+  | Region | Name                           | 
+  | :----- | ------------------------------ | 
+  | BM_10  | Frontal Pole (FP)              |
+  | BM_22  | Superior Temporal Gyrus (STG)  |
+  | BM_36  | Parahipocampal Gyrus (PHG)     |
+  | BM_44  | inferior frontal Gyrus (IFG)   |
+  
+* BM 10: frontopolar prefrontal cortex, rostrolateral prefrontal cortex, or anterior prefrontal cortex, 
+* BM 22: In humans it corresponds approximately to the lateral and caudal two thirds of the superior temporal gyrus, 
+* BM 36: Ectorhinal area 36 is a subdivision of the cytoarchitecturally defined temporal region of cerebral cortex,
+* BM 44: pars opercularis (of the inferior frontal gyrus), and it refers to a subdivision of the frontal region of cerebral cortex.
+
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Get reprocessed sample counts for temporal cortex
-COUNT_TC_ID <- 'syn7987765';
-ALL_USED_IDs <- COUNT_TC_ID
-COUNT_TC <- read.table(synGet(COUNT_TC_ID)@filePath, header=T, sep='\t', check.names = F)
-colnames(COUNT_TC) = paste(colnames(COUNT_TC), 'TCX', sep = '_')
+COUNT_ID <- 'syn7994853';
+ALL_USED_IDs <- COUNT_ID
+COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F)
 
-# Get reprocessed sample counts for cerebellum
-COUNT_CE_ID <- 'syn7513807';
-ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_CE_ID
-COUNT_CE <- read.table(synGet(COUNT_CE_ID)@filePath, header=T, sep='\t', check.names = F)
+# Get sample ids
+SampleID = data.frame(SampleID = colnames(COUNT),
+                 ID = colnames(COUNT)) %>% 
+  tidyr::separate(ID, c('A','B','ID'), sep = '_') 
 
-COUNT = cbind(COUNT_TC, COUNT_CE[rownames(COUNT_TC),])
+SampleID = SampleID %>%
+  dplyr::select(SampleID, ID) %>%
+  dplyr::mutate(ID = as.numeric(ID))
+
+# Get technical metadata
+METADATA_TECH_ID <- 'syn6100548'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECH_ID
+METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, row.names=1) %>%
+  group_by(sampleIdentifier) %>%
+  top_n(1, -rRNA.rate) %>%
+  dplyr::select(sampleIdentifier, BrodmannArea, barcode, individualIdentifier, batch, RIN, TotalReads, Mapped, rRNA.rate) %>%
+  unique
 
 # Get clinical metadata
-METADATA_TC_ID <- 'syn3817650'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TC_ID
-METADATA_TC <- read.table(synGet(METADATA_TC_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
-  tidyr::separate(ID, c('Donor_ID', 'BrainRegion'), sep = '_') %>%
-  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_'))
+METADATA_CLINICAL_ID <- 'syn6101474'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
+METADATA_CLINICAL <- read.csv(synGet(METADATA_CLINICAL_ID)@filePath, header = T)
 
-# Get clinical metadata
-METADATA_CE_ID <- 'syn5223705'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CE_ID
-METADATA_CE <- read.table(synGet(METADATA_CE_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
-  tidyr::separate(SampleID, c('Donor_ID', 'BrainRegion')) %>%
-  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_')) %>%
-  dplyr::rename(Gender = Sex, FLOWCELL = Flowcell)
-
-METADATA = rbindlist(list(METADATA_TC, METADATA_CE), use.names = T, fill = T) %>%
-  as.data.frame
+METADATA <- full_join(METADATA_TECH, METADATA_CLINICAL)
 ```
 
 ### Data preprocessing
 ```{r preprocess.data,cache=FALSE, echo=TRUE}
 # Fix metadata
-METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
-METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
-METADATA$BrainRegion.Diagnosis = paste(METADATA$BrainRegion, METADATA$Diagnosis, sep = '.')
+METADATA$AOD = gsub('\\+','',METADATA$AOD)
+METADATA$Dx[METADATA$CDR <= 1] = 'ND'
+METADATA$Dx[METADATA$CDR == 2 | METADATA$CDR == 3] = 'MD'
+METADATA$Dx[METADATA$CDR >= 4] = 'SD'
+METADATA$BrodmannArea.Dx = paste(METADATA$BrodmannArea, METADATA$Dx, sep = '.')
 METADATA$RIN2 = METADATA$RIN^2
+levels(METADATA$batch)[levels(METADATA$batch) == ''] = 'NoBatch'
+
 METADATA <- METADATA %>%
-  filter(!is.na(Source)) %>%
-  dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX", 
-                            "11396_TCX", "11294_TCX", "11408_TCX")))
+  filter(!is.na(BrodmannArea), !is.na(PMI), !is.na(RIN))
 ```
-Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
+
 ```{r preprocess.data1}
 # Match covariates to expression data
-indToRetain = intersect(METADATA$ID, colnames(COUNT))
-indRemoved = setdiff(colnames(COUNT), METADATA$ID)
+indToRetain = intersect(METADATA$sampleIdentifier, colnames(COUNT))
+indRemoved = setdiff(colnames(COUNT), METADATA$sampleIdentifier)
 
 COUNT <- COUNT[, indToRetain]
 
-rownames(METADATA) = METADATA$ID
+METADATA = as.data.frame(METADATA)
+rownames(METADATA) = METADATA$sampleIdentifier
 METADATA = METADATA[indToRetain,]
 ```
-`r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. 
+`r dim(COUNT)[2]` samples from `r length(unique(METADATA$individualIdentifier))` subjects were obtained from the MSBB cohorts in AMP-AD reprocessed rnaseq project 
 
-Following samples were removed `r indRemoved`
-
+Following `r length(indRemoved)` samples are removed:`r paste(indRemoved, collapse = ', ')`
 ### Covariate clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI")
+FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrodmannArea.Dx")
+ContCovariates <- c("RIN", "RIN2", "AOD","PMI", "TotalReads", "Mapped", "rRNA.rate")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
-rownames(COVARIATES) <- METADATA$ID
+rownames(COVARIATES) <- METADATA$sampleIdentifier
 
 # Convert factor covariates to factors
 COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
@@ -161,12 +175,12 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 ### Gene Filtering
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
 
-Remove genes that have less than 1 cpm counts in at least 50% of samples per BrainRegion.Diagnosis
+Remove genes that have less than 1 cpm counts in at least 50% of samples per BrodmannArea.Dx
 ```{r cpmnormalisation}
 genesToAnalyze = COVARIATES %>%
-  rownameToFirstColumn('Sampleid') %>%
-  dlply(.(BrainRegion.Diagnosis), .fun = function(mtd, count){
-    processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$Sampleid],
+  rownameToFirstColumn('sampleIdentifier') %>%
+  dlply(.(BrodmannArea.Dx), .fun = function(mtd, count){
+    processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$sampleIdentifier],
                                                      MIN_GENE_CPM=1, 
                                                      MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
     processed.counts$filteredExprMatrix$genes
@@ -250,7 +264,7 @@ backgroundGenes = data.frame(gene.id = rownames(VOOM.GENE_EXPRESSION$E)) %>%
   tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "mar2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
@@ -284,33 +298,33 @@ cellprop = CIBERSORT('ref.expr.txt', 'mixture.expr.txt', perm = 100) # Obtain CI
 stopCluster(cl)
 ```
 
-```{r plot.cellprop}
+```{r plot.cellprop, fig.width=16, fig.height=8}
 cellprop1 = as.data.frame(cellprop)
-cellprop1$BrainRegion.Diagnosis = COVARIATES[rownames(cellprop), 'BrainRegion.Diagnosis']
+cellprop1$BrodmannArea.Dx = COVARIATES[rownames(cellprop), 'BrodmannArea.Dx']
 cellprop1 = cellprop1 %>% 
   rownameToFirstColumn('SampleID') %>%
   dplyr::select(-`P-value`,-Correlation, -RMSE) %>%
-  tidyr::gather(Celltype, Fraction, -SampleID, -BrainRegion.Diagnosis) %>%
-  dplyr::arrange(desc(BrainRegion.Diagnosis))
+  tidyr::gather(Celltype, Fraction, -SampleID, -BrodmannArea.Dx) %>%
+  dplyr::arrange(desc(BrodmannArea.Dx))
 
-p = ggplot(cellprop1, aes(x = SampleID, y = Fraction, fill = Celltype, color = BrainRegion.Diagnosis)) + geom_bar(stat = 'identity')
+p = ggplot(cellprop1, aes(x = SampleID, y = Fraction, fill = Celltype, color = BrodmannArea.Dx)) + geom_bar(stat = 'identity')
 p = p + theme(axis.text.x = element_text(angle = 90, hjust = 1))
-# p = p + facet_grid(.~BrainRegion.Diagnosis)
+# p = p + facet_grid(.~BrodmannArea.Dx)
 # p
 
-p = ggplot(cellprop1, aes(x = Celltype, y = Fraction, color = BrainRegion.Diagnosis)) + geom_boxplot()
+p = ggplot(cellprop1, aes(x = Celltype, y = Fraction, color = BrodmannArea.Dx)) + geom_boxplot()
 p = p + theme(axis.text.x = element_text(angle = 90, hjust = 1))
 p
 ```
 ### Synapse store
 ```{r syn.store, cache=TRUE}
-CODE = Folder(name = 'MAYO Cell Type Abundance with Reprocessed RNASeq', parentId = parentId)
+CODE = Folder(name = 'MSSM Cell Type Abundance with Reprocessed RNASeq', parentId = parentId)
 CODE = synStore(CODE)
 
 cellprop %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'MAYO_CellFraction_Reproc.tsv', row.names = F, sep = '\t', quote = F)
-obj = File('MAYO_CellFraction_Reproc.tsv', name = 'MAYO Cell Fraction', parentId = CODE$properties$id)
+  write.table(file = 'MSSM_CellFraction_Reproc.tsv', row.names = F, sep = '\t', quote = F)
+obj = File('MSSM_CellFraction_Reproc.tsv', name = 'MSSM Cell Fraction', parentId = CODE$properties$id)
 obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
                used = ALL_USED_IDs, executed = thisFile)
 ```
