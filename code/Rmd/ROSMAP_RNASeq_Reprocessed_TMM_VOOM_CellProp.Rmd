@@ -1,0 +1,332 @@
+---
+title: "Markdown to estimate the abundance of brain cell types with the reprocessed counts from ROSMAP cohort (with TMM-VOOM normalisation)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./ROSMAP_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd",
+                                 parentId = "syn5570291",
+                                 entityName = 'ROSMAP Cell Type Abundance with Reprocessed RNASeq')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get it from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(Biobase)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+library(RColorBrewer)
+library(xlsx)
+
+library(synapseClient)
+library(knitr)
+library(githubr)
+
+library(parallel)
+library(doParallel)
+library(doMC)
+library(foreach)
+
+cl = makeCluster(detectCores() - 2)
+registerDoParallel(cl)
+
+synapseLogin()
+
+# Source external files
+source('../R/CIBERSORT.R')
+
+## Requires ggdendro
+devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn5570291';
+activityName = 'Cell type abundance in ROSMAP';
+activityDescription = 'Cell type abundance in ROSMAP with TMM-VOOM normalised reprocessed RNASeq counts';
+
+thisFileName <- 'ROSMAP_RNASeq_Reprocessed_TMM_VOOM_CellProp.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='celltype')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Download expression data
+COUNT_ID <- 'syn7750270';
+ALL_USED_IDs <- COUNT_ID
+COUNT_OBJ <- synGet(COUNT_ID)
+COUNT <- read.table(COUNT_OBJ@filePath,header=T,sep='\t',check.names = F)
+
+# Get clinical metadata
+METADATA.CLINICAL_ID <- 'syn3191087'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.CLINICAL_ID
+METADATA.CLINICAL_OBJ <- synGet(METADATA.CLINICAL_ID)
+METADATA.CLINICAL <- read.table(METADATA.CLINICAL_OBJ@filePath,sep=',',header=T)
+
+# Get technical covariates
+METADATA.TECH_ID <- 'syn4300313'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.TECH_ID
+METADATA.TECH_OBJ <- synGet(METADATA.TECH_ID)
+METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
+
+# Fix error in technical covariates data
+KEY_ID <- 'syn3382527'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = KEY_ID  
+KEY <- read.csv(synGet(KEY_ID)@filePath) %>% 
+  filter(mrna_data == 1) %>%
+  dplyr::select(projid, mrna_id) %>%
+  separate(mrna_id, c('a','b','batch'), sep = '_') %>% 
+  unite(Sampleid, a, b) %>%
+  dplyr::select(-batch) %>%
+  unique
+
+# Match technical and clinical covariates
+METADATA <- METADATA.TECH %>% 
+  dplyr::select(-projid) %>%
+  dplyr::left_join(KEY) %>%
+  dplyr::left_join(METADATA.CLINICAL)
+
+# Pick higher quality RIN batch for sample 492_120515
+METADATA <- METADATA %>%
+  group_by(Sampleid) %>%
+  top_n(1, RINcontinuous)
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=TRUE, echo=TRUE}
+# Remove samples with no cogdx, RIN and PMI scores
+METADATA <- METADATA %>%
+  ungroup %>%
+  filter(Sampleid %in% colnames(COUNT)) %>%
+  filter(!is.na(cogdx)) %>%
+  filter(!is.na(RINcontinuous)) %>%
+  filter(!is.na(pmi)) %>%
+  filter(!is.na(Sampleid)) %>%
+  filter(!(Sampleid %in% c('380_120503'))) %>%
+  as.data.frame()
+```
+
+```{r preprocess.data1,cache=TRUE}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$Sampleid, colnames(COUNT))
+removedIDs = setdiff(colnames(COUNT), METADATA$Sampleid)
+
+COUNT = COUNT[,indToRetain]
+
+rownames(METADATA) = METADATA$Sampleid
+METADATA = METADATA[indToRetain,]
+```
+Dorsolateral prefrontal cortex of `r dim(COUNT)[2]` subjects from the ROS and MAP cohorts are used for the analysis. Following sample are removed `r paste(removedIDs, collapse = ',')`
+
+### Get Covariates
+```{r covariates.clustering, cache=TRUE}
+#"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv"
+FactorCovariates <- c("Batch", "msex", "race", "spanish", "cogdx")
+ContCovariates <- c("RINcontinuous","age_first_ad_dx","age_death","age_at_visit_max","pmi","educ")
+  
+# Find inter relation between factor covariates
+COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
+COVARIATES <- data.frame(lapply(COVARIATES,function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'\\+','')})}))
+rownames(COVARIATES) <- METADATA$Sampleid
+
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
+
+# Add in RIN^2 values
+COVARIATES$RINcontinuous2 = COVARIATES$RINcontinuous^2
+ContCovariates = c(ContCovariates, 'RINcontinuous2')
+```
+
+### CPM Normalisation
+Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
+
+Remove genes that have less than 1 cpm counts in at least 50% of samples per cogdx
+```{r cpmnormalisation}
+genesToAnalyze = COVARIATES %>%
+  rownameToFirstColumn('Sampleid') %>%
+  dlply(.(cogdx), .fun = function(mtd, count){
+  processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$Sampleid],
+                                                   MIN_GENE_CPM=1, 
+                                                   MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
+  processed.counts$filteredExprMatrix$genes
+}, COUNT)
+genesToAnalyze = unlist(genesToAnalyze) %>% unique()
+
+PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+```
+Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
+
+### Normalisation (with NULL)
+Initial normalisation usign voom (with NULL design)
+```{r initial.voom.normalisation, fig.height=5, fig.width=5}
+# TMM normalisation
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+
+# Set gene counts in specific samples that are deviating 3 sd from other samples to NA
+log.mat = apply(VOOM.GENE_EXPRESSION$E, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+}) %>% t
+PROCESSED_COUNTS$filteredExprMatrix[log.mat] = NA
+
+# TMM normalisation
+TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
+
+# Initial normalisation of gene expression
+VOOM.GENE_EXPRESSION = voom(TMM.GENE_EXPRESSION, design=NULL, plot=T)
+```
+
+### Get cell type specific signatures and expression data from synapse
+```{r get.signatures}
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8068511', 'syn8068475')
+# Signatures from Zhang,Y et al., 2014
+sig.zhang = downloadFile('syn8068511') %>%
+  dlply(.(Set), .fun = function(x){return(unique(x$Gene))})
+
+# Signatures from Darmanis, S et al., 2015
+sig.dar.obj = synGet('syn8068475')  
+sig.dar.unbiased = read.xlsx(sig.dar.obj@filePath, sheetName = 'Unbiased') %>%
+  lapply(function(x){as.character(unique(x))})
+sig.dar.unbiased = sig.dar.unbiased[1:10]
+
+# Extract all signatures
+sig = list()
+sig$OPC = unique(c(sig.zhang$OPC, sig.dar.unbiased$Cluster.1))
+sig$Oligodendrocyte = unique(c(sig.zhang$MyelinOligos, sig.zhang$NewOligos, sig.dar.unbiased$Cluster.3))
+sig$Neuron = unique(c(sig.zhang$Neuron, sig.dar.unbiased$Cluster.6, sig.dar.unbiased$Cluster.7,
+                      sig.dar.unbiased$Cluster.10, sig.dar.unbiased$Cluster.2))
+sig$Endothelial = unique(c(sig.zhang$Endothelial, sig.dar.unbiased$Cluster.8))
+sig$Astrocyte = unique(c(sig.zhang$Astrocyte, sig.dar.unbiased$Cluster.4))
+sig$Microglia = unique(c(sig.zhang$Astrocyte, sig.dar.unbiased$Cluster.5))
+
+sig = ldply(sig, .fun = function(x){as.data.frame(x)})
+colnames(sig) = c('CellType','Gene.Name')
+
+# Get reference expression data from Darmanis., S et al., 2015
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8077142', 'syn8077191')
+ref.expr = downloadFile('syn8077142')
+rownames(ref.expr) = ref.expr$hgnc_symbol
+ref.expr$hgnc_symbol = NULL
+
+ref.cellTypes = downloadFile('syn8077191') %>%
+  dplyr::select(SampleID, CellType)
+
+ref.expr1 = list()
+for(celltype in unique(ref.cellTypes$CellType)){
+  ids = ref.cellTypes$SampleID[ref.cellTypes$CellType == celltype]
+  ref.expr1[[celltype]] = log2(rowSums(2^ref.expr[,ids], na.rm = T)) %>%
+    rownameToFirstColumn('hgnc_symbol') %>%
+    plyr::rename(c('DF' = celltype))
+}
+ref.expr1 = join_all(ref.expr1)
+```
+
+```{r get.gene.symbols, cache=TRUE, include=FALSE}
+backgroundGenes = data.frame(gene.id = rownames(VOOM.GENE_EXPRESSION$E)) %>%
+  dplyr::mutate(ensembl_gene_id = gene.id) %>%
+  tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
+
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                       filters = "ensembl_gene_id", 
+                       values = backgroundGenes$ensembl_gene_id,
+                       mart = mart)
+
+# Add gene names
+EXPR <- VOOM.GENE_EXPRESSION$E %>%
+  rownameToFirstColumn('gene.id') %>%
+  left_join(backgroundGenes) %>%
+  left_join(Ensemble2HGNC) %>%
+  filter(!duplicated(gene.id))
+rownames(EXPR) = EXPR$gene.id
+
+EXPR1 = WGCNA::collapseRows(EXPR %>% dplyr::select(-ensembl_gene_id, -position, -hgnc_symbol, -gene.id), 
+                            EXPR$hgnc_symbol, 
+                            EXPR$gene.id)$datETcollapsed
+
+ind = intersect(rownames(EXPR1), ref.expr1$hgnc_symbol)
+EXPR1 = EXPR1 %>% 
+  rownameToFirstColumn('hgnc_symbol') %>%
+  filter(hgnc_symbol %in% ind)
+ref.expr1 = ref.expr1 %>%
+  filter(hgnc_symbol %in% ind)
+
+write.table(ref.expr1, file = 'ref.expr.txt', sep = '\t', quote=F, row.names = F)
+write.table(EXPR1, file = 'mixture.expr.txt', sep = '\t', quote=F, row.names = F)
+
+cellprop = CIBERSORT('ref.expr.txt', 'mixture.expr.txt', perm = 100) # Obtain CIBERSORT.R function from http://cibersort.stanford.edu/
+stopCluster(cl)
+```
+
+```{r plot.cellprop}
+cellprop1 = as.data.frame(cellprop)
+cellprop1$cogdx = COVARIATES[rownames(cellprop), 'cogdx']
+cellprop1 = cellprop1 %>% 
+  rownameToFirstColumn('SampleID') %>%
+  dplyr::select(-`P-value`,-Correlation, -RMSE) %>%
+  tidyr::gather(Celltype, Fraction, -SampleID, -cogdx) %>%
+  dplyr::arrange(desc(cogdx))
+
+p = ggplot(cellprop1, aes(x = SampleID, y = Fraction, fill = Celltype, color = cogdx)) + geom_bar(stat = 'identity')
+p = p + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+# p = p + facet_grid(.~cogdx)
+# p
+
+p = ggplot(cellprop1, aes(x = Celltype, y = Fraction, color = cogdx)) + geom_boxplot()
+p = p + theme(axis.text.x = element_text(angle = 90, hjust = 1))
+p
+```
+### Synapse store
+```{r syn.store, cache=TRUE}
+CODE = Folder(name = 'ROSMAP Cell Type Abundance with Reprocessed RNASeq', parentId = parentId)
+CODE = synStore(CODE)
+
+cellprop %>%
+  rownameToFirstColumn('SampleID') %>%
+  write.table(file = 'ROSMAP_CellFraction_Reproc.tsv', row.names = F, sep = '\t', quote = F)
+obj = File('ROSMAP_CellFraction_Reproc.tsv', name = 'ROSMAP Cell Fraction', parentId = CODE$properties$id)
+obj = synStore(obj, activityName = activityName, activityDescription = activityDescription,
+               used = ALL_USED_IDs, executed = thisFile)
+```
