@@ -65,7 +65,7 @@ thisFile <- getPermlink(repository = thisRepo,
 # Store results to synapse
 plyr::join_all(list(tau, TSI, Hg), type = 'full', match = 'all') %>%
   write.table(file = 'CellSpecificityMetrics.tsv', sep = '\t', row.names = F, quote=F)
-obj = File('CellSpecificityMetrics.tsv', parentId = 'syn8068475')
+obj = File('CellSpecificityMetrics.tsv', parentId = 'syn8077138')
 obj = synStore(obj, activityName = 'Compute cell type specificity',
                used = ALL_USED_IDs,
                executed = thisFile)
