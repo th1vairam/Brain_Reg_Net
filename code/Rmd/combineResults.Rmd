@@ -1,0 +1,141 @@
+---
+title: "Combine differential expression and celltype fraction results from all brain banks"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./combineResults.Rmd", 
+                                 parentId ="syn5569102",
+                                 entityName = 'All Differential Expression Results')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+# Clear R console screen output
+cat("\014")  
+
+# Load required libraries
+library(CovariateAnalysis)
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(RColorBrewer)
+library(ggplot2)
+library(ComplexHeatmap)
+
+library(RankProd)
+library(githubr)
+
+library(Vennerable)
+library(colorfulVennPlot)
+
+synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+### Get covariates/sample metadata from synapse
+```{r covariates}
+covariates.ids = c(ROSMAP = 'syn8018344',
+                   MSBB = 'syn8073656',
+                   MAYO = 'syn8028561')
+covariates = lapply(covariates.ids, function(id){
+  x = downloadFile(id)
+  colnames(x)[1] = 'SampleID'
+  return(x)
+})
+
+covariates$ROSMAP = dplyr::filter(covariates$ROSMAP, cogdx %in% c(1,4)) %>%
+  dplyr::mutate(Dx = factor(cogdx, levels = c(1,4), labels = c('1' = 'NCI', '4' = 'AD')),
+                Study = 'ROSMAP',
+                BrainRegion = 'DLPFC') %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+
+covariates$MSBB = dplyr::filter(covariates$MSBB, BrodmannArea.Dx %in% c('BM10.SD', 'BM22.SD', 'BM36.SD', 'BM44.SD', 'BM36.ND', 'BM10.ND', 'BM44.ND', 'BM22.ND')) %>%
+  dplyr::select(SampleID, BrodmannArea.Dx) %>%
+  tidyr::separate(BrodmannArea.Dx, c('BrainRegion', 'Dx')) %>%
+  dplyr::mutate(Study = 'MSSM',
+                Dx = factor(Dx, levels = c('ND','SD')),
+                BrainRegion = factor(BrainRegion, labels = c('FP', 'STG', 'PHG', 'IFG'))) %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+
+covariates$MAYO = dplyr::filter(covariates$MAYO, BrainRegion.Diagnosis %in% c('TCX.AD', 'TCX.Control', 'CER.AD', 'CER.Control')) %>%
+  dplyr::select(SampleID, BrainRegion.Diagnosis) %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Dx')) %>%
+  dplyr::mutate(Study = 'MAYO',
+                Dx = factor(Dx, levels = c('Control','AD')),
+                BrainRegion = factor(BrainRegion, levels = c('CER', 'TCX'))) %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+  
+diff.exp.ids = c(ROSMAP = 'syn8018358',
+                 MSBB = 'syn8073678',
+                 MAYO = 'syn8028572')
+diff.exp = lapply(diff.exp.ids, downloadFile)
+
+diff.exp$ROSMAP = filter(diff.exp$ROSMAP, Comparison == 'cogdx1-cogdx4')
+diff.exp$MSBB = filter(diff.exp$MSBB, Comparison == 'ND-SD')
+diff.exp$MAYO = filter(diff.exp$MAYO, Comparison == 'Control-AD')
+
+celltype.fraction.ids = c(ROSMAP = 'syn8124520',
+                      MSBB = 'syn8146376',
+                      MAYO = 'syn8135250')
+celltype.fraction = lapply(celltype.fraction.ids, downloadFile) 
+```
+
+```{r anlz.celltype}
+cell.frac = mapply(function(cov, frc){
+  x = filter(frc, SampleID %in% cov$SampleID) %>%
+    dplyr::select(-`P-value`,-RMSE, -Correlation) %>%
+    tidyr::gather(celltype, fraction, -SampleID) %>%
+    left_join(cov)
+}, covariates, celltype.fraction, SIMPLIFY = F) %>%
+  rbindlist(use.names = T, fill = T) %>%
+  dplyr::mutate(Dx = factor(Dx, levels = c('Control', 'NCI', 'ND', 'SD', 'AD')))
+
+head(cell.frac)
+
+p = ggplot(cell.frac, aes(x = BrainRegion, y = fraction, color = Dx)) + geom_boxplot()
+p = p + facet_grid(celltype~., scales = 'free_y')
+p = p + xlab('Brain Region') + ylab('Fraction')
+p = p + theme(axis.text.x = element_text(hjust = 1, angle = 90))
+p
+```
+
+```{r anlz.diff.exp}
+tmp = lapply(diff.exp, function(x){
+  x = filter(x, adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) 
+  x$Direction = 'NONE'
+  x$Direction[x$logFC > 0] = 'UP'
+  x$Direction[x$logFC < 0] = 'DOWN'
+  x = x %>% group_by(Study, Region, Direction) %>%
+    summarise(count = length(unique(gene.id)))
+}) %>%
+  rbindlist() %>%
+  spread(Direction, count)
+
+tmp = diff.exp %>% 
+  rbindlist(use.names = T, fill = T) 
+tmp$Direction = 'NONE'
+tmp$Direction[x$logFC > 0] = 'UP'
+tmp$Direction[x$logFC < 0] = 'DOWN'
+
+p = ggplot(tmp, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
+p
+```

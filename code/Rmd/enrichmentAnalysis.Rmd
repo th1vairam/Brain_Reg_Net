@@ -1,0 +1,255 @@
+---
+title: "Enrichment analysis of differential expression results from AMP-AD (Control vs AD, reprocessed RNASeq)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./enrichmentAnalysis.Rmd", 
+                                 parentId ="syn5569102",
+                                 entityName = 'Enrichment Analysis of Control vs AD from all three brain banks (Reprocessed RNASeq)')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+# Clear R console screen output
+cat("\014")  
+
+# Load required libraries
+library(CovariateAnalysis) # install from th1vairam repo using devtools::install_github('th1vairam/CovariateAnalysis@devtools')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(RColorBrewer)
+library(ggplot2)
+library(ComplexHeatmap)
+library(biomaRt)
+library(Matrix)
+library(org.Hs.eg.db)
+
+library(limma)
+library(edgeR)
+library(RankProd)
+library(githubr)
+
+library(Vennerable)
+library(colorfulVennPlot)
+
+synapseLogin()
+
+library(doParallel)
+library(foreach)
+library(doParallel)
+
+clust = makeCluster(detectCores() - 2)
+registerDoParallel(clust)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r fxns}
+# Function to perform Fishers enrichment analysis
+fisherEnrichment <- function(genesInSignificantSet, # A character vector of differentially expressed or some significant genes to test
+                             genesInGeneSet, # A character vector of genes in gene set like GO annotations, pathways etc...
+                             genesInBackground # Background genes that are 
+){
+  genesInSignificantSet = intersect(genesInSignificantSet, genesInBackground) # back ground filtering
+  genesInNonSignificantSet = base::setdiff(genesInBackground, genesInSignificantSet)
+  genesInGeneSet = intersect(genesInGeneSet, genesInBackground) # back ground filtering
+  genesOutGeneSet = base::setdiff(genesInBackground,genesInGeneSet)
+  
+  pval = fisher.test(
+    matrix(c(length(intersect(genesInGeneSet, genesInSignificantSet)),             
+             length(intersect(genesInGeneSet, genesInNonSignificantSet)),
+             length(intersect(genesOutGeneSet, genesInSignificantSet)),
+             length(intersect(genesOutGeneSet, genesInNonSignificantSet))), 
+           nrow=2, ncol=2), alternative="greater")
+  OR = (length(intersect(genesInGeneSet, genesInSignificantSet)) * length(intersect(genesOutGeneSet, genesInNonSignificantSet))) / (length(intersect(genesInGeneSet, genesInNonSignificantSet)) * length(intersect(genesOutGeneSet, genesInSignificantSet))) %>% as.numeric()
+  return(data.frame(pval = pval$p.value,
+                    ngenes = length(genesInGeneSet),
+                    noverlap = length(intersect(genesInGeneSet, genesInSignificantSet)),
+                    Odds.Ratio = OR,
+                    Genes = paste(intersect(genesInGeneSet, genesInSignificantSet), collapse = '|')))}
+```
+
+### Get covariates/sample metadata from synapse
+```{r covariates}
+covariates.ids = c(ROSMAP = 'syn8018344',
+                   MSBB = 'syn8073656',
+                   MAYO = 'syn8028561')
+covariates = lapply(covariates.ids, function(id){
+  x = downloadFile(id)
+  colnames(x)[1] = 'SampleID'
+  return(x)
+})
+
+covariates$ROSMAP = dplyr::filter(covariates$ROSMAP, cogdx %in% c(1,4)) %>%
+  dplyr::mutate(Dx = factor(cogdx, levels = c(1,4), labels = c('1' = 'NCI', '4' = 'AD')),
+                Study = 'ROSMAP',
+                BrainRegion = 'DLPFC') %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+
+covariates$MSBB = dplyr::filter(covariates$MSBB, BrodmannArea.Dx %in% c('BM10.SD', 'BM22.SD', 'BM36.SD', 
+                                                                        'BM44.SD', 'BM36.ND', 'BM10.ND', 
+                                                                        'BM44.ND', 'BM22.ND')) %>%
+  dplyr::select(SampleID, BrodmannArea.Dx) %>%
+  tidyr::separate(BrodmannArea.Dx, c('BrainRegion', 'Dx')) %>%
+  dplyr::mutate(Study = 'MSSM',
+                Dx = factor(Dx, levels = c('ND','SD')),
+                BrainRegion = factor(BrainRegion, labels = c('FP', 'STG', 'PHG', 'IFG'))) %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+
+covariates$MAYO = dplyr::filter(covariates$MAYO, BrainRegion.Diagnosis %in% c('TCX.AD', 'TCX.Control', 'CER.AD', 'CER.Control')) %>%
+  dplyr::select(SampleID, BrainRegion.Diagnosis) %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Dx')) %>%
+  dplyr::mutate(Study = 'MAYO',
+                Dx = factor(Dx, levels = c('Control','AD')),
+                BrainRegion = factor(BrainRegion, levels = c('CER', 'TCX'))) %>%
+  dplyr::select(SampleID, Study, BrainRegion, Dx)
+```
+
+### Get differential expression data from synapse
+```{r diffexp}
+diff.exp.ids = c(ROSMAP = 'syn8018358',
+                 MSBB = 'syn8073678',
+                 MAYO = 'syn8028572')
+diff.exp = lapply(diff.exp.ids, downloadFile)
+
+diff.exp$ROSMAP = filter(diff.exp$ROSMAP, Comparison == 'cogdx1-cogdx4')
+diff.exp$MSBB = filter(diff.exp$MSBB, Comparison == 'ND-SD')
+diff.exp$MAYO = filter(diff.exp$MAYO, Comparison == 'Control-AD')
+
+tmp = diff.exp %>% 
+  rbindlist(use.names = T, fill = T) 
+tmp$Direction = 'NONE'
+tmp$Direction[tmp$logFC >= log2(1.2) & tmp$adj.P.Val <= 0.05] = 'UP'
+tmp$Direction[tmp$logFC <= -log2(1.2) & tmp$adj.P.Val <= 0.05] = 'DOWN'
+
+writeLines('Number of differentially expressed genes at an FDR of 0.05 and fold change of 1.2 are')
+tmp %>%
+  group_by(Study, Region, Direction, Comparison) %>%
+  summarise(count = n()) %>%
+  spread(Direction, count) %>%
+  kable
+
+pl = list()
+for(region in c('ROSMAP', 'MSBB', 'MAYO')){
+  p = ggplot(tmp %>% filter(Study == region), aes(x = logFC, y = -log10(adj.P.Val), color = Direction)) + geom_point()
+  p = p + scale_color_manual(values = c('green','grey','red'))
+  p = p + facet_grid(Study~.+Region) + theme(legend.position = 'top')
+  pl[[region]] = p
+}
+multiplot(plotlist = pl, cols = 1)
+```
+
+### Get hgnc_symbol mapping from biomaRt
+```{r biomart}
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
+
+# Get background gene ids
+backgroundGenes = sapply(diff.exp, function(x) x$ensembl_gene_id) %>%
+  Reduce(c,.)
+
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
+                       filters = "ensembl_gene_id", values = backgroundGenes,
+                       mart = mart)
+
+Entrez2Ensembl <- as.data.frame(org.Hs.egENSEMBL2EG)
+Entrez2HGNC <- as.data.frame(org.Hs.egSYMBOL2EG)
+HGNC2Ensembl <- left_join(Entrez2HGNC, Entrez2Ensembl)
+HGNC2Ensembl = HGNC2Ensembl[grep('^LOC',HGNC2Ensembl$symbol),c('ensembl_id', 'symbol')] %>%
+  filter(!is.na(ensembl_id), !is.na(symbol)) %>%
+  dplyr::rename(ensembl_gene_id = ensembl_id, hgnc_symbol = symbol)
+
+Ensemble2HGNC = rbindlist( list(Ensemble2HGNC, HGNC2Ensembl), use.names = T, fill = T) %>%
+  unique
+```
+
+### Pathway enrichment analysis
+```{r enrich.all, fig.height=16, fig.width=10}
+# Find genes that are differentially expressed in each brain region
+diff.exp.gl = lapply(diff.exp, function(x){
+  dplyr::filter(x, abs(logFC) >= log2(1.2) & adj.P.Val <= 0.05 & sign(CI.L) == sign(CI.R)) %>%
+    dplyr::select(Region, hgnc_symbol) %>%
+    unique
+}) %>%
+  rbindlist(use.names = T, fill = T) %>%
+  dlply(.(Region), .fun = function(x){unique(x$hgnc_symbol)})
+
+# Get Background genes
+backgroundGenes = Ensemble2HGNC$hgnc_symbol[Ensemble2HGNC$ensembl_gene_id %in% backgroundGenes] %>% unique()
+
+#### Get gene sets ####
+# Download enrichr gene sets from synapse
+GL_OBJ = synGet('syn4867851')
+ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
+load(GL_OBJ@filePath)
+
+gsets = c("BioCarta_2015", "GO_Biological_Process", "Reactome_2015", "TargetScan_microRNA", "WikiPathways_2015")
+GeneSets.Enrichr = GeneSets[gsets]
+
+# Download AD related gene sets from synapse
+GL_OBJ = synGet('syn4893059');
+ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
+load(GL_OBJ@filePath)
+
+GeneSets.CM = list(CellTypeMarkers = GeneSets[grep('Zhang', names(GeneSets))],
+                   AD = GeneSets['AD:GeneticLoci'])
+GeneSets = c(GeneSets.Enrichr, GeneSets.CM)
+
+# Filter gene list
+GeneSets = filterGeneSets(GeneSets, backgroundGenes, minSize = 3, maxSize = 5000)
+
+# Enrichment Analysis
+enrichResults = plyr::ldply(diff.exp.gl, .fun = function(gs, geneSets, backgroundGenes, fisherEnrichment){
+  tmp = plyr::ldply(geneSets, .fun = function(x, gs, backgroundGenes, fisherEnrichment){
+    plyr::ldply(x, .fun = fisherEnrichment, gs, backgroundGenes, .id = 'Name', .parallel = T)
+  }, gs, backgroundGenes, fisherEnrichment, .id = 'Category', .parallel = T, .paropts = list(.packages = c('dplyr'))) %>%
+    dplyr::mutate(fdr = p.adjust(pval, method = 'bonferroni'))
+}, GeneSets, backgroundGenes, fisherEnrichment, .parallel = T, .paropts = list(.packages = c('dplyr', 'plyr')))
+
+# Filter results
+tmp1 = filter(enrichResults, fdr <= 0.05)
+```
+
+### Store results in synapse
+```{r synapse.store, include=FALSE, cache=FALSE}
+thisFileName <- 'enrichmentAnalysis.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='metaAnal')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+
+# Store consolidated data in synapse
+CODE = Folder(name = 'Pathway Enrichment Analysis of Control vs AD Data (all brain banks)', parentId = "syn5569102")
+CODE = synStore(CODE)
+
+# Store enrichment analysis in synapse
+write.table(tmp1, file = 'enrichmentResults.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('enrichmentResults.tsv', 
+           name = 'Pathway Enrichment Results (AD and Control)', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = as.character(ALL_USED_IDs),
+               executed = thisFile,
+               activityName = 'Pathway enrichment analysis')
+stopCluster(cl)
+```
