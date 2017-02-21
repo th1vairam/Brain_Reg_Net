@@ -310,21 +310,17 @@ plotdata <- left_join(plotdata, METADATA, by="ID")
 
 pl = list()
 
-plotdata.cer = plotdata[grep('CER', plotdata$ID),]
-p <- ggplot(plotdata.cer, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
-# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
-pl[[1]] <- p
+plotdata[grep('CER', plotdata$ID),'Region'] = 'CER'
+plotdata[grep('TCX', plotdata$ID),'Region'] = 'TCX'
+plotdata$Region = factor(plotdata$Region)
+plotdata$Source = factor(plotdata$Source)
 
-plotdata.tcx = plotdata[grep('TCX', plotdata$ID),]
-p <- ggplot(plotdata.tcx, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(shape=factor(Source), color=as.factor(Tissue), size=as.numeric(AgeAtDeath)))
-p <- p + theme_bw() + theme(legend.position="right") +scale_shape_manual(values = 1:2)
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(shape = Source, color = Region))
+p <- p + theme_bw() + theme(legend.position = "left") +scale_shape_manual(values = 1:2)
+p <- p + facet_grid(Region~.)
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
-pl[[2]] <- p
-
-multiplot(plotlist = pl, cols = 1)
+p
 ```
 ```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
 # Tree based clustering

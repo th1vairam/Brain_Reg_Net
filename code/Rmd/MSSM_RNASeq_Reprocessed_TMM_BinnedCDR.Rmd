@@ -201,7 +201,7 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 Covariate correlation
 ```{r covariates.correlation, fig.width=8, fig.height=8}
 COVARIATES.CORRELATION = CovariateAnalysis::getAssociationStatistics(COVARIATES, PVAL = 0.05)
-ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.4, row.width=0.1)
+COVARIATES.CORRELATION$plot
 ```
 ### Gene Filtering
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
