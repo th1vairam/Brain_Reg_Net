@@ -14,7 +14,7 @@ knit2synapse::knitToFolderEntity(file = "./enrichmentAnalysis.Rmd",
                                  entityName = 'Enrichment Analysis of Control vs AD from all three brain banks (Reprocessed RNASeq)')
 ```
 
-```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
 ## It is assumed your working directory is where this file is
 
 # Clear R console screen output
@@ -41,7 +41,6 @@ library(RankProd)
 library(githubr)
 
 library(Vennerable)
-library(colorfulVennPlot)
 
 synapseLogin()
 
@@ -228,6 +227,34 @@ enrichResults = plyr::ldply(diff.exp.gl, .fun = function(gs, geneSets, backgroun
 
 # Filter results
 tmp1 = filter(enrichResults, fdr <= 0.05)
+
+# Plot results
+tmp = enrichResults %>%
+  dplyr::filter(Name %in% tmp1$Name) %>%
+  dplyr::select(Region, Name, fdr) %>% 
+  tidyr::spread(Region, fdr)
+rownames(tmp) = tmp$Name
+tmp = data.matrix(tmp[,-(1)])
+tmp[is.na(tmp)] = 1
+tmp = tmp[setdiff(1:dim(tmp)[1], grep('Mus', rownames(tmp))),]
+
+Heatmap(tmp, name = 'fdr', show_row_names = F)
+
+# In any 3
+h = Heatmap(tmp[rowSums(tmp <= 0.05, na.rm = T) >= 3,], name = 'fdr',
+        col = colorRamp2(c(0,1), c('red', 'white')),
+        show_row_dend = F, row_names_side = 'right',
+        row_names_gp = gpar(fontsize = 8))
+draw(h, heatmap_legend_side = 'left')
+
+# Overlap with AMP-AD targets
+targets = downloadFile('syn7555804') %>%
+  dplyr::select(GENE_SYMBOL) %>%
+  unlist() %>% unique()
+
+plyr::ldply(diff.exp.gl, .fun = fisherEnrichment, targets, backgroundGenes, .id = 'Name', .parallel = T) %>%
+  kable
+
 ```
 
 ### Store results in synapse
@@ -251,5 +278,5 @@ OBJ = synStore(OBJ,
                used = as.character(ALL_USED_IDs),
                executed = thisFile,
                activityName = 'Pathway enrichment analysis')
-stopCluster(cl)
+# stopCluster(cl)
 ```
