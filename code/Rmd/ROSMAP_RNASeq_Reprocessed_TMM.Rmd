@@ -521,7 +521,7 @@ geneLength.GCcontent = EDASeq::getGeneLengthAndGCContent(unique(DE$ensembl_gene_
                                                         mode = "biomart") %>%
   rownameToFirstColumn('ensembl_gene_id')
 
-tmp = left_join(DE, geneLenth.GCcontent)
+tmp = left_join(DE, geneLength.GCcontent)
 
 pl = list()
 pl[[1]] = ggplot(tmp, aes(y = log10(length), x = abs(logFC))) + 
