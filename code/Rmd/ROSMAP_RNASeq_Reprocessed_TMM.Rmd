@@ -156,8 +156,8 @@ Determine relationship between covariates
 #"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv", "PF_INDEL_RATE", "PF_MISMATCH_RATE"
 FactorCovariates <- c("Batch", "msex", "race", "spanish", "cogdx")
 ContCovariates <- c("RINcontinuous","age_first_ad_dx","age_death","age_at_visit_max","pmi","educ", 
-                    "PCT_PF_READS_ALIGNED", "PCT_CORRECT_STRAND_READS", "PCT_INTERGENIC_BASES", 
-                    "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
+                    "PCT_PF_READS", "PCT_PF_READS_ALIGNED", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", 
+                    "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
