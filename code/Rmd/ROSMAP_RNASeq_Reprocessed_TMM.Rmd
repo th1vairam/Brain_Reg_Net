@@ -91,7 +91,8 @@ METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
 # Get picard metrics from synapse
 METADATA.PICARD_ID <- 'syn8380366'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_ID
-METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE)
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE, exdir = getwd())
 METADATA.PICARD_FPATHS = METADATA.PICARD_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_FPATHS)]
 METADATA.PICARD <- plyr::ldply(METADATA.PICARD_FPATHS, read.csv)
 
