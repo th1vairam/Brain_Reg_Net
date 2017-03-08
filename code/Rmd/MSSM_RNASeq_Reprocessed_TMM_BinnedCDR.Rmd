@@ -540,7 +540,7 @@ kable(tmp)
 ```
 
 ### Associate differential expression results with gc content and gene length
-```{r associate.de}
+```{r associate.de, eval = FALSE}
 geneLength.GCcontent = EDASeq::getGeneLengthAndGCContent(unique(DE1$ensembl_gene_id), 
                                                          org = 'hsa', 
                                                          mode = "biomart") %>%
