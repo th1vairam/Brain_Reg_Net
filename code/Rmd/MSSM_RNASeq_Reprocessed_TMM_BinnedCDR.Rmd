@@ -199,7 +199,7 @@ FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrodmannA
 ContCovariates <- c("RIN", "RIN2", "AOD","PMI", "PCT_PF_READS", "PCT_PF_READS_ALIGNED", 
                     "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", 
                     "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
-  
+
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
 rownames(COVARIATES) <- METADATA$sampleIdentifier
@@ -377,7 +377,7 @@ while(length(significantCovars)!=0 && loopCount <= 100){
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                COVARIATES,
+                                                COVARIATES[,residCovars,drop = F],
                                                 'all adjusted design(voom-normalized)',
                                                 isKeyPlot=TRUE)
   
@@ -534,8 +534,8 @@ p
 tmp = DE1 %>% 
   dplyr::filter(adj.P.Val <= 0.05) %>%
   group_by(Region, Comparison) %>%
-  summarise(count = length(unique(genes))) %>%
-  tidyr::spread(Region, Comparison)
+  summarise(count = length(unique(gene.id))) %>%
+  tidyr::spread(Region, count)
 kable(tmp)
 ```
 

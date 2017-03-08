@@ -38,6 +38,9 @@ library(biomaRt)
 library(RColorBrewer)
 library(glmnet)
 
+library(ComplexHeatmap)
+library(circlize)
+
 library(synapseClient)
 library(knitr)
 library(githubr)
@@ -49,9 +52,6 @@ cl = makeCluster(detectCores()-2)
 registerDoParallel(cl)
 
 synapseLogin()
-
-## Requires ggdendro
-devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
 
 options(xtable.type="html")
 
@@ -119,9 +119,10 @@ METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagno
 METADATA$BrainRegion.Diagnosis = paste(METADATA$BrainRegion, METADATA$Diagnosis, sep = '.')
 METADATA$RIN2 = METADATA$RIN^2
 METADATA <- METADATA %>%
-  filter(!is.na(Source)) %>%
-  dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX", 
-                            "11396_TCX", "11294_TCX", "11408_TCX")))
+  filter(!is.na(Source))
+# %>%
+#   dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX", 
+#                             "11396_TCX", "11294_TCX", "11408_TCX")))
 ```
 Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
 ```{r preprocess.data1}
@@ -240,7 +241,7 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 Covariate correlation
 ```{r covariates.correlation, fig.width=8, fig.height=8}
 COVARIATES.CORRELATION = CovariateAnalysis::getAssociationStatistics(COVARIATES, PVAL = 0.05)
-ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.4, row.width=0.1)
+draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
 ```
 ### Gene Filtering
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
@@ -314,12 +315,13 @@ plotdata[grep('CER', plotdata$ID),'Region'] = 'CER'
 plotdata[grep('TCX', plotdata$ID),'Region'] = 'TCX'
 plotdata$Region = factor(plotdata$Region)
 plotdata$Source = factor(plotdata$Source)
+plotdata$ID[!(plotdata$ID %in% c("11311_CER", "1923_CER", "1923_TCX", "11396_TCX", "11294_TCX", "11408_TCX"))] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape = Source, color = Region))
-p <- p + theme_bw() + theme(legend.position = "left") +scale_shape_manual(values = 1:2)
+p <- p + theme_bw() + theme(legend.position = "right") +scale_shape_manual(values = 1:2)
 p <- p + facet_grid(Region~.)
-# p <- p + geom_text(aes(label= ID), size=4, hjust=0)
+p <- p + geom_text(aes(label= ID), size=4, hjust=1, vjust=-1)
 p
 ```
 ```{r decompse.normalise.data2, fig.height=9, fig.width=25, results='asis'}
