@@ -50,9 +50,6 @@ registerDoParallel(cl)
 
 synapseLogin()
 
-## Requires ggdendro
-devtools::source_url("https://raw.githubusercontent.com/chr1swallace/random-functions/master/R/ggplot-heatmap.R")
-
 options(xtable.type="html")
 
 knitr::opts_chunk$set(
@@ -107,7 +104,37 @@ METADATA_CE <- read.table(synGet(METADATA_CE_ID)@filePath,sep='\t',header=T, str
   dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_')) %>%
   dplyr::rename(Gender = Sex, FLOWCELL = Flowcell)
 
+# Get picard metrics from synapse
+METADATA.PICARD_CE_ID <- 'syn8380392'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_CE_ID
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS = METADATA.PICARD_CE_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_CE_FPATHS)]
+METADATA.PICARD_CE <- plyr::ldply(METADATA.PICARD_CE_FPATHS, read.csv)
+
+METADATA.PICARD_CE$ID = gsub('picard/', '', METADATA.PICARD_CE_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]})
+colnames(METADATA.PICARD_CE) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_CE))
+colnames(METADATA.PICARD_CE) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_CE))
+
+METADATA.PICARD_TC_ID <- 'syn8383233'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_TC_ID
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS = METADATA.PICARD_TC_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_TC_FPATHS)]
+METADATA.PICARD_TC <- plyr::ldply(METADATA.PICARD_TC_FPATHS, read.csv)
+
+METADATA.PICARD_TC$ID = gsub('picard/', '', METADATA.PICARD_TC_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]}) %>%
+  gsub('Aligned','',.)
+colnames(METADATA.PICARD_TC) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_TC))
+colnames(METADATA.PICARD_TC) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_TC))
+
+# Merge all metadata
 METADATA = rbindlist(list(METADATA_TC, METADATA_CE), use.names = T, fill = T) %>%
+  inner_join(rbindlist(list(METADATA.PICARD_TC, METADATA.PICARD_CE), use.names = T, fill = T)) %>%
   as.data.frame
 ```
 
@@ -202,7 +229,7 @@ METADATA = METADATA %>%
   left_join(PMI)
 ```
 
-```{r diagnosisPlots, fig.height=6, fig.width = 10}
+```{r diagnosisPlots, fig.height=14, fig.width = 8}
 # RIN
 p = list()
 p[[1]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = RIN, fill = Tissue)) + geom_boxplot()
@@ -216,7 +243,19 @@ p[[2]] = p[[2]] + ggtitle('AgeAtDeath') + theme(legend.position = 'top', axis.te
 p[[3]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = as.numeric(PMI), fill = Tissue)) + geom_boxplot()
 p[[3]] = p[[3]] + ggtitle('PMI') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
 
-multiplot(plotlist = p, cols = 3)
+# Ribosomal bases
+p[[4]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_RIBOSOMAL_BASES), fill = BrainRegion)) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('Fraction of Ribosomal Bases') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Intronic bases
+p[[5]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_INTRONIC_BASES), fill = BrainRegion)) + geom_boxplot()
+p[[5]] = p[[5]] + ggtitle('Frction Intronic Bases') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+# Intergenic bases
+p[[6]] = ggplot(METADATA, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_INTERGENIC_BASES), fill = BrainRegion)) + geom_boxplot()
+p[[6]] = p[[6]] + ggtitle('Fraction Intergenic Bases') + theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
+multiplot(plotlist = p, cols = 2)
 
 # Source
 vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
@@ -226,7 +265,9 @@ vcd::mosaic(~ Source + Diagnosis + Tissue, data = METADATA)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI", 
+                    "PCT_PF_READS", "PCT_PF_READS_ALIGNED", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", 
+                    "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -240,7 +281,7 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 Covariate correlation
 ```{r covariates.correlation, fig.width=8, fig.height=8}
 COVARIATES.CORRELATION = CovariateAnalysis::getAssociationStatistics(COVARIATES, PVAL = 0.05)
-ggheatmap.show(COVARIATES.CORRELATION$plot, col.width=0.4, row.width=0.1)
+draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
 ```
 ### Gene Filtering
 Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
@@ -318,7 +359,7 @@ plotdata$Source = factor(plotdata$Source)
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape = Source, color = Region))
 p <- p + theme_bw() + theme(legend.position = "left") +scale_shape_manual(values = 1:2)
-p <- p + facet_grid(Region~.)
+p <- p + facet_grid(Region~., scale = 'free_y')
 # p <- p + geom_text(aes(label= ID), size=4, hjust=0)
 p
 ```
@@ -362,16 +403,16 @@ Significant covariates to adjust at FDR 0.1 are `r paste(gsub('_','\\\\_',adjust
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative)
-Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix.
+Since many covariates are correlated, re-normalising COVARIATES with an iterative design matrix
 ```{r iterative.adjusted.voom.normalisation, results='asis'}
-postAdjustCovars = c('BrainRegion.Diagnosis', 'Source', 'FLOWCELL', 'Gender')
+postAdjustCovars = c('Source', 'FLOWCELL', 'Gender')
 randomCovariates = 'Donor_ID'
 
 # Assign residual covariates
 residualSigCovars = preAdjustedSigCovars
 significantCovars = residualSigCovars$significantCovars
 covariatesEffects = residualSigCovars$Effects.significantCovars
-covariatesEffects = covariatesEffects[setdiff(significantCovars, c(postAdjustCovars, randomCovariates))]
+covariatesEffects = covariatesEffects[setdiff(significantCovars, c(postAdjustCovars, randomCovariates, 'BrainRegion.Diagnosis'))]
 
 postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
 
@@ -402,18 +443,18 @@ while(length(significantCovars)!=0 && loopCount <= 100){
   RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(FIT,VOOM.ADJUSTED.GENE_EXPRESSION$E)
   
   # Residual covariates to choose from
-  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, randomCovariates))
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, randomCovariates, 'BrainRegion.Diagnosis'))
   
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
-                                                COVARIATES,
+                                                COVARIATES[, residCovars, drop=F],
                                                 'all adjusted design(voom-normalized)',
                                                 isKeyPlot=TRUE)
   
   # Add postadjusted covariates (if any)
   significantCovars = residualSigCovars$significantCovars
   covariatesEffects = residualSigCovars$Effects.significantCovars
-  covariatesEffects = covariatesEffects[setdiff(significantCovars,c(postAdjustCovars, randomCovariates))]
+  covariatesEffects = covariatesEffects[setdiff(significantCovars,c(postAdjustCovars, randomCovariates, 'BrainRegion.Diagnosis'))]
   
   postAdjustCovars = c(postAdjustCovars,names(which.max(covariatesEffects)))
   loopCount = loopCount + 1
@@ -426,13 +467,18 @@ tmp <- paste('Using following covariates in the final model:', modelStr, 'and Do
 ### Sanity Check
 Residualise significant covariates using a linear model and find correlation between PCA of residuals with covariates
 ```{r residualSigCovars.ALL, fig.width=25, fig.height=12}
+# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                              COVARIATES,
+                                              'adjusted design(voom-normalized)',
+                                              isKeyPlot=TRUE)
+
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
-Adding "BrainRegion.Diagnosis" back to the residuals
-```{r addVarsBack}
-varsToAddBackIn <-  grep("BrainRegion.Diagnosis", colnames(FIT$coefficients), value = T)
-RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
-  t(data.matrix(DM1$design[,varsToAddBackIn]) %*% t(FIT$coefficients[,varsToAddBackIn]))
+Coexpression of genes 
+```{r coexp2, cache=FALSE, fig.height=5, fig.width=5}
+cr = cor(t(RESIDUAL.GENE_EXPRESSION))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Clustering residual gene expression
@@ -493,33 +539,30 @@ gc()
 dev.off()
 ```
 
-```{r get.gene.symbols}
-# Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
+```{r get.gene.symbols, cache=TRUE, eval=T}
+backgroundGenes = data.frame(gene.id = rownames(COUNT)) %>%
+  dplyr::mutate(ensembl_gene_id = gene.id) %>%
+  tidyr::separate(ensembl_gene_id, c('ensembl_gene_id', 'position'), sep = '\\.')
 
-# Get background gene ids
-backgroundGenes = data.frame(gene.id = rownames(COUNT), ID = rownames(COUNT)) %>%
-  tidyr::separate(ID, c('ensembl_gene_id','position'), sep = '\\.')
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
-                       filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
+                       filters = "ensembl_gene_id", 
+                       values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
-
-# Add gene names
-RESIDUAL.GENE_EXPRESSION <- rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'gene.id') %>%
-  left_join(backgroundGenes) %>% 
-  left_join(Ensemble2HGNC) %>%
-  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
-
-VOOM.ADJUSTED.GENE_EXPRESSION$E <- rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRESSION$E, 'gene.id') %>%
-  left_join(backgroundGenes) %>% 
-  left_join(Ensemble2HGNC) %>%
-  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
 ```
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=10, fig.width=20}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, 'BrainRegion.Diagnosis', drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Fit linear model with residual expression
+FIT = lmFit(RESIDUAL.GENE_EXPRESSION, design = DESIGN$design)
+
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
   "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
@@ -539,9 +582,10 @@ FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:12, function(i, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION){
-  topTable(FIT.CONTR, coef=i, number = dim(VOOM.ADJUSTED.GENE_EXPRESSION$E)[1], confint = T)
-}, FIT.CONTR, VOOM.ADJUSTED.GENE_EXPRESSION)
+DE = lapply(1:12, function(i, FIT.CONTR, RESIDUAL.GENE_EXPRESSION){
+  topTable(FIT.CONTR, coef=i, number = dim(RESIDUAL.GENE_EXPRESSION)[1], confint = T) %>%
+    rownameToFirstColumn('genes')
+}, FIT.CONTR, RESIDUAL.GENE_EXPRESSION)
 names(DE) = gsub('BrainRegion.Diagnosis','',colnames(contrast))
 
 DE1 = plyr::ldply(DE, .id = 'Comparison') %>%
@@ -554,13 +598,15 @@ DE1 = plyr::ldply(DE, .id = 'Comparison') %>%
   dplyr::rename(gene.id = genes, Region = BrainRegion) %>%
   dplyr::select(-Name) %>%
   left_join(backgroundGenes) %>%
-  left_join(Ensemble2HGNC)
+  left_join(Ensemble2HGNC) %>%
+  dplyr::mutate(Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction))
+DE1$Direction[DE1$adj.P.Val > 0.05 | abs(DE1$logFC) < log2(1.2)] = 'NONE'
 
-p <- ggplot(DE1, aes(x = logFC, y = -log10(adj.P.Val))) + geom_point()
-p <- p + geom_hline(yintercept = -log10(0.05), color = 'red')
-p <- p + geom_vline(xintercept = log2(1.2), color = 'red')
-p <- p + geom_vline(xintercept = -log2(1.2), color = 'red')
-p <- p + facet_grid(Region~.+Comparison)
+p = ggplot(DE1, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red'))
+p = p + facet_grid(Region~.+Comparison, scales = 'fixed')
 p
 
 tmp = DE1 %>% 
@@ -570,10 +616,45 @@ tmp = DE1 %>%
   spread(Region, nDiffExpGenes)
 kable(tmp)
 ```
+### Associate differential expression results with gc content and gene length
+```{r associate.de}
+geneLength.GCcontent = EDASeq::getGeneLengthAndGCContent(unique(DE1$ensembl_gene_id), 
+                                                         org = 'hsa', 
+                                                         mode = "biomart") %>%
+  rownameToFirstColumn('ensembl_gene_id')
+
+tmp = left_join(DE1, geneLength.GCcontent)
+
+pl = list()
+pl[[1]] = ggplot(tmp, aes(y = log10(length), x = abs(logFC))) + 
+  geom_point() + 
+  stat_smooth(method=glm, se = TRUE, na.rm = T)
+pl[[2]] = ggplot(tmp, aes(y = gc, x = abs(logFC))) + 
+  geom_point() + 
+  stat_smooth(method=glm, se = TRUE, na.rm = T)
+pl[[3]] = ggplot(tmp, aes(y = log10(length), x = adj.P.Val)) + 
+  geom_point() + 
+  stat_smooth(method=glm, se = TRUE, na.rm = T)
+pl[[4]] = ggplot(tmp, aes(y = gc, x = adj.P.Val)) + 
+  geom_point() + 
+  stat_smooth(method=glm, se = TRUE, na.rm = T)
+
+multiplot(plotlist = pl, cols = 2)
+```
 
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
-# Code
+# Add gene names
+RESIDUAL.GENE_EXPRESSION <- rownameToFirstColumn(RESIDUAL.GENE_EXPRESSION, 'gene.id') %>%
+  left_join(backgroundGenes) %>% 
+  left_join(Ensemble2HGNC) %>%
+  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+
+VOOM.ADJUSTED.GENE_EXPRESSION$E <- rownameToFirstColumn(VOOM.ADJUSTED.GENE_EXPRESSION$E, 'gene.id') %>%
+  left_join(backgroundGenes) %>% 
+  left_join(Ensemble2HGNC) %>%
+  dplyr::select(gene.id, ensembl_gene_id, hgnc_symbol, one_of(rownames(COVARIATES)))
+
 CODE <- Folder(name = 'UFL_Mayo_ISB Reprocessed RNASeq TMM', parentId = parentId)
 annotations(CODE) = list(
   dataType = 'mRNA',
@@ -596,42 +677,54 @@ annotations(CODE) = list(
 CODE <- synStore(CODE)
 
 # Store covariates
-COVARIATES = rownameToFirstColumn(COVARIATES, 'Sampleid')
-write.table(COVARIATES, file = 'MAYO_CBE_TCX_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('MAYO_CBE_TCX_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+COVARIATES = rownameToFirstColumn(COVARIATES, 'ID')
+write.table(COVARIATES, file = 'MAYO_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('MAYO_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+annotations(COV_OBJ) = annotations(CODE)
+annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix %>%
   as.matrix() %>% rownameToFirstColumn('gene.id') %>%
-  write.table(file = 'MAYO_CBE_TCX_Counts.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('MAYO_CBE_TCX_Counts.tsv', name = 'Raw counts (filtered)', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_Counts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('MAYO_Counts.tsv', name = 'Raw counts (filtered)', parentId = CODE$properties$id)
+annotations(COUNT_OBJ) = annotations(CODE)
+annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                      executed = thisFile, activityDescription = activityDescription)
 
 # Store logCPM
-write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'MAYO_CBE_TCX_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-LCOUNT_OBJ = File('MAYO_CBE_TCX_logCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
+write.table(VOOM.ADJUSTED.GENE_EXPRESSION$E, file = 'MAYO_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('MAYO_logCPM.tsv', name = 'Raw counts (logCPM)', parentId = CODE$properties$id)
+annotations(LCOUNT_OBJ) = annotations(CODE)
+annotations(LCOUNT_OBJ)$dataSubType = 'logcpm'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                       executed = thisFile, activityDescription = activityDescription)
 
 # Store design matrix
-write.table(DM1$design, file = 'MAYO_CBE_TCX_Design.tsv', sep = '\t', row.names=T, quote=F)
-DM_OBJ = File('MAYO_CBE_TCX_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+write.table(DM1$design, file = 'MAYO_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MAYO_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+annotations(DM_OBJ) = annotations(CODE)
+annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                   executed = thisFile, activityDescription = activityDescription)
 
 # Store residual gene expression
-write.table(RESIDUAL.GENE_EXPRESSION, file = 'MAYO_CBE_TCX_Expression.tsv', sep = '\t', row.names=F, quote=F)
-EXP_OBJ = File('MAYO_CBE_TCX_Expression.tsv', name = 'Normalised Adjusted Residual Expression (Dx added)', 
+write.table(RESIDUAL.GENE_EXPRESSION, file = 'MAYO_Expression.tsv', sep = '\t', row.names=F, quote=F)
+EXP_OBJ = File('MAYO_Expression.tsv', name = 'Normalised Adjusted Residual Expression (Dx added)', 
                parentId = CODE$properties$id)
+annotations(EXP_OBJ) = annotations(CODE)
+annotations(EXP_OBJ)$dataSubType = 'residualGeneExp'
 EXP_OBJ = synStore(EXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                    executed = thisFile, activityDescription = activityDescription)
 
 # Store differential expression results
-write.table(DE1, file = 'MAYO_CBE_TCX_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('MAYO_CBE_TCX_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+write.table(DE1, file = 'MAYO_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('MAYO_DiffExpression.tsv', name = 'Differential Expression Analysis', parentId = CODE$properties$id)
+annotations(DEXP_OBJ) = annotations(CODE)
+annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                     executed = thisFile, activityDescription = activityDescription)
 
