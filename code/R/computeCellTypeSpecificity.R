@@ -9,6 +9,7 @@ library(tidyr)
 library(plyr)
 library(dplyr)
 library(stringr)
+library(matrixStats)
 
 library(synapseClient)
 library(knitr)
@@ -29,7 +30,7 @@ ref.cellTypes = downloadFile('syn8077191') %>%
 ref.expr.sum = list()
 for(celltype in unique(ref.cellTypes$CellType)){
   ids = ref.cellTypes$SampleID[ref.cellTypes$CellType == celltype]
-  ref.expr.sum[[celltype]] = log2(rowSums(2^ref.expr[,ids], na.rm = T)) %>%
+  ref.expr.sum[[celltype]] = log2(apply((2^ref.expr[,ids]+0.5), 1, median, na.rm = T)) %>%
     rownameToFirstColumn('hgnc_symbol') %>%
     plyr::rename(c('DF' = celltype))
 }
@@ -38,13 +39,13 @@ ref.expr.sum = join_all(ref.expr.sum)
 # Compute tau
 tmp = data.matrix(ref.expr.sum[,-(1)])
 rownames(tmp) = ref.expr.sum$hgnc_symbol
-tau = rowSums(1 - (tmp/rowMax(tmp)), na.rm = T)
+tau = rowSums(1 - (tmp/rowMaxs(tmp)), na.rm = T)
 tau = (tau/(dim(tmp)[2]-1)) %>%
   rownameToFirstColumn('hgnc_symbol') %>%
   dplyr::rename(tau = DF)
 
 # Compute TSI
-TSI = rowMax(tmp)/rowSums(tmp) %>%
+TSI = rowMaxs(tmp)/rowSums(tmp) %>%
   as.data.frame()
 colnames(TSI) = 'TSI'
 TSI$hgnc_symbol = rownames(TSI)
