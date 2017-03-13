@@ -33,7 +33,7 @@ ref.cellTypes = downloadFile('syn8077191') %>%
 ref.expr.sum = list()
 for(celltype in unique(ref.cellTypes$CellType)){
   ids = ref.cellTypes$SampleID[ref.cellTypes$CellType == celltype]
-  ref.expr.sum[[celltype]] = log2(apply(ref.expr[,ids], 1, median, na.rm = T) + 1) %>%
+  ref.expr.sum[[celltype]] = log2(apply(ref.expr[,ids], 1, mean, na.rm = T) + 1) %>%
     rownameToFirstColumn('hgnc_symbol') %>%
     plyr::rename(c('DF' = celltype))
 }
