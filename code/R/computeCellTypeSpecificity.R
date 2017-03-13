@@ -10,6 +10,7 @@ library(plyr)
 library(dplyr)
 library(stringr)
 library(matrixStats)
+library(edgeR)
 
 library(synapseClient)
 library(knitr)
@@ -18,10 +19,12 @@ library(githubr)
 synapseLogin()
 
 # Get reference expression and cell type labels from Darmanis., S et al., 2015
-ALL_USED_IDs = c('syn8077142', 'syn8077191')
-ref.expr = downloadFile('syn8077142')
-rownames(ref.expr) = ref.expr$hgnc_symbol
+ALL_USED_IDs = c('syn8077189', 'syn8077191')
+ref.expr = downloadFile('syn8077189')
+rownames(ref.expr) = ref.expr$Gene.Names
 ref.expr$hgnc_symbol = NULL
+ref.expr$Gene.Names = NULL
+ref.expr = cpm(ref.expr)
 
 ref.cellTypes = downloadFile('syn8077191') %>%
   dplyr::select(SampleID, CellType)
@@ -30,7 +33,7 @@ ref.cellTypes = downloadFile('syn8077191') %>%
 ref.expr.sum = list()
 for(celltype in unique(ref.cellTypes$CellType)){
   ids = ref.cellTypes$SampleID[ref.cellTypes$CellType == celltype]
-  ref.expr.sum[[celltype]] = log2(apply(2^ref.expr[,ids]+1, 1, median, na.rm = T)) %>%
+  ref.expr.sum[[celltype]] = log2(apply(ref.expr[,ids], 1, median, na.rm = T) + 1) %>%
     rownameToFirstColumn('hgnc_symbol') %>%
     plyr::rename(c('DF' = celltype))
 }
