@@ -233,38 +233,44 @@ diff.exp.gl = lapply(diff.exp, function(x){
   dlply(.(Region), .fun = function(x){x$gene.id})
 
 tmp1 = rbindlist(diff.exp, use.names = T, fill = T) %>%
-  dplyr::filter(gene.id %in% Reduce(intersect, diff.exp.gl)) %>%
+  dplyr::filter(gene.id %in% Reduce(c, diff.exp.gl)) %>%
   dplyr::select(-hgnc_symbol) %>%
   left_join(Ensemble2HGNC)
 tmp1$hgnc_symbol[tmp1$ensembl_gene_id == 'ENSG00000275830'] = 'LOC101927646'
 
-tmp = group_by(tmp1, gene.id) %>%
-  summarise(count = sum(logFC/abs(logFC))) %>%
-  filter(abs(count) == 7) %>%
-  dplyr::mutate(GeneID = gene.id) %>%
-  tidyr::separate(gene.id, c('ensembl_gene_id','position'), sep = '\\.') %>%
-  left_join(Ensemble2HGNC)
-writeLines(paste('Differentially expressed genes in all 7 brain regions at an FDR of 0.05 and fold change of 1.2 are',
-                 length(unique(tmp$GeneID))))
-kable(data.frame(ngenes = length(unique(tmp$GeneID)),
+tmp1$Direction = 'NONE'
+tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC >= log2(1.2)] = 'UP'
+tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC <= -log2(1.2)] = 'DOWN'
+
+tmp = tmp1 %>%
+  dplyr::filter(hgnc_symbol != '') %>%
+  group_by(hgnc_symbol) %>%
+  summarise(count = sum(Direction != 'NONE')) %>%
+  filter(count >= 5) 
+writeLines(paste('Differentially expressed genes in any 5 brain regions at an FDR of 0.05 and fold change of 1.2 are',
+                 length(unique(tmp$hgnc_symbol))))
+kable(data.frame(ngenes = length(unique(tmp$hgnc_symbol)),
                  hgnc_symbol = tmp$hgnc_symbol %>% unique %>% paste(collapse = ',')))
 
 writeLines('Top six differentially expressed genes are')
-tmp.eff.sz = group_by(tmp1, gene.id) %>% 
+tmp.eff.sz = filter(tmp1, hgnc_symbol %in% tmp$hgnc_symbol) %>%
+  group_by(hgnc_symbol) %>% 
   summarise(es = sum(logFC, na.rm = T)) %>% 
   top_n(6, abs(es))
 
 pl = list()
 p = ggplot(tmp1 %>% 
-             filter(gene.id %in% tmp.eff.sz$gene.id[tmp.eff.sz$es>0]), 
-           aes(x = Region, y = logFC, fill = Study)) + geom_bar(stat = 'identity')
+             filter(hgnc_symbol %in% tmp.eff.sz$hgnc_symbol[tmp.eff.sz$es>2.6]), 
+           aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
 p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top')
+p = p + theme(legend.position = 'top') + scale_fill_manual(values = c('grey', 'red'))
 pl[[1]] = p
 
-p = ggplot(tmp1 %>% filter(gene.id %in% tmp.eff.sz$gene.id[tmp.eff.sz$es<0]), aes(x = Region, y = logFC, fill = Study)) + geom_bar(stat = 'identity')
+p = ggplot(tmp1 %>% 
+             filter(hgnc_symbol %in% tmp.eff.sz$hgnc_symbol[tmp.eff.sz$es<2.6]), 
+           aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
 p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top')
+p = p + theme(legend.position = 'top')  + scale_fill_manual(values = c('green','grey','red'))
 pl[[2]] = p
 
 multiplot(plotlist = pl, cols = 2)
@@ -363,10 +369,10 @@ Heatmap(tmp.expr, top_annotation = h1, show_row_names = F, show_column_names = F
 
 ### Pathway enrichment analysis
 ```{r pathway.enrich}
-setsToTest = diffexp %>%
-  filter(adj.P.Val <= 0.05) %>%
-  dlply(.(Tissue, Direction), .fun = function(x){
-    unique(x$ensembl_gene_id)
+setsToTest = rbindlist(diff.exp, use.names = T, fill = T) %>%
+  filter(adj.P.Val <= 0.05, Direction != 'NONE') %>%
+  dlply(.(Region, Direction), .fun = function(x){
+    unique(x$hgnc_symbol)
   })
 
 tmp1 = rankprod.pfp$pfp[intersect(intersect(tmp$fb.pval, tmp$min.pval), tmp$rankprod.pval),] <= 0.05
@@ -380,7 +386,9 @@ setsToTest = lapply(setsToTest, function(x, Ensemble2HGNC){
 }, Ensemble2HGNC)
 
 # Get Background genes
-backgroundGenes = Ensemble2HGNC$hgnc_symbol[Ensemble2HGNC$ensembl_gene_id %in% rownames(expr)] %>% unique()
+backgroundGenes = unique(rbindlist(diff.exp, use.names = T, fill = T) %>% 
+                           dplyr::select(hgnc_symbol) %>%
+                           unlist)
 
 ############################################################################################################
 # Function to perform Fishers enrichment analysis
