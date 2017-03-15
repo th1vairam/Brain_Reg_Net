@@ -171,12 +171,11 @@ Dorsolateral prefrontal cortex of `r dim(COUNT)[2]` subjects from the ROS and MA
 ### Covariate clustering
 Determine relationship between covariates
 ```{r covariates.clustering, cache=TRUE}
-#"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv", "PF_INDEL_RATE", "PF_MISMATCH_RATE"
-primaryVariable <- 'cogdx'
+#"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv", "PF_INDEL_RATE", "PF_MISMATCH_RATE", "age_first_ad_dx","age_at_visit_max",
+primaryVariable <- "cogdx"
 FactorCovariates <- c("Batch", "msex", "race", "spanish", "cogdx")
-ContCovariates <- c("RINcontinuous","age_first_ad_dx","age_death","age_at_visit_max","pmi","educ", 
-                    "PCT_PF_READS", "PCT_PF_READS_ALIGNED", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", 
-                    "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
+ContCovariates <- c("RINcontinuous", "age_death", "pmi", "educ", "PCT_PF_READS", "PCT_PF_READS_ALIGNED",
+                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -193,12 +192,12 @@ COVARIATES$RINcontinuous2 = COVARIATES$RINcontinuous^2
 ContCovariates = c(ContCovariates, 'RINcontinuous2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
-```{r covariates.correlation, fig.width=10, fig.height=10}
+```{r covariates.correlation, fig.width=6, fig.height=6}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
 ```
 
-```{r dataExplore, fig.width = 10, fig.height = 14}
+```{r data.explore, fig.width = 10, fig.height = 14}
 # RIN
 p = list()
 p[[1]] = ggplot(COVARIATES, aes(x = cogdx, y = RINcontinuous)) + geom_boxplot()
@@ -289,7 +288,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ```
 ### Outlier analysis
 Clustering of voom adjusted data (with NULL design)
-```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data1.1, fig.height=6, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, scale.=T, center = T)
 
@@ -307,7 +306,7 @@ p <- p + theme_bw() + theme(legend.position="right")
 p
 ```
 Tree based classification of samples
-```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
+```{r decompse.normalise.data1.2, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Batch', 'msex', primaryVariable)])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
@@ -330,7 +329,7 @@ gc()
 
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
-```{r preAdjusted.covariates, cache=TRUE}
+```{r preadj.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
 preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
                                                  COVARIATES,
@@ -340,17 +339,18 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$y+CQN.GENE_
 ```
 
 Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
-```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
+```{r preadj.covariates.plot, fig.width=12, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative design)
 Since many covariates are correlated, re-normalising and re-adjusting COUNTS with an iterative design matrix. Adding Batch and msex a priori to variable selection
-```{r customNorm, results='asis'}
+```{r iterative.norm, results='asis'}
 # Primary variable of interest
 postAdjustCovars = c('Batch', 'msex');
 
 # Assign residual covariates
 residualCovars = setdiff(preAdjustedSigCovars$significantCovars, c(postAdjustCovars, primaryVariable))
+residualSigCovars = preAdjustedSigCovars
 covariatesEffects = preAdjustedSigCovars$Effects.significantCovars[residualCovars]
 postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects))) %>% unique()
 
@@ -400,7 +400,7 @@ tmp <- paste('Using following covariates in the final model:', modelStr)
 ```
 
 ### Sanity check
-```{r residualSigCovars.manual, fig.width=12, fig.height=8}
+```{r residual.adj, fig.width=12, fig.height=8}
 # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
 residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
                                               COVARIATES,
@@ -416,7 +416,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ```
 
 ### Clustering residual data
-```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data2.1, fig.height=6, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
@@ -434,7 +434,7 @@ p <- p + theme_bw() + theme(legend.position="right")
 p
 ```
 
-```{r decompse.normalise.data2.1, fig.height=8, fig.width=12, results='asis'}
+```{r decompse.normalise.data2.2, fig.height=8, fig.width=12, results='asis'}
 # Eucledian tree based analysis
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Batch', 'msex', primaryVariable)])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
@@ -467,7 +467,7 @@ Interpretation of cogdx scores
 6. Other dementia. Other primary cause of dementia
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=6, fig.width=18}
+```{r diff.exp, fig.height=6, fig.width=18}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable, postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
@@ -532,17 +532,20 @@ p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
-```{r associate.de}
+```{r associate.de, fig.height=10, fig.width=15}
 pl = list()
-pl[[1]] = ggplot(DE, aes(x = log10(gene.length), y = logFC, color = Direction)) + geom_point()
+pl[[1]] = ggplot(DE, aes(x = log10(gene.length), y = logFC, color = Direction)) + geom_point() 
+pl[[1]] = pl[[1]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = log10(gene.length), y = logFC))
 pl[[1]] = pl[[1]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[1]] = pl[[1]] + theme(legend.position = 'top')
 
 pl[[2]] = ggplot(DE, aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
+pl[[2]] = pl[[2]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = percentage_gc_content, y = logFC))
 pl[[2]] = pl[[2]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[2]] = pl[[2]] + theme(legend.position = 'top')
 
 pl[[3]] = ggplot(DE, aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
+pl[[3]] = pl[[3]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = AveExpr, y = logFC))
 pl[[3]] = pl[[3]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 
@@ -662,7 +665,7 @@ LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'ROSMAP_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('ROSMAP_DLPFC_offset.tsv', name = 'Gene length and GC content offset)', parentId = CODE$properties$id)
+OFFSET_OBJ = File('ROSMAP_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
 annotations(OFFSET_OBJ) = annotations(CODE)
 annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -679,7 +682,7 @@ DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store surrogate variables
 SURR.VAR %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'ROSMAP_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
+  write.table(file = 'ROSMAP_DLPFC_SurVar.tsv', sep = '\t', row.names=F, quote=F)
 SURR_OBJ = File('ROSMAP_DLPFC_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
 annotations(SURR_OBJ) = annotations(CODE)
 annotations(SURR_OBJ)$dataSubType = 'surrogateVariables'
@@ -690,8 +693,8 @@ RESIDUAL.SVA.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'ROSMAP_DLPFC_eQTLResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
 eEXP_OBJ = File('ROSMAP_DLPFC_eQTLResidualExpression.tsv', 
-                name = 'Normalised, Covariates and SVA Adjusted Residual Expression (for eQTL)', 
-               parentId = CODE$properties$id)
+                name = 'Normalised, covariates and surrogate variable adjusted residual expression (for eQTL)',
+                parentId = CODE$properties$id)
 annotations(eEXP_OBJ) = annotations(CODE)
 annotations(eEXP_OBJ)$dataSubType = 'residualGeneExpForeQTL'
 eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -701,8 +704,8 @@ RESIDUAL.NET.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'ROSMAP_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
 nEXP_OBJ = File('ROSMAP_DLPFC_netResidualExpression.tsv', 
-                name = 'Normalised, Covariates Removed Residual Expression (for network analysis)', 
-               parentId = CODE$properties$id)
+                name = 'Normalised, covariates removed residual expression (for network analysis)', 
+                parentId = CODE$properties$id)
 annotations(nEXP_OBJ) = annotations(CODE)
 annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -720,7 +723,7 @@ DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 |  Covariates                                 |  `r COV_OBJ$properties$id`       |
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
-|  Offset (for gene lengeth and gc content)   |  `r OFFSET_OBJ$properties$id`    |
+|  Offset (for gene length and gc content)   |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
 |  Surrogate Variables                        |  `r SURR_OBJ$properties$id`      |
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
