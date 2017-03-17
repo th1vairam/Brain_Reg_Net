@@ -11,7 +11,7 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./MAYO_REPROCESSED.Rmd",
-                                 parentId = "syn7554308",
+                                 parentId = "syn8403743",
                                  entityName = 'MAYO Reprocessed RNASeq (Normalised)')
 ```
 
@@ -62,7 +62,7 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
-parentId = 'syn8403743';
+parentId = 'syn8403743'
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of MAYO reprocessed RNASeq data';
 
@@ -656,7 +656,7 @@ p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
-```{r associate.de, fig.height=10, fig.width=15}
+```{r associate.de, fig.height=5, fig.width=15}
 pl = list()
 pl[[1]] = ggplot(DE %>%
                    dplyr::filter(Comparison == 'Control-AD'), 

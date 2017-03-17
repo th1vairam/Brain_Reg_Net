@@ -1,5 +1,5 @@
 num.sv <- function (dat, mod, method = c("be", "leek"), vfilter = NULL, 
-                    B = 20, seed = NULL, LINPACK = F) 
+                    B = 20, seed = NULL, LINPACK = F, tol = 1e-18) 
 {
   if (!is.null(vfilter)) {
     if (vfilter < 100 | vfilter > dim(dat)[1]) {
@@ -18,7 +18,7 @@ num.sv <- function (dat, mod, method = c("be", "leek"), vfilter = NULL,
     warn <- NULL
     n <- ncol(dat)
     m <- nrow(dat)
-    H <- mod %*% solve(t(mod) %*% mod) %*% t(mod)
+    H <- mod %*% solve(t(mod) %*% mod, tol = tol) %*% t(mod)
     res <- dat - t(H %*% t(dat))
     uu <- svd(res, LINPACK = LINPACK)
     ndf <- min(m, n) - ceiling(sum(diag(H)))
@@ -51,7 +51,7 @@ num.sv <- function (dat, mod, method = c("be", "leek"), vfilter = NULL,
     a <- seq(0, 2, length = 100)
     n <- floor(dims[1]/10)
     rhat <- matrix(0, nrow = 100, ncol = 10)
-    P <- (diag(dims[2]) - mod %*% solve(t(mod) %*% mod) %*% 
+    P <- (diag(dims[2]) - mod %*% solve(t(mod) %*% mod, tol = tol) %*% 
             t(mod))
     for (j in 1:10) {
       dats <- dat[1:(j * n), ]
