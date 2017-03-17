@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of ROSMAP reprocessed counts (with CQN normalisation and covariates adjusted)"
+title: "Covariate analysis of MAYO reprocessed counts (with CQN normalisation and covariates adjusted)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -10,9 +10,9 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./ROSMAP_REPROCESSED.Rmd",
-                                 parentId = "syn8403743",
-                                 entityName = 'ROSMAP Reprocessed RNASeq (Normalised)')
+knit2synapse::knitToFolderEntity(file = "./MAYO_REPROCESSED.Rmd",
+                                 parentId = "syn7554308",
+                                 entityName = 'MAYO Reprocessed RNASeq (Normalised)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -41,6 +41,12 @@ library(synapseClient)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
+library(parallel)
+library(foreach)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
 synapseLogin()
 
 options(xtable.type="html")
@@ -58,9 +64,9 @@ knitr::opts_chunk$set(
 # Synapse parameters
 parentId = 'syn8403743';
 activityName = 'Covariate analysis';
-activityDescription = 'Covariate analysis of ROSMAP reprocessed RNASeq data';
+activityDescription = 'Covariate analysis of MAYO reprocessed RNASeq data';
 
-thisFileName <- 'ROSMAP_REPROCESSED.Rmd'
+thisFileName <- 'MAYO_REPROCESSED.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD_reprocessing')
@@ -69,12 +75,18 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ### Data download
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
-# Download expression data
-COUNT_ID <- 'syn7750270';
-ALL_USED_IDs <- COUNT_ID
-COUNT_OBJ <- synGet(COUNT_ID)
-COUNT <- read.table(COUNT_OBJ@filePath,header=T,sep='\t',check.names = F)
-COUNT[,grep('150_120419', colnames(COUNT))[2]] = NULL
+# Get reprocessed sample counts for temporal cortex
+COUNT_TC_ID <- 'syn7987765';
+ALL_USED_IDs <- COUNT_TC_ID
+COUNT_TC <- read.table(synGet(COUNT_TC_ID)@filePath, header=T, sep='\t', check.names = F)
+colnames(COUNT_TC) = paste(colnames(COUNT_TC), 'TCX', sep = '_')
+
+# Get reprocessed sample counts for cerebellum
+COUNT_CE_ID <- 'syn7513807';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_CE_ID
+COUNT_CE <- read.table(synGet(COUNT_CE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+COUNT = cbind(COUNT_TC, COUNT_CE[rownames(COUNT_TC),])
 
 # Convert rownames of counts from tracking id to ensemble gene id
 tmp = data.frame(Gene.ID = rownames(COUNT)) %>%
@@ -84,52 +96,52 @@ rownames(tmp) = tmp$Gene.ID
 rownames(COUNT) = tmp[rownames(COUNT), 'ensembl_gene_id']
 
 # Get clinical metadata
-METADATA.CLINICAL_ID <- 'syn3191087'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.CLINICAL_ID
-METADATA.CLINICAL_OBJ <- synGet(METADATA.CLINICAL_ID)
-METADATA.CLINICAL <- read.table(METADATA.CLINICAL_OBJ@filePath,sep=',',header=T)
+METADATA_TC_ID <- 'syn3817650'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TC_ID
+METADATA_TC <- read.table(synGet(METADATA_TC_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
+  tidyr::separate(ID, c('Donor_ID', 'BrainRegion'), sep = '_') %>%
+  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_'))
 
-# Get technical covariates
-METADATA.TECH_ID <- 'syn4300313'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.TECH_ID
-METADATA.TECH_OBJ <- synGet(METADATA.TECH_ID)
-METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
+# Get clinical metadata
+METADATA_CE_ID <- 'syn5223705'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CE_ID
+METADATA_CE <- read.table(synGet(METADATA_CE_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
+  tidyr::separate(SampleID, c('Donor_ID', 'BrainRegion')) %>%
+  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_')) %>%
+  dplyr::rename(Gender = Sex, FLOWCELL = Flowcell)
 
 # Get picard metrics from synapse
-METADATA.PICARD_ID <- 'syn8380366'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_ID
-METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = FALSE, exdir = getwd())
-METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE, exdir = getwd())
-METADATA.PICARD_FPATHS = METADATA.PICARD_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_FPATHS)]
-METADATA.PICARD <- plyr::ldply(METADATA.PICARD_FPATHS, read.csv)
+METADATA.PICARD_CE_ID <- 'syn8380392'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_CE_ID
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS = METADATA.PICARD_CE_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_CE_FPATHS)]
+METADATA.PICARD_CE <- plyr::ldply(METADATA.PICARD_CE_FPATHS, read.csv)
 
-METADATA.PICARD$Sampleid = gsub('picard/', '', METADATA.PICARD_FPATHS) %>%
-  gsub('Aligned.out/picard.CombinedMetrics.csv','',.)
-colnames(METADATA.PICARD) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD))
-colnames(METADATA.PICARD) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD))
+METADATA.PICARD_CE$ID = gsub('picard/', '', METADATA.PICARD_CE_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]})
+colnames(METADATA.PICARD_CE) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_CE))
+colnames(METADATA.PICARD_CE) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_CE))
 
-# Fix error in technical covariates data
-KEY_ID <- 'syn3382527'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = KEY_ID  
-KEY <- read.csv(synGet(KEY_ID)@filePath) %>% 
-  filter(mrna_data == 1) %>%
-  dplyr::select(projid, mrna_id) %>%
-  separate(mrna_id, c('a','b','batch'), sep = '_') %>% 
-  unite(Sampleid, a, b) %>%
-  dplyr::select(-batch) %>%
-  unique
+METADATA.PICARD_TC_ID <- 'syn8383233'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_TC_ID
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS = METADATA.PICARD_TC_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_TC_FPATHS)]
+METADATA.PICARD_TC <- plyr::ldply(METADATA.PICARD_TC_FPATHS, read.csv)
 
-# Match technical and clinical covariates
-METADATA <- METADATA.TECH %>%
-  left_join(METADATA.PICARD) %>%
-  dplyr::select(-projid) %>%
-  dplyr::left_join(KEY) %>%
-  dplyr::left_join(METADATA.CLINICAL)
+METADATA.PICARD_TC$ID = gsub('picard/', '', METADATA.PICARD_TC_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]}) %>%
+  gsub('Aligned','',.)
+colnames(METADATA.PICARD_TC) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_TC))
+colnames(METADATA.PICARD_TC) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_TC))
 
-# Pick higher quality RIN batch for sample 492_120515
-METADATA <- METADATA %>%
-  group_by(Sampleid) %>%
-  top_n(1, RINcontinuous)
+# Merge all metadata
+METADATA = rbindlist(list(METADATA_TC, METADATA_CE), use.names = T, fill = T) %>%
+  inner_join(rbindlist(list(METADATA.PICARD_TC, METADATA.PICARD_CE), use.names = T, fill = T)) %>%
+  as.data.frame
 
 # Get gene specific parameters from synapse
 GENE.PARAM = downloadFile('syn8449369')
@@ -143,53 +155,116 @@ rownames(GENE.GC) = GENE.GC$ensembl_gene_id
 ```
 
 ### Data preprocessing
-```{r preprocess.data,cache=TRUE, echo=TRUE}
-# Remove samples with no cogdx, RIN and PMI scores
+```{r preprocess.data,cache=FALSE, echo=TRUE}
+# Fix metadata
+METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
+METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
+METADATA$BrainRegion.Diagnosis = paste(METADATA$BrainRegion, METADATA$Diagnosis, sep = '.')
+METADATA$RIN2 = METADATA$RIN^2
 METADATA <- METADATA %>%
-  ungroup %>%
-  filter(Sampleid %in% colnames(COUNT)) %>%
-  filter(!is.na(cogdx)) %>%
-  filter(!is.na(RINcontinuous)) %>%
-  filter(!is.na(pmi)) %>%
-  filter(!is.na(Sampleid)) %>%
-  filter(!(Sampleid %in% c('380_120503'))) %>%
-  as.data.frame()
+  filter(!is.na(Source)) %>%
+  dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX",
+                            "11396_TCX", "11294_TCX", "11408_TCX")))
 ```
-
-```{r preprocess.data1,cache=TRUE}
+Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
+```{r preprocess.data1}
 # Match covariates to expression data
-indToRetain = intersect(METADATA$Sampleid, colnames(COUNT))
-removedIDs = setdiff(colnames(COUNT), METADATA$Sampleid)
+indToRetain = intersect(METADATA$ID, colnames(COUNT))
+indRemoved = setdiff(colnames(COUNT), METADATA$ID)
 
-COUNT = COUNT[,indToRetain]
+COUNT <- COUNT[, indToRetain]
 
-rownames(METADATA) = METADATA$Sampleid
+rownames(METADATA) = METADATA$ID
 METADATA = METADATA[indToRetain,]
 ```
-Dorsolateral prefrontal cortex of `r dim(COUNT)[2]` subjects from the ROS and MAP cohorts are used for the analysis. Following sample are removed `r paste(removedIDs, collapse = ',')`
+`r dim(COUNT)[2]` samples from `r length(unique(METADATA$Donor_ID))` subjects were obtained from the Mayo cohorts in AMP-AD reprocessed rnaseq project. 
+
+Following samples were removed `r indRemoved`
+
+### Predict missing PMI
+```{r predict.pmi}
+PMI = METADATA[,c('PMI', 'ID'), drop = F]
+PMI$PMI = PMI$PMI * 60
+rownames(PMI) = METADATA$ID
+
+# Get genes that are predictors of PMI and use them as control probes
+CONTROL.PROBES_ID = 'syn6145639'
+ALL_USED_IDs = c(ALL_USED_IDs, CONTROL.PROBES_ID)
+CONTROL.PROBES = fread(synGet(CONTROL.PROBES_ID)@filePath, data.table = F) %>%
+  dplyr::mutate(ID = x) %>%
+  tidyr::separate(ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+
+# Conditional quantile normalisation
+tmp.count = COUNT
+genesToAnalyze = unique(intersect(rownames(GENE.GC)[!is.na(GENE.GC$percentage_gc_content)], 
+                                  rownames(GENE.LEN)[!is.na(GENE.LEN$gene.length)]))
+tmp.count = tmp.count[rownames(tmp.count) %in% genesToAnalyze,]
+CQN.GENE_EXPRESSION = cqn(tmp.count,
+                          x = GENE.GC[rownames(tmp.count), 'percentage_gc_content'],
+                          lengths = GENE.LEN[rownames(tmp.count), 'gene.length'],
+                          lengthMethod = "smooth", 
+                          verbose = FALSE)
+
+# Initial normalisation of gene expression
+ind = rownames(CQN.GENE_EXPRESSION$y) %in% CONTROL.PROBES$ensembl_gene_id 
+EXPR = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+EXPR = EXPR[ind,]
+PMI = PMI[colnames(EXPR),,drop=F]
+
+expr = dlply(PMI, .(ID), function(mtd, expr){
+  if (dim(mtd)[1] > 1)
+    expr = rowMeans(expr[, mtd$ID]) %>% rownameToFirstColumn('GeneID')
+  else
+    expr = expr[, mtd$ID] %>% rownameToFirstColumn('GeneID')
+  expr = expr %>% plyr::rename(c('DF' = unique(mtd$ID)))
+  return(expr)
+}, EXPR) %>%
+  join_all
+rownames(expr) = expr$GeneID
+
+PMI = PMI[,colnames(PMI) %in% c('ID','PMI')] %>% unique
+rownames(PMI) = PMI$ID
+
+PMI = PMI[intersect(rownames(PMI), colnames(expr)), ]
+expr = expr[,intersect(rownames(PMI), colnames(expr))]
+
+# Split data into trainining and prediction set
+x.train = expr[,!is.na(PMI$PMI)]
+x.predict = expr[,is.na(PMI$PMI)]
+
+y.train = PMI[!is.na(PMI$PMI),]
+
+plr.model = cv.glmnet(t(x.train), y.train$PMI, family = 'gaussian')
+coeff = as.matrix(coef.glmnet(plr.model, s = 'lambda.min'))
+mse = sum((predict(plr.model, t(x.train), s = 'lambda.min', type = 'response') - y.train$PMI)^2)/length(y.train$PMI)
+y.predict = predict(plr.model, t(x.predict), s = 'lambda.min', type = 'response') %>%
+  rownameToFirstColumn('ID') %>%
+  plyr::rename(c('1' = 'PMI'))
+
+PMI = rbindlist(list(y.train, y.predict), use.names = T, fill = T)
+PMI$PMI[PMI$PMI < 0] = 0
+
+METADATA = METADATA %>% 
+  dplyr::select(-PMI) %>%
+  left_join(PMI)
+```
 
 ### Covariate clustering
 Determine relationship between covariates
 ```{r covariates.clustering, cache=TRUE}
-#"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv", "PF_INDEL_RATE", "PF_MISMATCH_RATE", "age_first_ad_dx","age_at_visit_max",
-primaryVariable <- "cogdx"
-FactorCovariates <- c("Batch", "msex", "race", "spanish", "cogdx")
-ContCovariates <- c("RINcontinuous", "age_death", "pmi", "educ", "PCT_PF_READS", "PCT_PF_READS_ALIGNED",
+primaryVariable <- "BrainRegion.Diagnosis"
+FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI", "PCT_PF_READS", "PCT_PF_READS_ALIGNED",
                     "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
-COVARIATES <- data.frame(lapply(COVARIATES,function(x){x <- sapply(x,function(y){str_replace_all(as.character(y),'\\+','')})}))
-rownames(COVARIATES) <- METADATA$Sampleid
+rownames(COVARIATES) <- METADATA$ID
 
 # Convert factor covariates to factors
 COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
 COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.character)
 COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
-
-# Add in RIN^2 values
-COVARIATES$RINcontinuous2 = COVARIATES$RINcontinuous^2
-ContCovariates = c(ContCovariates, 'RINcontinuous2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
 ```{r covariates.correlation, fig.width=6, fig.height=6}
@@ -197,49 +272,45 @@ COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
 ```
 
-```{r data.explore, fig.width = 10, fig.height = 14}
+```{r data.explore, fig.width = 12, fig.height = 8}
+my.theme = theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
+
 # RIN
 p = list()
-p[[1]] = ggplot(COVARIATES, aes(x = cogdx, y = RINcontinuous)) + geom_boxplot()
-p[[1]] = p[[1]] + ggtitle('RIN') + theme(legend.position = 'top')
+p[[1]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = RIN)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('RIN') + my.theme
 
 # AgeAtDeath
-p[[2]] = ggplot(COVARIATES, aes(x = cogdx, y = age_death)) + geom_boxplot()
-p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + theme(legend.position = 'top')
+p[[2]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(AgeAtDeath))) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('AgeAtDeath') + my.theme
 
 # PMI
-p[[3]] = ggplot(COVARIATES, aes(x = cogdx, y = pmi)) + geom_boxplot()
-p[[3]] = p[[3]] + ggtitle('PMI') + theme(legend.position = 'top')
-
-# Education
-p[[4]] = ggplot(COVARIATES, aes(x = cogdx, y = educ)) + geom_boxplot()
-p[[4]] = p[[4]] + ggtitle('Education') + theme(legend.position = 'top')
-
-# Intronic bases
-p[[5]] = ggplot(COVARIATES, aes(x = cogdx, y = PCT_INTRONIC_BASES)) + geom_boxplot()
-p[[5]] = p[[5]] + ggtitle('Fraction Intronic Bases') + theme(legend.position = 'top')
+p[[3]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PMI))) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PMI') + my.theme
 
 # Ribosomal bases
-p[[6]] = ggplot(COVARIATES, aes(x = cogdx, y = PCT_RIBOSOMAL_BASES)) + geom_boxplot()
-p[[6]] = p[[6]] + ggtitle('Fraction Ribosomal Bases') + theme(legend.position = 'top')
+p[[4]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_RIBOSOMAL_BASES))) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('Fraction of Ribosomal Bases') + my.theme
 
-multiplot(plotlist = p, cols = 2)
+# Intronic bases
+p[[5]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_INTRONIC_BASES))) + geom_boxplot()
+p[[5]] = p[[5]] + ggtitle('Fraction Intronic Bases') + my.theme
 
-# Batch
-vcd::mosaic(~ Batch + cogdx, data = COVARIATES)
+# Intergenic bases
+p[[6]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_INTERGENIC_BASES))) + geom_boxplot()
+p[[6]] = p[[6]] + ggtitle('Fraction Intergenic Bases') + my.theme
 
-# Sex
-vcd::mosaic(~ msex + cogdx, data = COVARIATES)
+multiplot(plotlist = p, cols = 3)
 ```
 ### CPM Normalisation
 Preprocess counts matrix using CQN (Conditional Quantile Normlaisation accounting for both GC content and gene length)
 
-Remove genes that have less than 1 cpm counts in at least 50% of samples per cogdx. Also remove genes with missing gene length and percentage GC content
+Remove genes that have less than 1 cpm counts in at least 50% of samples per BrainRegion x Diagnosis. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
 genesToAnalyze = COVARIATES %>%
-  rownameToFirstColumn('Sampleid') %>%
-  dlply(.(cogdx), .fun = function(mtd, count){
-  processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$Sampleid],
+  rownameToFirstColumn('SampleID') %>%
+  dlply(.(BrainRegion.Diagnosis), .fun = function(mtd, count){
+    processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
                                                    MIN_GENE_CPM=1, 
                                                    MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
   processed.counts$filteredExprMatrix$genes
@@ -298,11 +369,14 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC1=PC$rotation[,1], 
                        PC2=PC$rotation[,2])
 
-plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('Region','Diagnosis'), sep = '\\.') %>% 
+  dplyr::mutate(Region = factor(Region),
+                Source = factor(Source))
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Batch, shape=cogdx, size=RINcontinuous))
-p <- p + theme_bw() + theme(legend.position="right")
+p <- p + geom_point(aes(shape=Source, color=Diagnosis, size=RIN))
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Region~., scales = 'free_y')
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 ```
@@ -345,14 +419,18 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation (iterative design)
 Since many covariates are correlated, re-normalising and re-adjusting COUNTS with an iterative design matrix.
-1. Adding FLOWCELL and Gender a priori to variable selection
-2. Primary variable of interest BrainRegion.Diagnosis is excluded from the pool of available covariates for selection
+
+NOTE:
+1. Using a mixed effect model where random effect is chosen as Donor_ID
+2. Adding Source, FLOWCELL and Gender a priori to variable selection
+3. Primary variable of interest BrainRegion.Diagnosis is excluded from the pool of available covariates for selection
 ```{r iterative.norm, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c('Batch', 'msex');
+postAdjustCovars = c('Source', 'FLOWCELL', 'Gender');
 
 # Assign residual covariates
-residualCovars = setdiff(preAdjustedSigCovars$significantCovars, c(postAdjustCovars, primaryVariable))
+residualCovars = setdiff(preAdjustedSigCovars$significantCovars, 
+                         c(postAdjustCovars, primaryVariable, 'Donor_ID'))
 residualSigCovars = preAdjustedSigCovars
 covariatesEffects = preAdjustedSigCovars$Effects.significantCovars[residualCovars]
 postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects))) %>% unique()
@@ -361,7 +439,7 @@ loopCount = 0
 while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   writeLines(paste('Using following covariates in the model:',
                    paste(postAdjustCovars, collapse=', '),
-                   'as fixed effects'))
+                   'as fixed effects and Donor_ID as random effect'))
 
   # Post adjusted design matrix
   DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
@@ -370,17 +448,31 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   # Estimate voom weights for dispersion control
   VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DM1$design, plot=F)
 
+  # Calculate correlation values of random effects
+  VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+  correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
+                                             block = COVARIATES$Donor_ID)
+  
+  # Re-estimate voom weights
+  VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+                              design=DM1$design, plot=F, 
+                              block = COVARIATES$Donor_ID, 
+                              correlation = correlation$cor)
+
   # Fit linear model using new weights and new design
   VOOM.ADJUSTED.FIT = lmFit(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
                             design = DM1$design,
-                            weights = VOOM.GENE_EXPRESSION$weights)
+                            weights = VOOM.GENE_EXPRESSION$weights,
+                            block = COVARIATES$Donor_ID, 
+                            correlation = correlation$cor)
 
   # Residuals after normalisation
   RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
                                                 CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset)
 
   # Residual covariates to choose from
-  residCovars <- setdiff(c(FactorCovariates,ContCovariates), c(postAdjustCovars, primaryVariable))
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates),
+                         c(postAdjustCovars, primaryVariable, 'Donor_ID'))
 
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
@@ -419,7 +511,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ```
 
 ### Clustering residual data
-```{r decompse.normalise.data2.1, fig.height=6, fig.width=8, results='asis'}
+```{r decompse.normalise.data2.1, fig.height=10, fig.width=8, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
@@ -428,18 +520,21 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC1=PC$rotation[,1], 
                        PC2=PC$rotation[,2])
 
-plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('Region','Diagnosis'), sep = '\\.') %>% 
+  dplyr::mutate(Region = factor(Region),
+                Source = factor(Source))
 
-p <- ggplot(plotdata, aes(x=PC1, y=PC2)) 
-p <- p + geom_point(aes(color=Batch, shape=cogdx, size=RINcontinuous))
-p <- p + theme_bw() + theme(legend.position="right")
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=1)
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(shape=Source, color=Diagnosis, size=RIN))
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Region~., scales = 'free_y')
+# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 ```
 
 ```{r decompse.normalise.data2.2, fig.height=8, fig.width=12, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c('Batch', 'msex', primaryVariable)])
+COVARIATES.tmp = data.matrix(COVARIATES[,FactorCovariates])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
@@ -458,16 +553,18 @@ dev.off()
 gc()
 ```
 
-### Differential expression analysis (with cogdx as primary variable)
+### Differential expression analysis (with BrainRegion.Diagnosis as primary variable)
 Differential expression is performed on the primary variable by controlling for covariates identified above
 
-Interpretation of cogdx scores
-1. NCI, No cognitive impairment (No impaired domains)
-2. MCI, Mild cognitive impairment (One impaired domain) and NO other cause of CI
-3. MCI, Mild cognitive impairment (One impaired domain) AND another cause of CI
-4. AD, Alzheimer's disease and NO other cause of CI (NINCDS PROB AD)
-5. AD, Alzheimer's disease AND another cause of CI (NINCDS POSS AD)
-6. Other dementia. Other primary cause of dementia
+Interpretation of BrainRegion.Diagnosis
+1. TCX.PSP: Progressive Supranuclear Palsy samples from Temporal cortex region
+2. TCX.AD: Alzheimers Disease samples from Temporal cortex region
+3. TCX.Control: Control samples from Temporal cortex region
+4. TCX.Pathologic_Aging: Pathological Aging samples from Temporal cortex region
+5. CER.PSP: Progressive Supranuclear Palsy samples from Cerebellum region
+6. CER.AD: Alzheimers Disease samples from Cerebellum region
+7. CER.Control: Control samples from Cerebellum region
+8. CER.Pathologic_Aging: Pathological Aging samples from Cerebellum region
 
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diff.exp, fig.height=6, fig.width=18}
@@ -478,21 +575,40 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 # Estimate voom weights for dispersion control
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
 
-# Fit linear model using new weights and new design
-FIT = lmFit(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
-            design = DESIGN$design,
-            weights = VOOM.WEIGHTS$weights)
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Donor_ID)
   
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$Donor_ID, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+FIT = lmFit(VOOM.WEIGHTS)
+
 # Fit contrast
-contrast = makeContrasts(contrasts=c("cogdx1-cogdx2",
-                                     "cogdx1-cogdx4",
-                                     "cogdx2-cogdx4"),
-                         levels = colnames(FIT$coefficients))
+contrast = makeContrasts(contrasts=c(
+  "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.AD",
+  "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.Pathologic_Aging",
+  "BrainRegion.DiagnosisCER.Control-BrainRegion.DiagnosisCER.PSP",
+  "BrainRegion.DiagnosisCER.Pathologic_Aging-BrainRegion.DiagnosisCER.AD",
+  "BrainRegion.DiagnosisCER.Pathologic_Aging-BrainRegion.DiagnosisCER.PSP",
+  "BrainRegion.DiagnosisCER.PSP-BrainRegion.DiagnosisCER.AD",
+  "BrainRegion.DiagnosisTCX.Control-BrainRegion.DiagnosisTCX.AD",
+  "BrainRegion.DiagnosisTCX.Control-BrainRegion.DiagnosisTCX.Pathologic_Aging",
+  "BrainRegion.DiagnosisTCX.Control-BrainRegion.DiagnosisTCX.PSP",
+  "BrainRegion.DiagnosisTCX.Pathologic_Aging-BrainRegion.DiagnosisTCX.AD",
+  "BrainRegion.DiagnosisTCX.Pathologic_Aging-BrainRegion.DiagnosisTCX.PSP",
+  "BrainRegion.DiagnosisTCX.PSP-BrainRegion.DiagnosisTCX.AD"),
+  levels = colnames(FIT$coefficients))
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:3, function(i, FIT){
+DE = lapply(1:12, function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
     rownameToFirstColumn('ensembl_gene_id')
 }, FIT.CONTR)
@@ -500,26 +616,31 @@ names(DE) = colnames(contrast)
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
-  left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
-              unique()) %>%
-  dplyr::mutate(Study = 'ROSMAP', Region = 'DLPFC',
+  dplyr::mutate(Comparison = gsub('BrainRegion.Diagnosis','',Comparison),
+                Study = 'MAYO',
                 Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
-                Direction = as.character(Direction))
+                Direction = as.character(Direction)) %>%
+  tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
+  tidyr::separate(from.state, c('Region','reference'), sep = '\\.') %>%
+  tidyr::separate(to.state, c('Region','against'), sep = '\\.') %>%
+  tidyr::unite(Comparison, reference, against, sep = '-') %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
-  group_by(Comparison, Direction) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
+  group_by(Region, Comparison, Direction) %>%
   dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05) 
 
 tmp1 = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
-  group_by(Comparison, Direction) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
+  group_by(Region, Comparison, Direction) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
 
@@ -530,24 +651,30 @@ kable(full_join(tmp %>%
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
-p = p + facet_grid(.~Comparison, scales = 'fixed')
+p = p + facet_grid(Region+.~Comparison, scales = 'fixed')
 p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
 ```{r associate.de, fig.height=10, fig.width=15}
 pl = list()
-pl[[1]] = ggplot(DE, aes(x = log10(gene.length), y = logFC, color = Direction)) + geom_point() 
+pl[[1]] = ggplot(DE %>%
+                   dplyr::filter(Comparison == 'Control-AD'), 
+                 aes(x = log10(gene.length), y = logFC, color = Direction)) + geom_point() 
 pl[[1]] = pl[[1]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = log10(gene.length), y = logFC))
 pl[[1]] = pl[[1]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[1]] = pl[[1]] + theme(legend.position = 'top')
 
-pl[[2]] = ggplot(DE, aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
+pl[[2]] = ggplot(DE %>%
+                   dplyr::filter(Comparison == 'Control-AD'), 
+                 aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
 pl[[2]] = pl[[2]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = percentage_gc_content, y = logFC))
 pl[[2]] = pl[[2]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[2]] = pl[[2]] + theme(legend.position = 'top')
 
-pl[[3]] = ggplot(DE, aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
+pl[[3]] = ggplot(DE %>%
+                   dplyr::filter(Comparison == 'Control-AD'), 
+                 aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
 pl[[3]] = pl[[3]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = AveExpr, y = logFC))
 pl[[3]] = pl[[3]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[3]] = pl[[3]] + theme(legend.position = 'top')
@@ -556,7 +683,7 @@ multiplot(plotlist = pl, cols = 3)
 ```
 
 ### SVA Adjustments for eQTL analysis
-Conditioned on primary variable (cogdx) and identified covariates estimate surrogate variables using SVA package
+Conditioned on primary variable (BrainRegion.Diagnosis) and identified covariates estimate surrogate variables using SVA package
 ```{r sva.adjust}
 # Get (null) design matrix
 MODEL0 = DESIGN$design[,-grep(primaryVariable,colnames(DESIGN$design))] # Get null model by removing variable of interest
@@ -564,25 +691,39 @@ MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
 MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
+# Source modified functions from sva package
+source('../R/num.sv.R')
+source('../R/irwsva.build.R')
+source('../R/f.pvalue.R')
+
 # Calculate the number of surrogate variables
-NUM.SV = sva::num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                     MODEL1, method = 'be', seed = 123456, B = 30)
+NUM.SV = num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
+                     MODEL1, method = 'be', seed = 123456, B = 30, tol = 1e-20)
 
 # Estimate surrogate variables
-SURR.VAR = sva::sva(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                    MODEL1, MODEL0, n.sv = NUM.SV, B = 30)$sv
+SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
+                        MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
+# Estimate voom weights for dispersion control
+VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+                        design=cbind(MODEL1, SURR.VAR), plot=F)
+
+# Calculate correlation values of random effects
+VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$Donor_ID)
+
 # Re-estimate voom weights
 VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                        design = cbind(MODEL1, SURR.VAR), plot=F)
+                        design = cbind(MODEL1, SURR.VAR), plot=F,
+                        block = COVARIATES$Donor_ID, 
+                        correlation = correlation$cor)
 
 # Fit linear model using new weights and new design
-VOOM.SVA.FIT = lmFit(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                     design = cbind(MODEL1, SURR.VAR),
-                     weights = VOOM.SVA.WEIGHTS$weights)
+VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
 
 # Residuals after normalisation
 RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
@@ -600,10 +741,19 @@ DESIGN.NET = DESIGN.NET$design[,linColumnFinder(DESIGN.NET$design)$indepCols]
 VOOM.NET.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
                         design=DESIGN.NET, plot=F)
 
+# Calculate correlation values of random effects
+VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+correlation = parallelDuplicateCorrelation(VOOM.NET.WEIGHTS, block = COVARIATES$Donor_ID)
+
+# Re-estimate voom weights
+VOOM.NET.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+                        design = DESIGN.NET, plot=F,
+                        block = COVARIATES$Donor_ID, 
+                        correlation = correlation$cor)
+
 # Fit linear model using new weights and new design
-VOOM.NET.FIT = lmFit(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
-                     design = DESIGN.NET,
-                     weights = VOOM.NET.WEIGHTS$weights)
+VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
+VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS)
 
 # Residuals after normalisation
 RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
@@ -619,9 +769,9 @@ all.annotations = list(
   summaryLevel = 'gene',
   assay	 = 'Reprocessed RNAseq',
   
-  tissueTypeAbrv	= 'DLPFC', 
-  study = 'ROSMAP', 
-  center = 'BROAD-RUSH',
+  tissueTypeAbrv	= 'CBE, TCX', 
+  study = 'MayoRNASeq', 
+  center = 'UFL-MAYO-ISB',
   
   organism = 'HomoSapiens',
   consortium	= 'AMP-AD',
@@ -633,14 +783,14 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "ROSMAP Reprocessed RNASeq (Normalised)", parentId = parentId)
+CODE <- Folder(name = "MAYO Reprocessed RNASeq (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
-write.table(COVARIATES, file = 'ROSMAP_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('ROSMAP_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+write.table(COVARIATES, file = 'MAYO_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('MAYO_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
@@ -649,8 +799,8 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'ROSMAP_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('ROSMAP_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('MAYO_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
 annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -658,8 +808,8 @@ COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id)
 # Store logCPM
 CQN.GENE_EXPRESSION$y %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'ROSMAP_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-LCOUNT_OBJ = File('ROSMAP_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('MAYO_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
 annotations(LCOUNT_OBJ) = annotations(CODE)
 annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -667,8 +817,8 @@ LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store cqn offsets
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'ROSMAP_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('ROSMAP_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
+OFFSET_OBJ = File('MAYO_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
 annotations(OFFSET_OBJ) = annotations(CODE)
 annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -676,8 +826,8 @@ OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store design matrix
 MODEL1 %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'ROSMAP_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
-DM_OBJ = File('ROSMAP_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MAYO_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -685,8 +835,8 @@ DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store surrogate variables
 SURR.VAR %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'ROSMAP_DLPFC_SurVar.tsv', sep = '\t', row.names=F, quote=F)
-SURR_OBJ = File('ROSMAP_DLPFC_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_DLPFC_SurVar.tsv', sep = '\t', row.names=F, quote=F)
+SURR_OBJ = File('MAYO_DLPFC_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
 annotations(SURR_OBJ) = annotations(CODE)
 annotations(SURR_OBJ)$dataSubType = 'surrogateVariables'
 SURR_OBJ = synStore(SURR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -694,8 +844,8 @@ SURR_OBJ = synStore(SURR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store residual gene expression for eQTL analysis
 RESIDUAL.SVA.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'ROSMAP_DLPFC_eQTLResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-eEXP_OBJ = File('ROSMAP_DLPFC_eQTLResidualExpression.tsv', 
+  write.table(file = 'MAYO_DLPFC_eQTLResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+eEXP_OBJ = File('MAYO_DLPFC_eQTLResidualExpression.tsv', 
                 name = 'Normalised, covariates and surrogate variable adjusted residual expression (for eQTL)',
                 parentId = CODE$properties$id)
 annotations(eEXP_OBJ) = annotations(CODE)
@@ -705,8 +855,8 @@ eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store residual gene expression for eQTL analysis
 RESIDUAL.NET.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'ROSMAP_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-nEXP_OBJ = File('ROSMAP_DLPFC_netResidualExpression.tsv', 
+  write.table(file = 'MAYO_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+nEXP_OBJ = File('MAYO_DLPFC_netResidualExpression.tsv', 
                 name = 'Normalised, covariates removed residual expression (for network analysis)', 
                 parentId = CODE$properties$id)
 annotations(nEXP_OBJ) = annotations(CODE)
@@ -714,12 +864,14 @@ annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(DE, file = 'ROSMAP_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('ROSMAP_DLPFC_DiffExpression.tsv', name = 'Differential Expression Results (cogdx)', 
+write.table(DE, file = 'MAYO_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('MAYO_DLPFC_DiffExpression.tsv', 
+                name = 'Differential Expression Results (BrainRegion.Diagnosis)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
