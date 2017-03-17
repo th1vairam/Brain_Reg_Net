@@ -702,7 +702,7 @@ annotations(eEXP_OBJ) = annotations(CODE)
 annotations(eEXP_OBJ)$dataSubType = 'residualGeneExpForeQTL'
 eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
-# Store residual gene expression for eQTL analysis
+# Store residual gene expression for network analysis
 RESIDUAL.NET.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'ROSMAP_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)

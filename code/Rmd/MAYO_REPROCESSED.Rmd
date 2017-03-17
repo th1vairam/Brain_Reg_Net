@@ -11,7 +11,7 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./MAYO_REPROCESSED.Rmd",
-                                 parentId = "syn8403743",
+                                 parentId = "syn7554308",
                                  entityName = 'MAYO Reprocessed RNASeq (Normalised)')
 ```
 
@@ -62,7 +62,7 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
-parentId = 'syn8403743'
+parentId = 'syn7554308'
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of MAYO reprocessed RNASeq data';
 
@@ -789,8 +789,8 @@ CODE <- synStore(CODE)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
-write.table(COVARIATES, file = 'MAYO_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('MAYO_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+write.table(COVARIATES, file = 'MAYO_CBE_TCX_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('MAYO_CBE_TCX_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
@@ -799,8 +799,8 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('MAYO_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_CBE_TCX_Counts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('MAYO_CBE_TCX_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
 annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -808,8 +808,8 @@ COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id)
 # Store logCPM
 CQN.GENE_EXPRESSION$y %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-LCOUNT_OBJ = File('MAYO_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_CBE_TCX_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('MAYO_CBE_TCX_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
 annotations(LCOUNT_OBJ) = annotations(CODE)
 annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -817,8 +817,8 @@ LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store cqn offsets
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('MAYO_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_CBE_TCX_offset.tsv', sep = '\t', row.names=F, quote=F)
+OFFSET_OBJ = File('MAYO_CBE_TCX_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
 annotations(OFFSET_OBJ) = annotations(CODE)
 annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -826,8 +826,8 @@ OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store design matrix
 MODEL1 %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'MAYO_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
-DM_OBJ = File('MAYO_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_CBE_TCX_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('MAYO_CBE_TCX_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -835,8 +835,8 @@ DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store surrogate variables
 SURR.VAR %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'MAYO_DLPFC_SurVar.tsv', sep = '\t', row.names=F, quote=F)
-SURR_OBJ = File('MAYO_DLPFC_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+  write.table(file = 'MAYO_CBE_TCX_SurVar.tsv', sep = '\t', row.names=F, quote=F)
+SURR_OBJ = File('MAYO_CBE_TCX_SurVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
 annotations(SURR_OBJ) = annotations(CODE)
 annotations(SURR_OBJ)$dataSubType = 'surrogateVariables'
 SURR_OBJ = synStore(SURR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -844,19 +844,19 @@ SURR_OBJ = synStore(SURR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store residual gene expression for eQTL analysis
 RESIDUAL.SVA.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_DLPFC_eQTLResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-eEXP_OBJ = File('MAYO_DLPFC_eQTLResidualExpression.tsv', 
+  write.table(file = 'MAYO_CBE_TCX_eQTLResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+eEXP_OBJ = File('MAYO_CBE_TCX_eQTLResidualExpression.tsv', 
                 name = 'Normalised, covariates and surrogate variable adjusted residual expression (for eQTL)',
                 parentId = CODE$properties$id)
 annotations(eEXP_OBJ) = annotations(CODE)
 annotations(eEXP_OBJ)$dataSubType = 'residualGeneExpForeQTL'
 eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
-# Store residual gene expression for eQTL analysis
+# Store residual gene expression for network analysis
 RESIDUAL.NET.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'MAYO_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-nEXP_OBJ = File('MAYO_DLPFC_netResidualExpression.tsv', 
+  write.table(file = 'MAYO_CBE_TCX_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+nEXP_OBJ = File('MAYO_CBE_TCX_netResidualExpression.tsv', 
                 name = 'Normalised, covariates removed residual expression (for network analysis)', 
                 parentId = CODE$properties$id)
 annotations(nEXP_OBJ) = annotations(CODE)
@@ -864,8 +864,8 @@ annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(DE, file = 'MAYO_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('MAYO_DLPFC_DiffExpression.tsv', 
+write.table(DE, file = 'MAYO_CBE_TCX_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('MAYO_CBE_TCX_DiffExpression.tsv', 
                 name = 'Differential Expression Results (BrainRegion.Diagnosis)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
