@@ -15,7 +15,7 @@ knit2synapse::knitToFolderEntity(file = "./MAYO_REPROCESSED.Rmd",
                                  entityName = 'MAYO Reprocessed RNASeq (Normalised)')
 ```
 
-```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
@@ -41,11 +41,11 @@ library(synapseClient)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
-library(parallel)
+library(doParallel)
 library(foreach)
 
 cl = makeCluster(detectCores()-2)
-registerDoParallel(cl)
+doParallel::registerDoParallel(cl)
 
 synapseLogin()
 
