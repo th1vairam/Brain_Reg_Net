@@ -73,3 +73,10 @@ obj = File('CellSpecificityMetrics.tsv', parentId = 'syn8077138')
 obj = synStore(obj, activityName = 'Compute cell type specificity',
                used = ALL_USED_IDs,
                executed = thisFile)
+
+# Store results to synapse
+write.table(ref.expr.sum, file = 'CombinedExpression.tsv', sep = '\t', row.names = F, quote=F)
+obj = File('CombinedExpression.tsv', name = 'Combined expression (log mean cpm)', parentId = 'syn8077138')
+obj = synStore(obj, activityName = 'Compute cell type specificity',
+               used = ALL_USED_IDs,
+               executed = thisFile)
