@@ -779,7 +779,7 @@ annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
-DESIGN$design %>%
+MODEL1 %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
 DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
