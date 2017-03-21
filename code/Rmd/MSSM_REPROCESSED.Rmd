@@ -101,7 +101,10 @@ METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, 
   group_by(sampleIdentifier) %>%
   top_n(1, -rRNA.rate) %>%
   dplyr::select(sampleIdentifier, BrodmannArea, barcode, individualIdentifier, batch, RIN) %>%
-  unique
+  unique %>%
+  ddply(.(barcode), .fun = function(x){
+    x = dplyr::mutate(x, batch = paste(batch, collapse = ''), RIN = sum(RIN, na.rm = T))  
+  }) 
 
 # Get clinical metadata
 METADATA_CLINICAL_ID <- 'syn6101474'
@@ -157,7 +160,7 @@ METADATA = METADATA %>%
 METADATA <- METADATA %>%
   filter(!is.na(BrainRegion.Diagnosis), !is.na(PMI), !is.na(RIN))
 ```
-Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
+
 ```{r preprocess.data1}
 # Match covariates to expression data
 indToRetain = intersect(METADATA$sampleIdentifier, colnames(COUNT))

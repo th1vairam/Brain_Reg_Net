@@ -35,7 +35,6 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 library(RColorBrewer)
-library(cqn)
 
 library(synapseClient)
 library(knitr)
@@ -199,15 +198,11 @@ tmp.count = COUNT
 genesToAnalyze = unique(intersect(rownames(GENE.GC)[!is.na(GENE.GC$percentage_gc_content)], 
                                   rownames(GENE.LEN)[!is.na(GENE.LEN$gene.length)]))
 tmp.count = tmp.count[rownames(tmp.count) %in% genesToAnalyze,]
-CQN.GENE_EXPRESSION = cqn(tmp.count,
-                          x = GENE.GC[rownames(tmp.count), 'percentage_gc_content'],
-                          lengths = GENE.LEN[rownames(tmp.count), 'gene.length'],
-                          lengthMethod = "smooth", 
-                          verbose = FALSE)
+VOOM.GENE_EXPRESSION = voom(tmp.count)
 
 # Initial normalisation of gene expression
-ind = rownames(CQN.GENE_EXPRESSION$y) %in% CONTROL.PROBES$ensembl_gene_id 
-EXPR = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+ind = rownames(VOOM.GENE_EXPRESSION$E) %in% CONTROL.PROBES$ensembl_gene_id 
+EXPR = VOOM.GENE_EXPRESSION$E
 EXPR = EXPR[ind,]
 PMI = PMI[colnames(EXPR),,drop=F]
 
@@ -303,7 +298,7 @@ p[[6]] = p[[6]] + ggtitle('Fraction Intergenic Bases') + my.theme
 multiplot(plotlist = p, cols = 3)
 ```
 ### CPM Normalisation
-Preprocess counts matrix using CQN (Conditional Quantile Normlaisation accounting for both GC content and gene length)
+Preprocess counts matrix using TMM
 
 Remove genes that have less than 1 cpm counts in at least 50% of samples per BrainRegion x Diagnosis. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
@@ -329,7 +324,7 @@ PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ],
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
 ### Normalisation (with NULL)
-Initial normalisation usign cqn and dispersion control with voom (with NULL design)
+Initial normalisation usign TMM and dispersion control with voom (with NULL design)
 ```{r initial.voom.normalisation, fig.height=5, fig.width=5}
 # Normalise using TMM
 TMM.GENE_EXPRESSION = calcNormFactors(PROCESSED_COUNTS$filteredExprMatrix, method = 'TMM')
