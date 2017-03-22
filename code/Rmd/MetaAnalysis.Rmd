@@ -93,28 +93,22 @@ fishersPvalue <- function(pvalue){
 
 ### Get covariates/sample metadata from synapse
 ```{r covariates}
-covariates.ids = c(ROSMAP = 'syn8018344',
-                   MSBB = 'syn8073656',
-                   MAYO = 'syn8028561')
-covariates = lapply(covariates.ids, function(id){
-  x = downloadFile(id)
-  colnames(x)[1] = 'SampleID'
-  return(x)
-})
-
+covariates.ids = c(ROSMAP = 'syn8456631',
+                   MSBB = 'syn8484996',
+                   MAYO = 'syn8466814')
+covariates = lapply(covariates.ids, downloadFile) 
+                    
 covariates$ROSMAP = dplyr::filter(covariates$ROSMAP, cogdx %in% c(1,4)) %>%
   dplyr::mutate(Dx = factor(cogdx, levels = c(1,4), labels = c('1' = 'NCI', '4' = 'AD')),
                 Study = 'ROSMAP',
                 BrainRegion = 'DLPFC') %>%
   dplyr::select(SampleID, Study, BrainRegion, Dx)
 
-covariates$MSBB = dplyr::filter(covariates$MSBB, BrodmannArea.Dx %in% c('BM10.SD', 'BM22.SD', 'BM36.SD', 
-                                                                        'BM44.SD', 'BM36.ND', 'BM10.ND', 
-                                                                        'BM44.ND', 'BM22.ND')) %>%
-  dplyr::select(SampleID, BrodmannArea.Dx) %>%
-  tidyr::separate(BrodmannArea.Dx, c('BrainRegion', 'Dx')) %>%
+covariates$MSBB = covariates$MSBB %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
+  dplyr::filter(Diagnosis %in% c('SD', 'ND')) %>%
   dplyr::mutate(Study = 'MSSM',
-                Dx = factor(Dx, levels = c('ND','SD')),
+                Dx = factor(Diagnosis, levels = c('ND','SD')),
                 BrainRegion = factor(BrainRegion, labels = c('FP', 'STG', 'PHG', 'IFG'))) %>%
   dplyr::select(SampleID, Study, BrainRegion, Dx)
 
@@ -129,9 +123,9 @@ covariates$MAYO = dplyr::filter(covariates$MAYO, BrainRegion.Diagnosis %in% c('T
 
 ### Get differential expression data from synapse
 ```{r diffexp}
-diff.exp.ids = c(ROSMAP = 'syn8018358',
-                 MSBB = 'syn8073678',
-                 MAYO = 'syn8028572')
+diff.exp.ids = c(ROSMAP = 'syn8456721',
+                 MSBB = 'syn8502894',
+                 MAYO = 'syn8468023')
 diff.exp = lapply(diff.exp.ids, downloadFile)
 
 diff.exp$ROSMAP = filter(diff.exp$ROSMAP, Comparison == 'cogdx1-cogdx4')
@@ -152,7 +146,7 @@ tmp %>%
   kable
 
 pl = list()
-for(region in c('ROSMAP', 'MSBB', 'MAYO')){
+for(region in c('ROSMAP', 'MSSM', 'MAYO')){
   p = ggplot(tmp %>% filter(Study == region), aes(x = logFC, y = -log10(adj.P.Val), color = Direction)) + geom_point()
   p = p + scale_color_manual(values = c('green','grey','red'))
   p = p + facet_grid(Study~.+Region) + theme(legend.position = 'top')
@@ -198,27 +192,9 @@ multiplot(plotlist = pl, cols = 2)
 
 ### Get hgnc_symbol mapping from biomaRt
 ```{r biomart}
-# Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", dataset = "hsapiens_gene_ensembl", host = "dec2016.archive.ensembl.org")
-
 # Get background gene ids
-backgroundGenes = sapply(diff.exp, function(x) x$ensembl_gene_id) %>%
-  Reduce(c,.)
-
-# Query biomart
-Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol"),
-                       filters = "ensembl_gene_id", values = backgroundGenes,
-                       mart = mart)
-
-Entrez2Ensembl <- as.data.frame(org.Hs.egENSEMBL2EG)
-Entrez2HGNC <- as.data.frame(org.Hs.egSYMBOL2EG)
-HGNC2Ensembl <- left_join(Entrez2HGNC, Entrez2Ensembl)
-HGNC2Ensembl = HGNC2Ensembl[grep('^LOC',HGNC2Ensembl$symbol),c('ensembl_id', 'symbol')] %>%
-  filter(!is.na(ensembl_id), !is.na(symbol)) %>%
-  dplyr::rename(ensembl_gene_id = ensembl_id, hgnc_symbol = symbol)
-
-Ensemble2HGNC = rbindlist( list(Ensemble2HGNC, HGNC2Ensembl), use.names = T, fill = T) %>%
-  unique
+backgroundGenes = sapply(diff.exp, function(x) x$hgnc_symbol) %>%
+  Reduce(c,.) %>% unique() %>% setdiff(c(''))
 ```
 
 ### Consistently differentially expressed genes (in all 7 brain regions)
@@ -226,28 +202,26 @@ Ensemble2HGNC = rbindlist( list(Ensemble2HGNC, HGNC2Ensembl), use.names = T, fil
 # Find genes that are differentially expressed in each brain region
 diff.exp.gl = lapply(diff.exp, function(x){
   dplyr::filter(x, abs(logFC) >= log2(1.2) & adj.P.Val <= 0.05 & sign(CI.L) == sign(CI.R)) %>%
-    dplyr::select(Region, gene.id) %>%
+    dplyr::select(Region, ensembl_gene_id) %>%
     unique
 }) %>%
   rbindlist(use.names = T, fill = T) %>%
-  dlply(.(Region), .fun = function(x){x$gene.id})
+  dlply(.(Region), .fun = function(x){setdiff(unique(x$ensembl_gene_id),c(''))})
 
 tmp1 = rbindlist(diff.exp, use.names = T, fill = T) %>%
-  dplyr::filter(gene.id %in% Reduce(c, diff.exp.gl)) %>%
-  dplyr::select(-hgnc_symbol) %>%
-  left_join(Ensemble2HGNC)
-tmp1$hgnc_symbol[tmp1$ensembl_gene_id == 'ENSG00000275830'] = 'LOC101927646'
+  dplyr::filter(ensembl_gene_id %in% Reduce(c, diff.exp.gl))
 
 tmp1$Direction = 'NONE'
 tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC >= log2(1.2)] = 'UP'
 tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC <= -log2(1.2)] = 'DOWN'
 
 tmp = tmp1 %>%
-  dplyr::filter(hgnc_symbol != '') %>%
-  group_by(hgnc_symbol) %>%
+  group_by(ensembl_gene_id) %>%
   summarise(count = sum(Direction != 'NONE')) %>%
-  filter(count >= 5) 
-writeLines(paste('Differentially expressed genes in any 5 brain regions at an FDR of 0.05 and fold change of 1.2 are',
+  filter(count == 7) %>%
+  left_join(dplyr::select(tmp1, ensembl_gene_id, hgnc_symbol) %>% unique)
+
+writeLines(paste('Differentially expressed genes in all 7 brain regions at an FDR of 0.05 and fold change of 1.2 are',
                  length(unique(tmp$hgnc_symbol))))
 kable(data.frame(ngenes = length(unique(tmp$hgnc_symbol)),
                  hgnc_symbol = tmp$hgnc_symbol %>% unique %>% paste(collapse = ',')))
@@ -260,17 +234,17 @@ tmp.eff.sz = filter(tmp1, hgnc_symbol %in% tmp$hgnc_symbol) %>%
 
 pl = list()
 p = ggplot(tmp1 %>% 
-             filter(hgnc_symbol %in% tmp.eff.sz$hgnc_symbol[tmp.eff.sz$es>2.6]), 
+             filter(hgnc_symbol %in% c('MEIS3', 'PCSK1', 'ADAMTS2')), 
            aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
 p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top') + scale_fill_manual(values = c('grey', 'red'))
+p = p + theme(legend.position = 'top') + scale_fill_manual(values = c('green', 'red'))
 pl[[1]] = p
 
 p = ggplot(tmp1 %>% 
-             filter(hgnc_symbol %in% tmp.eff.sz$hgnc_symbol[tmp.eff.sz$es<2.6]), 
+             filter(hgnc_symbol %in% c('FOXJ1', 'PRELP', 'S100A4')), 
            aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
 p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top')  + scale_fill_manual(values = c('green','grey','red'))
+p = p + theme(legend.position = 'top')  + scale_fill_manual(values = c('green','grey', 'red'))
 pl[[2]] = p
 
 multiplot(plotlist = pl, cols = 2)
@@ -372,7 +346,7 @@ Heatmap(tmp.expr, top_annotation = h1, show_row_names = F, show_column_names = F
 setsToTest = rbindlist(diff.exp, use.names = T, fill = T) %>%
   filter(adj.P.Val <= 0.05, Direction != 'NONE') %>%
   dlply(.(Region, Direction), .fun = function(x){
-    unique(x$hgnc_symbol)
+    setdiff(unique(x$hgnc_symbol),c(''))
   })
 
 tmp1 = rankprod.pfp$pfp[intersect(intersect(tmp$fb.pval, tmp$min.pval), tmp$rankprod.pval),] <= 0.05
@@ -453,7 +427,12 @@ for (name in names(setsToTest)){
 
 # Write results to file
 tmp1 = rbindlist(enrichResults, use.names = TRUE, idcol = 'ComparisonName', fill = TRUE) %>%
-  filter(!is.na(Category))
+  filter(!is.na(Category)) %>%
+  filter(fdr <= 0.01)
+
+tmp2 = dplyr::select(tmp1, ComparisonName, GeneSetName, Odds.Ratio) %>%
+  tidyr::spread(ComparisonName,Odds.Ratio)
+rownames(tmp2) = tmp2[,1]
 
 tmp1$pval = unlist(tmp1$pval)
 tmp1$ngenes = unlist(tmp1$ngenes)
