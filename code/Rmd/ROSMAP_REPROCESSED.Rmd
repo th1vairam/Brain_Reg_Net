@@ -43,6 +43,12 @@ library(githubr) # get the package from devtools::install_github('brian-bot/gith
 
 synapseLogin()
 
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
 options(xtable.type="html")
 
 knitr::opts_chunk$set(
@@ -96,7 +102,7 @@ METADATA.TECH_OBJ <- synGet(METADATA.TECH_ID)
 METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
 
 # Get picard metrics from synapse
-METADATA.PICARD_ID <- 'syn8380366'
+METADATA.PICARD_ID <- 'syn8512191'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_ID
 METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = FALSE, exdir = getwd())
 METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE, exdir = getwd())
@@ -148,12 +154,15 @@ rownames(GENE.GC) = GENE.GC$ensembl_gene_id
 METADATA <- METADATA %>%
   ungroup %>%
   filter(Sampleid %in% colnames(COUNT)) %>%
-  filter(!is.na(cogdx)) %>%
+  filter(!is.na(cogdx), !is.na(braaksc), !is.na(ceradsc)) %>%
   filter(!is.na(RINcontinuous)) %>%
   filter(!is.na(pmi)) %>%
-  filter(!is.na(Sampleid)) %>%
   filter(!(Sampleid %in% c('380_120503'))) %>%
   as.data.frame()
+
+METADATA$Diagnosis = 'NONE'
+METADATA$Diagnosis[METADATA$cogdx == 1 & METADATA$braaksc <= 3 & METADATA$ceradsc > 2] = 'Control'
+METADATA$Diagnosis[METADATA$cogdx == 4 & METADATA$braaksc >= 4 & METADATA$ceradsc <= 2] = 'AD'
 ```
 
 ```{r preprocess.data1,cache=TRUE}
@@ -174,8 +183,8 @@ Determine relationship between covariates
 #"braaksc","ceradsc","cts_mmse30_first_ad_dx","cts_mmse30_lv", "PF_INDEL_RATE", "PF_MISMATCH_RATE", "age_first_ad_dx","age_at_visit_max",
 primaryVariable <- "cogdx"
 FactorCovariates <- c("Batch", "msex", "race", "spanish", "cogdx")
-ContCovariates <- c("RINcontinuous", "age_death", "pmi", "educ", "PCT_PF_READS", "PCT_PF_READS_ALIGNED",
-                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
+ContCovariates <- c("RINcontinuous", "age_death", "pmi", "educ", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
+                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -564,13 +573,40 @@ MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
 MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
-# Calculate the number of surrogate variables
-NUM.SV = sva::num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                     MODEL1, method = 'be', seed = 123456, B = 30)
+# Calculate the number of surrogate variables (be method)
+# NUM.SV = sva::num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, MODEL1, method = 'be', seed = 123456, B = 30)
+
+# Get residuals from differential expression model
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
+
+# Compute actual variance of all principal components
+tmp = svd(RESIDUAL.SVA.GENE_EXPRESSION)
+actual.var = tmp$d^2/sum(tmp$d^2)
+
+# Compute permuted variance of all principal components
+permuted.var = foreach(i = 1:20, .combine = rbind) %dopar% {
+  tmp.residual = t(apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, sample, replace = FALSE))
+  tmp = svd(tmp.residual)
+  permuted.var = tmp$d^2/sum(tmp$d^2)
+}
+permuted.var = apply(permuted.var, 2, mean)
+NUM.SV = sum(actual.var >= permuted.var[1])
+
+# Plot variance components
+var.comp = data.frame(component = 1:length(actual.var), 
+                      residual = actual.var, 
+                      permuted.residual = permuted.var) %>%
+  tidyr::gather(data, value, -component)
+p = ggplot(var.comp %>% filter(component <= 10), aes(x = component, y = value, color = data)) + geom_point()
+p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
+p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
+p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
+p
 
 # Estimate surrogate variables
 SURR.VAR = sva::sva(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
                     MODEL1, MODEL0, n.sv = NUM.SV, B = 30)$sv
+SURR.VAR = data.frame(SURR.VAR)
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
@@ -720,6 +756,7 @@ DEXP_OBJ = File('ROSMAP_DLPFC_DiffExpression.tsv', name = 'Differential Expressi
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
