@@ -518,24 +518,13 @@ DE = DE %>%
                 Direction = as.character(Direction))
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
+writeLines('Differentially expressed genes at an FDR 0.05 and logFC 1.2')
 tmp = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
-  group_by(Comparison, Direction) %>%
-  dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id))) %>%
-  spread(Direction, FDR_0_05) 
-
-tmp1 = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
   group_by(Comparison, Direction) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
-
-kable(full_join(tmp %>%
-                  dplyr::rename(DOWN_FDR_0_05 = DOWN, UP_FDR_0_05 = UP),
-                tmp1 %>%
-                  dplyr::rename(DOWN_FDR_0_05_FC_1.2 = DOWN, UP_FDR_0_05_FC_1.2 = UP)))
+kable(tmp)
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
