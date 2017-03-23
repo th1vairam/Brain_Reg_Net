@@ -60,7 +60,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE}
 # Synapse parameters
 parentId = 'syn7554308'
 activityName = 'Covariate analysis';
@@ -74,7 +74,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain count matrix and metadata from synapse.
-```{r download.data, cache=TRUE}
+```{r download.data}
 # Get reprocessed sample counts for temporal cortex
 COUNT_ID <- 'syn7994853';
 ALL_USED_IDs <- COUNT_ID
@@ -140,6 +140,14 @@ rownames(GENE.GC) = GENE.GC$ensembl_gene_id
 
 ### Data preprocessing
 ```{r preprocess.data,cache=FALSE, echo=TRUE}
+# Choose samples with rRNA rate less than 5% and more PF_READS_ALIGNED
+METADATA = METADATA %>%
+  ddply(.(barcode), .fun = function(x){
+    x %>%
+      dplyr::filter(PCT_RIBOSOMAL_BASES < 0.05) %>%
+      top_n(1, PF_READS_ALIGNED)
+  })
+
 # Fix metadata
 METADATA = METADATA %>%
   dplyr::mutate(AOD = gsub('\\+','',AOD),
@@ -178,12 +186,11 @@ Following `r length(indRemoved)` samples were removed: `r indRemoved`
 
 ### Covariate clustering
 Determine relationship between covariates
-```{r covariates.clustering, cache=TRUE}
+```{r covariates.clustering}
 primaryVariable <- "BrainRegion.Diagnosis"
 FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AOD","PMI", "PCT_PF_READS", "PCT_PF_READS_ALIGNED", 
-                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", 
-                    "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
+ContCovariates <- c("RIN", "RIN2", "AOD","PMI",  "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
+                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -331,7 +338,7 @@ gc()
 
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates are used to find significant covariates
-```{r preadj.covariates, cache=TRUE}
+```{r preadj.covariates}
 # Find correlation between PC's of gene expression with covariates
 preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
                                                  COVARIATES,
@@ -556,23 +563,11 @@ DE = DE %>%
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
-  group_by(Region, Comparison, Direction) %>%
-  dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id))) %>%
-  spread(Direction, FDR_0_05) 
-
-tmp1 = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
   group_by(Region, Comparison, Direction) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
-
-kable(full_join(tmp %>%
-                  dplyr::rename(DOWN_FDR_0_05 = DOWN, UP_FDR_0_05 = UP),
-                tmp1 %>%
-                  dplyr::rename(DOWN_FDR_0_05_FC_1.2 = DOWN, UP_FDR_0_05_FC_1.2 = UP)))
+kable(tmp)
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
@@ -613,9 +608,41 @@ MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
 MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
+# Source modified functions from sva package
+# source('../R/num.sv.R')
+source('../R/irwsva.build.R')
+source('../R/f.pvalue.R')
+
 # Calculate the number of surrogate variables
-NUM.SV = sva::num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                     MODEL1, method = 'be', seed = 123456, B = 30)
+# NUM.SV = num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
+#                      MODEL1, method = 'be', seed = 123456, B = 30, tol = 1e-20)
+
+# Get residuals from differential expression model
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
+
+# Compute actual variance of all principal components
+tmp = svd(RESIDUAL.SVA.GENE_EXPRESSION)
+actual.var = tmp$d^2/sum(tmp$d^2)
+
+# Compute permuted variance of all principal components
+permuted.var = foreach(i = 1:20, .combine = rbind) %dopar% {
+  tmp.residual = t(apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, sample, replace = FALSE))
+  tmp = svd(tmp.residual)
+  permuted.var = tmp$d^2/sum(tmp$d^2)
+}
+permuted.var = apply(permuted.var, 2, mean)
+NUM.SV = sum(actual.var >= permuted.var[1])
+
+# Plot variance components
+var.comp = data.frame(component = 1:length(actual.var), 
+                      residual = actual.var, 
+                      permuted.residual = permuted.var) %>%
+  tidyr::gather(data, value, -component)
+p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.2)), aes(x = component, y = value, color = data)) + geom_point()
+p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
+p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
+p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
+p
 
 # Estimate surrogate variables
 SURR.VAR = sva::sva(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
@@ -688,7 +715,7 @@ all.annotations = list(
   
   tissueTypeAbrv	= 'FP, STG, PHG, IFG', 
   study = 'MSSMRNASeq', 
-  center = 'MSSM',
+  center = 'MSBB',
   
   organism = 'HomoSapiens',
   consortium	= 'AMP-AD',
