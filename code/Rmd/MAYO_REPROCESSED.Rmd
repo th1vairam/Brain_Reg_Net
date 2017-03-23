@@ -153,7 +153,14 @@ rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
 
 GENE.GC = dplyr::select(GENE.PARAM, ensembl_gene_id, percentage_gc_content) %>% unique()
 rownames(GENE.GC) = GENE.GC$ensembl_gene_id
+
+# Samples excluded by investigators
+SAMPLES.EXCLUDE = c(downloadFile('syn6126119')$`Sample Name`,
+                    downloadFile('syn6126114')$`Sample Name`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn6126119', 'syn6126114')
 ```
+Following `r length(SAMPLES.EXCLUDE)` samples were removed from analysis as original investigators tagged them as outliers for various reasons as described here syn6126119, syn6126114
+Samples removed are `r paste(SAMPLES.EXCLUDE, collapse = ', ')`
 
 ### Data preprocessing
 ```{r preprocess.data, echo=TRUE}
@@ -165,7 +172,8 @@ METADATA$RIN2 = METADATA$RIN^2
 METADATA <- METADATA %>%
   filter(!is.na(Source)) %>%
   dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX",
-                            "11396_TCX", "11294_TCX", "11408_TCX")))
+                            "11396_TCX", "11294_TCX", "11408_TCX",
+                            SAMPLES.EXCLUDE)))
 ```
 Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
 ```{r preprocess.data1}
