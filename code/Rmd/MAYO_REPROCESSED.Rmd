@@ -36,6 +36,7 @@ library(edgeR)
 library(biomaRt)
 library(RColorBrewer)
 library(cqn)
+library(glmnet)
 
 library(synapseClient)
 library(knitr)
@@ -60,7 +61,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE}
 # Synapse parameters
 parentId = 'syn7554308'
 activityName = 'Covariate analysis';
@@ -74,7 +75,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain count matrix and metadata from synapse.
-```{r download.data, cache=TRUE}
+```{r download.data}
 # Get reprocessed sample counts for temporal cortex
 COUNT_TC_ID <- 'syn7987765';
 ALL_USED_IDs <- COUNT_TC_ID
@@ -155,7 +156,7 @@ rownames(GENE.GC) = GENE.GC$ensembl_gene_id
 ```
 
 ### Data preprocessing
-```{r preprocess.data,cache=FALSE, echo=TRUE}
+```{r preprocess.data, echo=TRUE}
 # Fix metadata
 METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
 METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
@@ -251,7 +252,7 @@ METADATA = METADATA %>%
 
 ### Covariate clustering
 Determine relationship between covariates
-```{r covariates.clustering, cache=TRUE}
+```{r covariates.clustering}
 primaryVariable <- "BrainRegion.Diagnosis"
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
 ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
@@ -405,7 +406,7 @@ gc()
 
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates are used to find significant covariates
-```{r preadj.covariates, cache=TRUE}
+```{r preadj.covariates}
 # Find correlation between PC's of gene expression with covariates
 preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
                                                  COVARIATES,
@@ -568,7 +569,7 @@ Interpretation of BrainRegion.Diagnosis
 8. CER.Pathologic_Aging: Pathological Aging samples from Cerebellum region
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp, fig.height=6, fig.width=18, cache=FALSE}
+```{r diff.exp, fig.height=6, fig.width=18}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable, postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
@@ -710,7 +711,7 @@ var.comp = data.frame(component = 1:length(actual.var),
                       residual = actual.var, 
                       permuted.residual = permuted.var) %>%
   tidyr::gather(data, value, -component)
-p = ggplot(var.comp %>% filter(component <= 10), aes(x = component, y = value, color = data)) + geom_point()
+p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.2)), aes(x = component, y = value, color = data)) + geom_point()
 p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
 p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
 p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
