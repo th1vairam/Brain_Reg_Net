@@ -479,7 +479,7 @@ Interpretation of cogdx scores
 6. Other dementia. Other primary cause of dementia
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp, fig.height=6, fig.width=18}
+```{r diff.exp, fig.height=6, fig.width=18, cache=FALSE}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable, postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]

@@ -254,8 +254,8 @@ Determine relationship between covariates
 ```{r covariates.clustering, cache=TRUE}
 primaryVariable <- "BrainRegion.Diagnosis"
 FactorCovariates <- c("Donor_ID", "Source", "Gender", "FLOWCELL", "BrainRegion.Diagnosis")
-ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI", "PCT_PF_READS", "PCT_PF_READS_ALIGNED",
-                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES", "PCT_USABLE_BASES")
+ContCovariates <- c("RIN", "RIN2", "AgeAtDeath","PMI", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
+                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
   
 # Find inter relation between factor covariates
 COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
@@ -373,11 +373,12 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   tidyr::separate(BrainRegion.Diagnosis, c('Region','Diagnosis'), sep = '\\.') %>% 
   dplyr::mutate(Region = factor(Region),
                 Source = factor(Source))
+plotdata$SampleID[!(plotdata$SampleID %in% c("11311_CER", "1923_CER", "1923_TCX", "11396_TCX", "11294_TCX", "11408_TCX"))] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(shape=Source, color=Diagnosis, size=RIN))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Region~., scales = 'free_y')
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 ```
 Tree based classification of samples
@@ -567,7 +568,7 @@ Interpretation of BrainRegion.Diagnosis
 8. CER.Pathologic_Aging: Pathological Aging samples from Cerebellum region
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp, fig.height=6, fig.width=18}
+```{r diff.exp, fig.height=6, fig.width=18, cache=FALSE}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable, postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
@@ -631,23 +632,11 @@ DE = DE %>%
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
-  group_by(Region, Comparison, Direction) %>%
-  dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id))) %>%
-  spread(Direction, FDR_0_05) 
-
-tmp1 = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
   dplyr::select(ensembl_gene_id, Comparison, Direction, Region) %>%
   group_by(Region, Comparison, Direction) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
-
-kable(full_join(tmp %>%
-                  dplyr::rename(DOWN_FDR_0_05 = DOWN, UP_FDR_0_05 = UP),
-                tmp1 %>%
-                  dplyr::rename(DOWN_FDR_0_05_FC_1.2 = DOWN, UP_FDR_0_05_FC_1.2 = UP)))
+kable(tmp)
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
@@ -692,13 +681,40 @@ MODEL1 = DESIGN$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
 # Source modified functions from sva package
-source('../R/num.sv.R')
+# source('../R/num.sv.R')
 source('../R/irwsva.build.R')
 source('../R/f.pvalue.R')
 
 # Calculate the number of surrogate variables
-NUM.SV = num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                     MODEL1, method = 'be', seed = 123456, B = 30, tol = 1e-20)
+# NUM.SV = num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
+#                      MODEL1, method = 'be', seed = 123456, B = 30, tol = 1e-20)
+
+# Get residuals from differential expression model
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
+
+# Compute actual variance of all principal components
+tmp = svd(RESIDUAL.SVA.GENE_EXPRESSION)
+actual.var = tmp$d^2/sum(tmp$d^2)
+
+# Compute permuted variance of all principal components
+permuted.var = foreach(i = 1:20, .combine = rbind) %dopar% {
+  tmp.residual = t(apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, sample, replace = FALSE))
+  tmp = svd(tmp.residual)
+  permuted.var = tmp$d^2/sum(tmp$d^2)
+}
+permuted.var = apply(permuted.var, 2, mean)
+NUM.SV = sum(actual.var >= permuted.var[1])
+
+# Plot variance components
+var.comp = data.frame(component = 1:length(actual.var), 
+                      residual = actual.var, 
+                      permuted.residual = permuted.var) %>%
+  tidyr::gather(data, value, -component)
+p = ggplot(var.comp %>% filter(component <= 10), aes(x = component, y = value, color = data)) + geom_point()
+p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
+p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
+p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
+p
 
 # Estimate surrogate variables
 SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
