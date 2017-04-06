@@ -566,7 +566,7 @@ MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 # NUM.SV = sva::num.sv(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, MODEL1, method = 'be', seed = 123456, B = 30)
 
 # Get residuals from differential expression model
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(FIT, CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset)
 
 # Compute actual variance of all principal components
 tmp = svd(RESIDUAL.SVA.GENE_EXPRESSION)
@@ -586,7 +586,7 @@ var.comp = data.frame(component = 1:length(actual.var),
                       residual = actual.var, 
                       permuted.residual = permuted.var) %>%
   tidyr::gather(data, value, -component)
-p = ggplot(var.comp %>% filter(component <= 10), aes(x = component, y = value, color = data)) + geom_point()
+p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.3)), aes(x = component, y = value, color = data)) + geom_point()
 p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
 p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
 p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
