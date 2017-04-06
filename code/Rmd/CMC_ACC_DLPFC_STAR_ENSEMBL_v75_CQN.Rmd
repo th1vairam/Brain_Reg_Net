@@ -242,7 +242,7 @@ backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
 mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
-Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content"),
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content", "gene_biotype"),
                        filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
 
@@ -277,7 +277,7 @@ COVARIATES$RIN2 = COVARIATES$RIN^2
 ContCovariates = c(ContCovariates, 'RIN2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
-```{r covariates.correlation, fig.width=8, fig.height=8}
+```{r covariates.correlation, fig.width=10, fig.height=8}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 tmp = COVARIATES.CORRELATION$ESTIMATE
 tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
@@ -335,8 +335,6 @@ multiplot(plotlist = p, cols = 3)
 # vcd::mosaic(~ Gender + Dx.Tissue, data = COVARIATES)
 ```
 ### Filter genes
-Preprocess counts matrix and metadata. Determine design matrix for normalisation and differential expression analysis. 
-
 Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
 genesToAnalyze = dlply(METADATA, .(Dx.Tissue), .fun = function(mtd, count){
@@ -352,14 +350,24 @@ genesToAnalyze = unlist(genesToAnalyze) %>%
   intersect(GENE.LEN$ensembl_gene_id[!is.na(GENE.LEN$Length)])
 
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
+  dplyr::rename(ensembl_gene_id = genes) %>%
+  left_join(Ensemble2HGNC) %>%
+  group_by(gene_biotype) %>%
+  summarise(fraction  = n()) %>%
+  filter(fraction > 100) %>%
+  dplyr::mutate(fraction = fraction/length(PROCESSED_COUNTS$filteredExprMatrix$genes[,1]))
 ```
-Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples from `r length(unique(COVARIATES$Individual_ID))` unique individuals
+`r dim(PROCESSED_COUNTS$filteredExprMatrix$genes)[1]` genes are used for the analysis. 
+
+Following is the distribution of biotypes
+`r kable(pct.pc)`
 
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
-```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+```{r detect.outliers, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(voom(PROCESSED_COUNTS$fi)$E, scale.=T, center = T)
+PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -367,14 +375,38 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC2=PC$rotation[,2])
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
-  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
+  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  dplyr::mutate(label = SampleID)
+plotdata$label[!(plotdata$SampleID %in% c('MSSM_RNA_ACC_BP_24', 
+                                          'MSSM_RNA_ACC_375'))] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
+
+# Plot abberent distribution of logcpm counts
+tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
+  left_join(COVARIATES %>%
+              rownameToFirstColumn('SampleID') %>%
+              tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
+
+p = ggplot(tmp1 %>%
+             dplyr::filter(SampleID %in% c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375')),
+           aes(x = logCPM, color = SampleID)) + geom_density() 
+p = p + theme(legend.position = 'top') + facet_grid(Dx+.~Tissue, scale = 'free')
+p
+
+indToRemove = c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375')
+indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
+PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
 ```
+Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples from `r length(unique(COVARIATES$Individual_ID))` unique individuals
+
+Based on the expression pattern following samples were tagged as outliers: `r paste(indToRemove, collapse = ', ')` 
 
 ### Normalisation (with NULL)
 Initial normalisation usign cqn and dispersion control with voom (with NULL design)
@@ -424,6 +456,18 @@ p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p
+
+# Plot abberent distribution of logcpm counts
+tmp1 = (CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset) %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
+  left_join(COVARIATES %>%
+              rownameToFirstColumn('SampleID') %>%
+              tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
+
+p = ggplot(tmp1, aes(x = logCPM, color = SampleID)) + geom_density() 
+p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free')
 p
 ```
 Tree based classification of samples
