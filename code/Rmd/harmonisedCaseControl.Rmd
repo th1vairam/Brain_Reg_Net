@@ -1,0 +1,402 @@
+---
+title: "Analysing number of case and control based on new harmonised definition"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+library(RColorBrewer)
+library(cqn)
+library(glmnet)
+
+library(synapseClient)
+library(knitr)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+
+library(doParallel)
+library(foreach)
+
+synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r download.data}
+# Get reprocessed sample counts for temporal cortex
+COUNT_TC_ID <- 'syn7987765';
+ALL_USED_IDs <- COUNT_TC_ID
+COUNT_TC <- read.table(synGet(COUNT_TC_ID)@filePath, header=T, sep='\t', check.names = F)
+colnames(COUNT_TC) = paste(colnames(COUNT_TC), 'TCX', sep = '_')
+
+# Get reprocessed sample counts for cerebellum
+COUNT_CE_ID <- 'syn7513807';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] <- COUNT_CE_ID
+COUNT_CE <- read.table(synGet(COUNT_CE_ID)@filePath, header=T, sep='\t', check.names = F)
+
+COUNT = cbind(COUNT_TC, COUNT_CE[rownames(COUNT_TC),])
+
+# Convert rownames of counts from tracking id to ensemble gene id
+tmp = data.frame(Gene.ID = rownames(COUNT)) %>%
+  dplyr::mutate(ID = Gene.ID) %>%
+  tidyr::separate(ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+rownames(tmp) = tmp$Gene.ID
+rownames(COUNT) = tmp[rownames(COUNT), 'ensembl_gene_id']
+
+# Get clinical metadata
+METADATA_TC_ID <- 'syn3817650'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TC_ID
+METADATA_TC <- read.table(synGet(METADATA_TC_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
+  tidyr::separate(ID, c('Donor_ID', 'BrainRegion'), sep = '_') %>%
+  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_'))
+
+# Get clinical metadata
+METADATA_CE_ID <- 'syn5223705'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CE_ID
+METADATA_CE <- read.table(synGet(METADATA_CE_ID)@filePath,sep='\t',header=T, stringsAsFactors=F) %>%
+  tidyr::separate(SampleID, c('Donor_ID', 'BrainRegion')) %>%
+  dplyr::mutate(ID = paste(Donor_ID, BrainRegion, sep = '_')) %>%
+  dplyr::rename(Gender = Sex, FLOWCELL = Flowcell)
+
+# Get picard metrics from synapse
+METADATA.PICARD_CE_ID <- 'syn8380392'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_CE_ID
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS <- untar(synGet(METADATA.PICARD_CE_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_CE_FPATHS = METADATA.PICARD_CE_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_CE_FPATHS)]
+METADATA.PICARD_CE <- plyr::ldply(METADATA.PICARD_CE_FPATHS, read.csv)
+
+METADATA.PICARD_CE$ID = gsub('picard/', '', METADATA.PICARD_CE_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]})
+colnames(METADATA.PICARD_CE) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_CE))
+colnames(METADATA.PICARD_CE) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_CE))
+
+METADATA.PICARD_TC_ID <- 'syn8383233'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_TC_ID
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS <- untar(synGet(METADATA.PICARD_TC_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_TC_FPATHS = METADATA.PICARD_TC_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_TC_FPATHS)]
+METADATA.PICARD_TC <- plyr::ldply(METADATA.PICARD_TC_FPATHS, read.csv)
+
+METADATA.PICARD_TC$ID = gsub('picard/', '', METADATA.PICARD_TC_FPATHS) %>%
+  gsub('/picard.CombinedMetrics.csv','',.) %>%
+  sapply(function(x){str_split(x, '\\.')[[1]][1]}) %>%
+  gsub('Aligned','',.)
+colnames(METADATA.PICARD_TC) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD_TC))
+colnames(METADATA.PICARD_TC) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD_TC))
+
+# Merge all metadata
+METADATA = rbindlist(list(METADATA_TC, METADATA_CE), use.names = T, fill = T) %>%
+  inner_join(rbindlist(list(METADATA.PICARD_TC, METADATA.PICARD_CE), use.names = T, fill = T)) %>%
+  as.data.frame
+
+# Get gene specific parameters from synapse
+GENE.PARAM = downloadFile('syn8449369')
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8449369')
+
+GENE.LEN = dplyr::select(GENE.PARAM, ensembl_gene_id, gene.length) %>% unique()
+rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
+
+GENE.GC = dplyr::select(GENE.PARAM, ensembl_gene_id, percentage_gc_content) %>% unique()
+rownames(GENE.GC) = GENE.GC$ensembl_gene_id
+
+# Samples excluded by investigators
+SAMPLES.EXCLUDE = c(downloadFile('syn6126119')$`Sample Name`,
+                    downloadFile('syn6126114')$`Sample Name`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn6126119', 'syn6126114')
+```
+Following `r length(SAMPLES.EXCLUDE)` samples were removed from analysis as original investigators tagged them as outliers for various reasons as described here syn6126119, syn6126114
+Samples removed are `r paste(SAMPLES.EXCLUDE, collapse = ', ')`
+
+### Data preprocessing
+```{r preprocess.data, echo=TRUE}
+# Fix metadata
+METADATA$AgeAtDeath = gsub("_or_above", "", METADATA$AgeAtDeath)
+METADATA$Diagnosis = gsub("Pathologic Aging","Pathologic_Aging", METADATA$Diagnosis)
+METADATA$BrainRegion.Diagnosis = paste(METADATA$BrainRegion, METADATA$Diagnosis, sep = '.')
+METADATA$RIN2 = METADATA$RIN^2
+METADATA <- METADATA %>%
+  filter(!is.na(Source)) %>%
+  dplyr::filter(!(ID %in% c("11311_CER", "1923_CER", "1923_TCX",
+                            "11396_TCX", "11294_TCX", "11408_TCX",
+                            SAMPLES.EXCLUDE)))
+```
+Following samples were considered outliers and removed based on PCA and/or eucledian distance: 11311\_CER, 1923\_CER, 1923\_TCX, 11396\_TCX, 11294\_TCX, 11408\_TCX
+```{r preprocess.data1}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$ID, colnames(COUNT))
+indRemoved = setdiff(colnames(COUNT), METADATA$ID)
+
+COUNT <- COUNT[, indToRetain]
+
+rownames(METADATA) = METADATA$ID
+METADATA = METADATA[indToRetain,]
+
+all.counts = list()
+all.mtd = list()
+
+all.counts$MAYO = COUNT
+all.mtd$MAYO = METADATA
+```
+
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r download.data}
+# Get reprocessed sample counts for temporal cortex
+COUNT_ID <- 'syn7994853';
+ALL_USED_IDs <- COUNT_ID
+COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F)
+
+# Convert rownames of counts from tracking id to ensemble gene id
+tmp = data.frame(Gene.ID = rownames(COUNT)) %>%
+  dplyr::mutate(ID = Gene.ID) %>%
+  tidyr::separate(ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+rownames(tmp) = tmp$Gene.ID
+rownames(COUNT) = tmp[rownames(COUNT), 'ensembl_gene_id']
+
+# Get sample ids
+SampleID = data.frame(SampleID = colnames(COUNT),
+                 ID = colnames(COUNT)) %>% 
+  tidyr::separate(ID, c('A','B','ID'), sep = '_') %>%
+  dplyr::select(SampleID, ID) %>%
+  dplyr::mutate(ID = as.numeric(ID))
+
+# Get technical metadata
+METADATA_TECH_ID <- 'syn6100548'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_TECH_ID
+METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, row.names=1) %>%
+  group_by(sampleIdentifier) %>%
+  top_n(1, -rRNA.rate) %>%
+  dplyr::select(sampleIdentifier, BrodmannArea, barcode, individualIdentifier, batch, RIN) %>%
+  unique %>%
+  ddply(.(barcode), .fun = function(x){
+    x = dplyr::mutate(x, batch = paste(batch, collapse = ''), RIN = sum(RIN, na.rm = T))  
+  }) 
+
+# Get clinical metadata
+METADATA_CLINICAL_ID <- 'syn6101474'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
+METADATA_CLINICAL <- read.csv(synGet(METADATA_CLINICAL_ID)@filePath, header = T)
+
+# Get picard metrics from synapse
+METADATA.PICARD_ID <- 'syn8380379'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_ID
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_FPATHS = METADATA.PICARD_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_FPATHS)]
+METADATA.PICARD <- plyr::ldply(METADATA.PICARD_FPATHS, read.csv)
+
+METADATA.PICARD$sampleIdentifier = gsub('picard/', '', METADATA.PICARD_FPATHS) %>%
+  gsub('.accepted_hits.sort.coord/picard.CombinedMetrics.csv','',.)
+colnames(METADATA.PICARD) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD))
+colnames(METADATA.PICARD) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD))
+
+METADATA <- full_join(METADATA_TECH, METADATA_CLINICAL) %>%
+  inner_join(METADATA.PICARD)
+
+# Get gene specific parameters from synapse
+GENE.PARAM = downloadFile('syn8449369')
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8449369')
+
+GENE.LEN = dplyr::select(GENE.PARAM, ensembl_gene_id, gene.length) %>% unique()
+rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
+
+GENE.GC = dplyr::select(GENE.PARAM, ensembl_gene_id, percentage_gc_content) %>% unique()
+rownames(GENE.GC) = GENE.GC$ensembl_gene_id
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=FALSE, echo=TRUE}
+# Choose samples with rRNA rate less than 5% and more PF_READS_ALIGNED
+METADATA = METADATA %>%
+  ddply(.(barcode), .fun = function(x){
+    x %>%
+      dplyr::filter(PCT_RIBOSOMAL_BASES < 0.05) %>%
+      top_n(1, PF_READS_ALIGNED)
+  })
+
+# Fix metadata
+METADATA = METADATA %>%
+  dplyr::mutate(AOD = gsub('\\+','',AOD),
+                BrainRegion = factor(BrodmannArea,
+                                     levels = c('BM10', 'BM22', 'BM36', 'BM44'),
+                                     labels = c('BM10' = 'FP', 'BM22' = 'STG', 
+                                                'BM36' = 'PHG', 'BM44' = 'IFG')),
+                Diagnosis = 'NONE', 
+                RIN2 = RIN^2)
+METADATA$Diagnosis[METADATA$CDR <= 1] = 'ND'
+METADATA$Diagnosis[METADATA$CDR == 2 | METADATA$CDR == 3] = 'MD'
+METADATA$Diagnosis[METADATA$CDR >= 4] = 'SD'
+levels(METADATA$batch)[levels(METADATA$batch) == ''] = 'NoBatch'
+
+METADATA = METADATA %>%
+  tidyr::unite(BrainRegion.Diagnosis, BrainRegion, Diagnosis, sep = '.')
+
+METADATA <- METADATA %>%
+  filter(!is.na(BrainRegion.Diagnosis), !is.na(PMI), !is.na(RIN))
+```
+
+```{r preprocess.data1}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$sampleIdentifier, colnames(COUNT))
+indRemoved = setdiff(colnames(COUNT), METADATA$sampleIdentifier)
+
+COUNT <- COUNT[, indToRetain]
+
+METADATA = as.data.frame(METADATA)
+rownames(METADATA) = METADATA$sampleIdentifier
+METADATA = METADATA[indToRetain,]
+
+all.counts$MSSM = COUNT
+all.mtd$MSSM = METADATA
+```
+### Data download
+#### Obtain count matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Download expression data
+COUNT_ID <- 'syn7750270';
+ALL_USED_IDs <- COUNT_ID
+COUNT_OBJ <- synGet(COUNT_ID)
+COUNT <- read.table(COUNT_OBJ@filePath,header=T,sep='\t',check.names = F)
+COUNT[,grep('150_120419', colnames(COUNT))[2]] = NULL
+
+# Convert rownames of counts from tracking id to ensemble gene id
+tmp = data.frame(Gene.ID = rownames(COUNT)) %>%
+  dplyr::mutate(ID = Gene.ID) %>%
+  tidyr::separate(ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+rownames(tmp) = tmp$Gene.ID
+rownames(COUNT) = tmp[rownames(COUNT), 'ensembl_gene_id']
+
+# Get clinical metadata
+METADATA.CLINICAL_ID <- 'syn3191087'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.CLINICAL_ID
+METADATA.CLINICAL_OBJ <- synGet(METADATA.CLINICAL_ID)
+METADATA.CLINICAL <- read.table(METADATA.CLINICAL_OBJ@filePath,sep=',',header=T)
+
+# Get technical covariates
+METADATA.TECH_ID <- 'syn4300313'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.TECH_ID
+METADATA.TECH_OBJ <- synGet(METADATA.TECH_ID)
+METADATA.TECH <- read.table(METADATA.TECH_OBJ@filePath,sep='\t',header=T)
+
+# Get picard metrics from synapse
+METADATA.PICARD_ID <- 'syn8512191'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.PICARD_ID
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = FALSE, exdir = getwd())
+METADATA.PICARD_FPATHS <- untar(synGet(METADATA.PICARD_ID)@filePath, list = TRUE, exdir = getwd())
+METADATA.PICARD_FPATHS = METADATA.PICARD_FPATHS[grep('picard.CombinedMetrics.csv', METADATA.PICARD_FPATHS)]
+METADATA.PICARD <- plyr::ldply(METADATA.PICARD_FPATHS, read.csv)
+
+METADATA.PICARD$Sampleid = gsub('picard/', '', METADATA.PICARD_FPATHS) %>%
+  gsub('Aligned.out/picard.CombinedMetrics.csv','',.)
+colnames(METADATA.PICARD) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD))
+colnames(METADATA.PICARD) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD))
+
+# Fix error in technical covariates data
+KEY_ID <- 'syn3382527'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = KEY_ID  
+KEY <- read.csv(synGet(KEY_ID)@filePath) %>% 
+  filter(mrna_data == 1) %>%
+  dplyr::select(projid, mrna_id) %>%
+  separate(mrna_id, c('a','b','batch'), sep = '_') %>% 
+  unite(Sampleid, a, b) %>%
+  dplyr::select(-batch) %>%
+  unique
+
+# Match technical and clinical covariates
+METADATA <- METADATA.TECH %>%
+  left_join(METADATA.PICARD) %>%
+  dplyr::select(-projid) %>%
+  dplyr::left_join(KEY) %>%
+  dplyr::left_join(METADATA.CLINICAL)
+
+# Pick higher quality RIN batch for sample 492_120515
+METADATA <- METADATA %>%
+  group_by(Sampleid) %>%
+  top_n(1, RINcontinuous)
+
+# Get gene specific parameters from synapse
+GENE.PARAM = downloadFile('syn8449369')
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8449369')
+
+GENE.LEN = dplyr::select(GENE.PARAM, ensembl_gene_id, gene.length) %>% unique()
+rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
+
+GENE.GC = dplyr::select(GENE.PARAM, ensembl_gene_id, percentage_gc_content) %>% unique()
+rownames(GENE.GC) = GENE.GC$ensembl_gene_id
+```
+
+### Data preprocessing
+```{r preprocess.data,cache=TRUE, echo=TRUE}
+# Remove samples with no cogdx, RIN and PMI scores
+METADATA <- METADATA %>%
+  ungroup %>%
+  filter(Sampleid %in% colnames(COUNT)) %>%
+  filter(!is.na(cogdx), !is.na(braaksc), !is.na(ceradsc)) %>%
+  filter(!is.na(RINcontinuous)) %>%
+  filter(!is.na(pmi)) %>%
+  filter(!(Sampleid %in% c('380_120503'))) %>%
+  as.data.frame()
+
+METADATA$Diagnosis = 'NONE'
+METADATA$Diagnosis[METADATA$cogdx == 1 & METADATA$braaksc <= 3 & METADATA$ceradsc > 2] = 'Control'
+METADATA$Diagnosis[METADATA$cogdx == 4 & METADATA$braaksc >= 4 & METADATA$ceradsc <= 2] = 'AD'
+```
+
+```{r preprocess.data1,cache=TRUE}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$Sampleid, colnames(COUNT))
+removedIDs = setdiff(colnames(COUNT), METADATA$Sampleid)
+
+COUNT = COUNT[,indToRetain]
+
+rownames(METADATA) = METADATA$Sampleid
+METADATA = METADATA[indToRetain,]
+
+all.counts$ROSMAP = COUNT
+all.mtd$ROSMAP = METADATA
+```
+
+```{r new.dx}
+all.mtd$ROSMAP$nDx = 'OTHER'
+all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==1 & all.mtd$ROSMAP$braaksc <= 3 & all.mtd$ROSMAP$ceradsc <= 1] = 'CONTROL'
+all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==4 & all.mtd$ROSMAP$braaksc >= 4 & all.mtd$ROSMAP$ceradsc >= 2] = 'AD'
+
+table(all.mtd$ROSMAP$nDx)
+
+all.mtd$MSSM$nDx = 'OTHER'
+all.mtd$MSSM$nDx[all.mtd$MSSM$CDR <= 0.5 & all.mtd$MSSM$bbscore <= 3 & all.mtd$MSSM$NP.1 <= 1] = 'CONTROL'
+all.mtd$MSSM$nDx[all.mtd$MSSM$CDR >= 1 & all.mtd$MSSM$bbscore >= 4 & all.mtd$MSSM$NP.1 >= 2] = 'AD'
+
+table(all.mtd$MSSM$nDx, all.mtd$MSSM$BrodmannArea)
+
+table(all.mtd$MAYO$Diagnosis, all.mtd$MAYO$Tissue)
+```
