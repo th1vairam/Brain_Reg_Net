@@ -365,7 +365,29 @@ Following is the distribution of biotypes
 
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
-```{r detect.outliers, fig.height=8, fig.width=8, results='asis'}
+```{r detect.outliers, fig.height=8, fig.width=8, results='asis', cache = FALSE}
+indToRemove = c('MSSM_RNA_ACC_BP_24', 
+                
+                'MSSM_RNA_ACC_375', 'MSSM_RNA_ACC_170', 'MSSM_RNA_ACC_315', 'MSSM_RNA_ACC_250', 'MSSM_RNA_ACC_21', 'MSSM_RNA_ACC_356', 
+                'MSSM_RNA_ACC_318', 'MSSM_RNA_ACC_222', 'MSSM_RNA_ACC_220', 'MSSM_RNA_ACC_379', 'MSSM_RNA_PFC_133',
+                
+                'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_163', 'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_89', 
+                'MSSM_RNA_PFC_319', 'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_354', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_71', 'PENN_RNA_PFC_56')
+
+# Outliers from Menahce's DLPFC analysis syn3493755
+# outliers = c('MSSM_RNA_BP_PFC_1', 'MSSM_RNA_PFC_21', 'MSSM_RNA_BP_PFC_3', 'MSSM_RNA_PFC_103', 'MSSM_RNA_PFC_105', 'MSSM_RNA_PFC_115', 'MSSM_RNA_PFC_169',  'MSSM_RNA_PFC_17',
+#   'MSSM_RNA_PFC_18', 'MSSM_RNA_PFC_19', 'MSSM_RNA_PFC_213', 'MSSM_RNA_PFC_214', 'MSSM_RNA_PFC_215', 'MSSM_RNA_PFC_216', 'MSSM_RNA_PFC_217', 'MSSM_RNA_PFC_218', 
+#   'MSSM_RNA_PFC_219', 'MSSM_RNA_PFC_222', 'MSSM_RNA_PFC_24', 'MSSM_RNA_PFC_252', 'MSSM_RNA_PFC_259', 'MSSM_RNA_PFC_263', 'MSSM_RNA_PFC_267', 'MSSM_RNA_PFC_275',
+#   'MSSM_RNA_PFC_307', 'MSSM_RNA_PFC_322', 'MSSM_RNA_PFC_325', 'MSSM_RNA_PFC_27', 'MSSM_RNA_PFC_332', 'MSSM_RNA_PFC_333', 'MSSM_RNA_PFC_334', 'MSSM_RNA_PFC_335',
+#   'MSSM_RNA_PFC_340', 'MSSM_RNA_PFC_35', 'MSSM_RNA_PFC_362', 'MSSM_RNA_PFC_372', 'MSSM_RNA_PFC_373', 'MSSM_RNA_PFC_385', 'MSSM_RNA_PFC_393', 'MSSM_RNA_PFC_395',
+#   'MSSM_RNA_PFC_49', 'MSSM_RNA_PFC_54', 'MSSM_RNA_PFC_70', 'MSSM_RNA_PFC_76', 'MSSM_RNA_PFC_77', 'MSSM_RNA_PFC_78', 'MSSM_RNA_PFC_88', 'MSSM_RNA_PFC_93',
+#   'FAKE_DLPFC_CMC_MSSM_426', 'PENN_RNA_PFC_29', 'FAKE_DLPFC_CMC_PENN_055', 'PENN_RNA_PFC_75', 'PENN_RNA_PFC_110', 'FAKE_DLPFC_CMC_PENN_106', 'FAKE_DLPFC_CMC_PENN_107',
+#   'FAKE_DLPFC_CMC_PENN_108', 'MSSM_RNA_PFC_14', 'MSSM_RNA_BP_PFC_21', 'MSSM_RNA_PFC_293', 'MSSM_RNA_PFC_349', 'MSSM_RNA_PFC_353', 'MSSM_RNA_PFC_363', 'MSSM_RNA_PFC_369',
+#   'PENN_RNA_PFC_82', 'PENN_RNA_PFC_89', 'PITT_RNA_PFC_1159', 'PITT_RNA_PFC_1296', 'PITT_RNA_PFC_537',  'PITT_RNA_PFC_567', 'PITT_RNA_PFC_871', 'PITT_RNA_PFC_878',
+#   'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_210',  'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_278', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_361',
+#   'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_56', 'PITT_RNA_BP_PFC_10003', 'PITT_RNA_BP_PFC_1047', 'PITT_RNA_BP_PFC_1086', 'PITT_RNA_BP_PFC_1092', 'PITT_RNA_BP_PFC_1247',
+#   'PITT_RNA_BP_PFC_1282', 'PITT_RNA_BP_PFC_1324', 'PITT_RNA_BP_PFC_1374', 'PITT_RNA_BP_PFC_1391', 'PITT_RNA_BP_PFC_686')
+
 # Find principal components of expression to plot
 PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
 
@@ -377,8 +399,7 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
   dplyr::mutate(label = SampleID)
-plotdata$label[!(plotdata$SampleID %in% c('MSSM_RNA_ACC_BP_24', 
-                                          'MSSM_RNA_ACC_375'))] = ''
+plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
@@ -395,18 +416,26 @@ tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
               tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
 
 p = ggplot(tmp1 %>%
-             dplyr::filter(SampleID %in% c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375')),
+             dplyr::filter(SampleID %in% indToRemove),
            aes(x = logCPM, color = SampleID)) + geom_density() 
 p = p + theme(legend.position = 'top') + facet_grid(Dx+.~Tissue, scale = 'free')
 p
 
-indToRemove = c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375')
 indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
 PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
+COVARIATES = COVARIATES[indToRetain,]
+
+tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
+  group_by(Dx, Tissue) %>%
+  summarise(count = n()) %>%
+  spread(Tissue, count)
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples from `r length(unique(COVARIATES$Individual_ID))` unique individuals
 
 Based on the expression pattern following samples were tagged as outliers: `r paste(indToRemove, collapse = ', ')` 
+
+Distribution of samples are:
+`r kable(tmp)`
 
 ### Normalisation (with NULL)
 Initial normalisation usign cqn and dispersion control with voom (with NULL design)
@@ -440,7 +469,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ```
 ### Outlier analysis
 Clustering of voom adjusted data (with NULL design)
-```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis'}
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
 # Find principal components of expression to plot
 PC <- prcomp(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, scale.=T, center = T)
 
@@ -614,7 +643,6 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~., scales = 'free_y')
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
 ```
 
