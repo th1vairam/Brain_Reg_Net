@@ -576,9 +576,9 @@ ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
 ### SVA
 ```{r sva}
 # Get (null) design matrix
-MODEL0 = DESIGN$design[,-grep('Dx.Tissue',colnames(DESIGN$design))] # Get null model by removing variable of interest
+MODEL0 = DM1$design[,-grep('Dx.Tissue',colnames(DM1$design))] # Get null model by removing variable of interest
 MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
-MODEL1 = DESIGN$design
+MODEL1 = DM1$design
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
 # Source modified functions from sva package
@@ -615,7 +615,7 @@ p
 
 # Estimate surrogate variables
 SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
-                        MODEL1, MODEL0, n.sv = NUM.SV, B = 3, tol = 1e-22)$sv
+                        MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-22)$sv
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
@@ -898,6 +898,15 @@ annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
+# Store surrogate variables
+SURR.VAR %>%
+  rownameToFirstColumn('SampleID') %>%
+  write.table(file = 'CMC_ACC_DLPFC_SurrVar.tsv', sep = '\t', row.names=F, quote=F)
+SURR.VAR_OBJ = File('CMC_ACC_DLPFC_SurrVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+annotations(SURR.VAR_OBJ) = annotations(CODE)
+annotations(SURR.VAR_OBJ)$dataSubType = 'SurrogateVariables'
+SURR.VAR_OBJ = synStore(SURR.VAR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
 # Store residual gene expression for eqtl analysis
 RESIDUAL.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
@@ -935,6 +944,7 @@ stopCluster(cl)
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
+|  Surrogate Variables                        |  `r SURR.VAR_OBJ$properties$id`  |
 |  Residual Expression (for eQTL analysis)    |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
