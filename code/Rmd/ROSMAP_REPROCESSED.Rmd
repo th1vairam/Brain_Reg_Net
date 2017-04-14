@@ -736,7 +736,7 @@ p
 
 # Estimate surrogate variables
 SURR.VAR = sva::sva(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
-                    MODEL1, MODEL0, n.sv = NUM.SV, B = 3)$sv
+                    MODEL1, MODEL0, n.sv = NUM.SV, B = 30)$sv
 SURR.VAR = data.frame(SURR.VAR)
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
@@ -784,7 +784,8 @@ all.annotations = list(
   dataType = 'mRNA',
   dataSubType = 'geneExp',
   summaryLevel = 'gene',
-  assay	 = 'Reprocessed RNAseq',
+  assay	 = 'RNAseq',
+  assaySubType = 'Reprocessed',
   
   tissueTypeAbrv	= 'DLPFC', 
   study = 'ROSMAP', 
@@ -881,7 +882,8 @@ annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(DE, file = 'ROSMAP_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+rbindlist(all.diff.exp, use.names = T, fill = T) %>%
+  write.table(file = 'ROSMAP_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('ROSMAP_DLPFC_DiffExpression.tsv', name = 'Differential Expression Results (cogdx)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
