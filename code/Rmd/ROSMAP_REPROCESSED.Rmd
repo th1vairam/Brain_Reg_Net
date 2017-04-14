@@ -11,7 +11,7 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./ROSMAP_REPROCESSED.Rmd",
-                                 parentId = "syn8403743",
+                                 parentId = "syn8672910",
                                  entityName = 'ROSMAP Reprocessed RNASeq (Normalised)')
 ```
 
@@ -62,7 +62,7 @@ knitr::opts_chunk$set(
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 # Synapse parameters
-parentId = 'syn8403743';
+parentId = 'syn8672910';
 activityName = 'Covariate analysis';
 activityDescription = 'Covariate analysis of ROSMAP reprocessed RNASeq data';
 
@@ -211,7 +211,7 @@ COVARIATES$RINcontinuous2 = COVARIATES$RINcontinuous^2
 ContCovariates = c(ContCovariates, 'RINcontinuous2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
-```{r covariates.correlation, fig.width=6, fig.height=6}
+```{r covariates.correlation, fig.width=9, fig.height=6}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
 ```
@@ -251,7 +251,7 @@ multiplot(plotlist = p, cols = 2)
 # vcd::mosaic(~ msex + Diagnosis, data = COVARIATES)
 ```
 ### Filter genes
-Remove genes that have less than 1 cpm counts in at least 50% of samples per cogdx. Also remove genes with missing gene length and percentage GC content
+Remove genes that have less than 1 cpm counts in at least 50% of samples per Diagnosis. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
 genesToAnalyze = COVARIATES %>%
   rownameToFirstColumn('Sampleid') %>%
@@ -275,7 +275,7 @@ PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ],
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
 ### Outlier Analysis
-```{r outlier.analysis, cache = FALSE}
+```{r outlier.analysis, cache = FALSE, fig.width = 10}
 indToRemove = c('380_120503', '500_120515')
 
 # Find principal components of expression to plot
@@ -607,10 +607,6 @@ all.diff.exp = list(cogdx = DE)
 
 ### Differential expression analysis (with Diagnosis as primary variable)
 Differential expression is performed on the primary variable by controlling for covariates identified above
-
-METADATA$Diagnosis = 'OTHER'
-METADATA$Diagnosis[METADATA$cogdx == 1 & METADATA$braaksc <= 3 & METADATA$ceradsc >= 3] = 'CONTROL'
-METADATA$Diagnosis[METADATA$cogdx == 4 & METADATA$braaksc >= 4 & METADATA$ceradsc <= 2] = 'AD'
 
 Interpretation of Diagnosis
 1. AD: cogdx = 4, braaksc >= 4 and ceradsc <= 2
