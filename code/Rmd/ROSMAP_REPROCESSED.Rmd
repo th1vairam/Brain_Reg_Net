@@ -144,18 +144,12 @@ GENE.PARAM = downloadFile('syn8449369')
 ALL_USED_IDs = c(ALL_USED_IDs, 'syn8449369')
 
 GENE.LEN = dplyr::select(GENE.PARAM, ensembl_gene_id, gene.length) %>% 
-  unique() %>%
-  left_join(data.frame(Gene.ID = rownames(COUNT)) %>%
-              dplyr::mutate(tmp = Gene.ID) %>%
-              tidyr::separate(tmp, c('ensembl_gene_id', 'position'), sep = '\\.'))
-rownames(GENE.LEN) = GENE.LEN$Gene.ID
+  unique() 
+rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
 
 GENE.GC = dplyr::select(GENE.PARAM, ensembl_gene_id, percentage_gc_content) %>% 
-  unique() %>%
-  left_join(data.frame(Gene.ID = rownames(COUNT)) %>%
-              dplyr::mutate(tmp = Gene.ID) %>%
-              tidyr::separate(tmp, c('ensembl_gene_id', 'position'), sep = '\\.'))
-rownames(GENE.GC) = GENE.GC$Gene.ID
+  unique() 
+rownames(GENE.GC) = GENE.GC$ensembl_gene_id 
 ```
 
 ### Data preprocessing
@@ -264,8 +258,8 @@ genesToAnalyze = COVARIATES %>%
 
 genesToAnalyze = unlist(genesToAnalyze) %>% 
   unique() %>%
-  intersect(GENE.GC$Gene.ID[!is.na(GENE.GC$percentage_gc_content)]) %>%
-  intersect(GENE.LEN$Gene.ID[!is.na(GENE.LEN$gene.length)]) %>%
+  intersect(GENE.GC$ensembl_gene_id[!is.na(GENE.GC$percentage_gc_content)]) %>%
+  intersect(GENE.LEN$ensembl_gene_id[!is.na(GENE.LEN$gene.length)]) %>%
   setdiff(c("N_unmapped", "N_multimapping", "N_noFeature", "N_ambiguous"))
 
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], 
@@ -329,8 +323,8 @@ Initial normalisation usign cqn and dispersion control with voom (with NULL desi
 ```{r initial.voom.normalisation, fig.height=5, fig.width=5}
 # Compute offset for gene length and gc content
 CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                          x = GENE.GC[rownames(PROCESSED_COUNTS$filteredExprMatrix), 'percentage_gc_content'],
-                          lengths = GENE.LEN[rownames(PROCESSED_COUNTS$filteredExprMatrix), 'gene.length'],
+                          x = GENE.GC[rownames(PROCESSED_COUNTS$filteredExprMatrix$counts), 'percentage_gc_content'],
+                          lengths = GENE.LEN[rownames(PROCESSED_COUNTS$filteredExprMatrix$counts), 'gene.length'],
                           lengthMethod = "smooth", 
                           verbose = FALSE)
 
@@ -344,8 +338,8 @@ PROCESSED_COUNTS$filteredExprMatrix$counts[log.mat] = 0
 
 # Re-compute offset for gene length and gc content
 CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                          x = GENE.GC[rownames(PROCESSED_COUNTS$filteredExprMatrix), 'percentage_gc_content'],
-                          lengths = GENE.LEN[rownames(PROCESSED_COUNTS$filteredExprMatrix), 'gene.length'],
+                          x = GENE.GC[rownames(PROCESSED_COUNTS$filteredExprMatrix$counts), 'percentage_gc_content'],
+                          lengths = GENE.LEN[rownames(PROCESSED_COUNTS$filteredExprMatrix$counts), 'gene.length'],
                           lengthMethod = "smooth", 
                           verbose = FALSE)
 ```
@@ -668,7 +662,6 @@ p
 
 all.diff.exp = c(all.diff.exp, list(Diagnosis = DE))
 ```
-
 
 ### Associate differential expression results with gc content, gene length and average expression
 ```{r associate.de, fig.height=10, fig.width=15}
