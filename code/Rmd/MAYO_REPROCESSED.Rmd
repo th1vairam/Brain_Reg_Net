@@ -655,7 +655,7 @@ Interpretation of BrainRegion.Diagnosis
 6. TCX.OTHER: Progressive Supranuclear Palsy and Pathological Aging samples from Temporal cortex region
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp, fig.height=6, fig.width=18}
+```{r diff.exp, fig.height=10, fig.width=18}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable, postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
@@ -726,7 +726,7 @@ p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
-```{r associate.de, fig.height=5, fig.width=15}
+```{r associate.de, fig.height=10, fig.width=15}
 pl = list()
 pl[[1]] = ggplot(DE %>%
                    dplyr::filter(Comparison == 'AD-CONTROL'), 
@@ -794,7 +794,7 @@ p
 
 # Estimate surrogate variables
 SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
-                        MODEL1, MODEL0, n.sv = NUM.SV, B = 3, tol = 1e-20)$sv
+                        MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
 
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)

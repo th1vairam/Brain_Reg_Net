@@ -387,8 +387,8 @@ all.mtd$ROSMAP = METADATA
 
 ```{r new.dx}
 all.mtd$ROSMAP$nDx = 'OTHER'
-all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==1 & all.mtd$ROSMAP$braaksc <= 3 & all.mtd$ROSMAP$ceradsc <= 1] = 'CONTROL'
-all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==4 & all.mtd$ROSMAP$braaksc >= 4 & all.mtd$ROSMAP$ceradsc >= 2] = 'AD'
+all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==1 & all.mtd$ROSMAP$braaksc <= 3 & all.mtd$ROSMAP$ceradsc >= 3] = 'CONTROL'
+all.mtd$ROSMAP$nDx[all.mtd$ROSMAP$cogdx==4 & all.mtd$ROSMAP$braaksc >= 4 & all.mtd$ROSMAP$ceradsc <= 2] = 'AD'
 
 table(all.mtd$ROSMAP$nDx)
 
