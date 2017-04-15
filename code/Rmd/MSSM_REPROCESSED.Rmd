@@ -513,7 +513,7 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 ```
 
 ### Clustering residual data
-```{r decompse.normalise.data2.1, fig.height=10, fig.width=8, results='asis'}
+```{r decompse.normalise.data2.1, fig.height=6, fig.width=10, results='asis'}
 # Find principal components of expression to plot
 PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
@@ -632,9 +632,6 @@ p
 
 ### Differential expression analysis (with BrainRegion.Diagnosis as primary variable)
 Differential expression is performed on the primary variable by controlling for covariates identified above
-
-METADATA$Diagnosis[METADATA$CDR <= 0.5 & METADATA$bbscore <= 3 & METADATA$NP.1 <= 1] = 'CONTROL'
-METADATA$Diagnosis[METADATA$CDR >= 1 & METADATA$bbscore >= 4 & METADATA$NP.1 >= 2] = 'AD'
 
 Interpretation of BrainRegion.Diagnosis
 1. FP.AD: Samples from frontal pole region with CDR >= 1 and bbscore >= 4 and NP.1 >= 2
