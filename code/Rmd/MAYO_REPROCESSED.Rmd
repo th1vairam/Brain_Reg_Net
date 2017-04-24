@@ -903,7 +903,7 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
                       executed = thisFile, activityDescription = activityDescription)
 
 # Store filtered counts
-PROCESSED_COUNTS$filteredExprMatrix$counts %>%
+PROCESSED_COUNTS$filteredExprMatrix$counts.NA %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'MAYO_CBE_TCX_Counts.tsv', sep = '\t', row.names=F, quote=F)
 COUNT_OBJ = File('MAYO_CBE_TCX_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
@@ -912,7 +912,9 @@ annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
-CQN.GENE_EXPRESSION$y %>%
+tmp = CQN.GENE_EXPRESSION$y
+tmp[log.mat] = NA
+tmp %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'MAYO_CBE_TCX_logCPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('MAYO_CBE_TCX_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
@@ -921,7 +923,9 @@ annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store cqn offsets
-CQN.GENE_EXPRESSION$offset %>%
+tmp = CQN.GENE_EXPRESSION$offset
+tmp[log.mat] = NA
+tmp %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'MAYO_CBE_TCX_offset.tsv', sep = '\t', row.names=F, quote=F)
 OFFSET_OBJ = File('MAYO_CBE_TCX_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
