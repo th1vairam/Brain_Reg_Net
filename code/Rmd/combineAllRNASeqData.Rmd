@@ -63,14 +63,22 @@ all.used.ids = as.character(covariates.ids)
 covariates = lapply(covariates.ids, downloadFile)
 
 # Modify ROSMAP covariates
+rosmap.key = downloadFile('syn3382527') %>%
+  dplyr::select(projid, mrna_id) %>%
+  tidyr::separate(mrna_id, c('a','b','c'), sep = '_') %>%
+  tidyr::unite(SampleID, a,b, sep = '_') %>%
+  dplyr::rename(Donor_ID = projid)
+all.used.ids = c(all.used.ids, 'syn3382527')
+
 covariates$ROSMAP = covariates$ROSMAP %>%
+  left_join(rosmap.key) %>%
   dplyr::mutate(Gender = factor(msex, levels = c(0,1), labels = c('0' = 'FEMALE', '1' = 'MALE')),
                 RIN = RINcontinuous,
                 AAD = age_death,
                 PMI = pmi,
                 BrainRegion = 'DLPFC',
                 Study = 'ROSMAP') %>%
-  dplyr::select(SampleID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
                 PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
 
 # Modify MSBB covariates
@@ -82,7 +90,7 @@ covariates$MSBB = covariates$MSBB %>%
                 Donor_ID = individualIdentifier,
                 Study = 'MSBB') %>%
   tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
-  dplyr::select(SampleID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
                 PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
 
 # Modify MAYO covariates
@@ -94,7 +102,7 @@ covariates$MAYO = covariates$MAYO %>%
                                levels = c('BannerSunHealth_TomBeach', 'MayoBrainBank_Dickson'),
                                labels = c('BannerSunHealth_TomBeach' = 'BANNER', 'MAYO'))) %>%
   tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
-  dplyr::select(SampleID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
                 PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
 
 ### All plots
@@ -112,6 +120,18 @@ p = ggplot(covariates1, aes(x = Diagnosis, y = RIN, color = BrainRegion)) + geom
 p
 
 p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_INTERGENIC_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_INTRONIC_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_RIBOSOMAL_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_CODING_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_PF_READS_ALIGNED, color = BrainRegion)) + geom_boxplot()
 p
 ```
 
@@ -154,7 +174,7 @@ OBJ = synStore(OBJ,
                activityDescription = activityDescription)
 
 # Store raw counts in synapse
-write.table(logcpm, file = 'allReprocessedCounts.tsv', sep = '\t', row.names=F, quote=F)
+write.table(counts, file = 'allReprocessedCounts.tsv', sep = '\t', row.names=F, quote=F)
 OBJ = File('allReprocessedCounts.tsv', 
            name = 'All RNASeq reprocessed raw counts', 
            parentId = CODE$properties$id)
