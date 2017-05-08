@@ -63,15 +63,15 @@ all.used.ids = as.character(covariates.ids)
 covariates = lapply(covariates.ids, downloadFile)
 
 # Modify ROSMAP covariates
-rosmap.key = downloadFile('syn3382527') %>%
-  dplyr::select(projid, mrna_id) %>%
-  tidyr::separate(mrna_id, c('a','b','c'), sep = '_') %>%
-  tidyr::unite(SampleID, a,b, sep = '_') %>%
-  dplyr::rename(Donor_ID = projid)
-all.used.ids = c(all.used.ids, 'syn3382527')
+rosmap.donorinfo <- downloadFile('syn4300313') %>%
+  dplyr::rename(SampleID = Sampleid, Donor_ID = projid) %>%
+  dplyr::select(SampleID, Donor_ID) %>%
+  unique %>%
+  dplyr::filter(!(SampleID == '492_120515' & is.na(Donor_ID)))
+all.used.ids = c(all.used.ids, 'syn4300313')
 
 covariates$ROSMAP = covariates$ROSMAP %>%
-  left_join(rosmap.key) %>%
+  left_join(rosmap.donorinfo) %>%
   dplyr::mutate(Gender = factor(msex, levels = c(0,1), labels = c('0' = 'FEMALE', '1' = 'MALE')),
                 RIN = RINcontinuous,
                 AAD = age_death,
@@ -80,6 +80,7 @@ covariates$ROSMAP = covariates$ROSMAP %>%
                 Study = 'ROSMAP') %>%
   dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
                 PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
+covariates$ROSMAP$Donor_ID[is.na(covariates$ROSMAP$Donor_ID)] = paste0('NotAva',1:sum(is.na(covariates$ROSMAP$Donor_ID)))
 
 # Modify MSBB covariates
 covariates$MSBB = covariates$MSBB %>%

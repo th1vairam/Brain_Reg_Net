@@ -1,0 +1,274 @@
+---
+title: "Brain region specific differential expression analysis (all 7 regions/one region at a time)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./regionLevelDiffExpAnlz.Rmd", 
+                                 parentId ="syn9622393",
+                                 entityName = "Differential Expression Analysis (per brain region)")
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+# Clear R console screen output
+cat("\014")  
+
+# Load required libraries
+library(CovariateAnalysis) # install from th1vairam repo using devtools::install_github('th1vairam/CovariateAnalysis@devtools')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(limma)
+library(edgeR)
+library(cqn)
+
+synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn9622393';
+activityName = 'Differential expression analysis';
+activityDescription = 'Differential expression analysis in all 7 brain regions performed in a region specific manner';
+
+thisFileName <- 'regionLevelDiffExpAnlz.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='metaAnal')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+
+### Get merged covariates and raw counts from synapse
+```{r download.data, fig.height=6, fig.width=10}
+# Get covariates
+covariates = downloadFile('syn9765937') %>%
+  dplyr::filter(Diagnosis %in% c('AD', 'CONTROL')) %>%
+  dplyr::mutate(Diagnosis.Gender = paste(Diagnosis, Gender, sep = '.'))
+all.used.ids = 'syn9765625'
+
+kable(table(covariates$BrainRegion, covariates$Diagnosis))
+
+# Get raw counts
+counts = downloadFile('syn9765938') %>%
+  tidyr::separate(Gene.ID, c('ensembl_gene_id', 'position'), sep = '\\.')
+rownames(counts) = counts$ensembl_gene_id
+counts = counts[, covariates$SampleID]
+all.used.ids = c(all.used.ids, 'syn9765629')
+
+# Get gene specific parameters from synapse
+gene.param = downloadFile('syn8449369')
+all.used.ids = c(all.used.ids, 'syn8449369')
+
+gene.len = dplyr::select(gene.param, ensembl_gene_id, gene.length) %>% 
+  unique()
+rownames(gene.len) = gene.len$ensembl_gene_id
+
+gene.gc = dplyr::select(gene.param, ensembl_gene_id, percentage_gc_content) %>% 
+  unique()
+rownames(gene.gc) = gene.gc$ensembl_gene_id
+```
+
+### Filter genes
+```{r filter.genes}
+# Filter genes (remove genes that are expressed less than 1 cpm in 50% of samples per diagnosis per brain region)
+lcpm = cpm(counts)
+
+filtered.gene.ids = plyr::dlply(covariates, .(BrainRegion, Diagnosis), .fun = function(cov, logcpm){
+  rownames(logcpm)[which(rowSums(logcpm[,cov$SampleID] >= 1)/dim(logcpm[,cov$SampleID])[2] >= 0.5)]
+}, lcpm) %>%
+  Reduce(c, .) %>%
+  unique %>%
+  setdiff(c("N_unmapped", "N_multimapping", "N_noFeature", "N_ambiguous")) %>%
+  intersect(gene.len$ensembl_gene_id[!is.na(gene.len$gene.length)]) %>%
+  intersect(gene.gc$ensembl_gene_id[!is.na(gene.gc$percentage_gc_content)])
+
+counts = counts[filtered.gene.ids, ]
+```
+Choosing `r length(filtered.gene.ids)` genes expressed at 1 cpm in 50% of samples in at least one brain region and diagnosis category for further analysis
+
+```{r fxn}
+performDifferentialExpression <- function(cov, cnt, contVar, varOfInterest, n){
+  
+  diffExp = foreach(i = 1:n, 
+                    .combine = rbind,
+                    .packages = c('limma','edgeR','cqn','dplyr','plyr','CovariateAnalysis')) %dopar% {
+                      
+                    # Sub-sample data for balanced comparison
+                    minSampSz = min(summary(cov[,contVar]), na.rm = T)
+                    innerCov = rownameToFirstColumn(cov, 'SampleID')  %>%
+                      plyr::ddply(.variables = contVar, .fun = function(x, minSampSz){
+                        ind = sample(1:dim(x)[1], minSampSz)
+                        return(x[ind,])
+                      }, minSampSz) %>%
+                      droplevels()
+                    rownames(innerCov) = innerCov$SampleID
+                      
+                    # Get design matrix
+                    designMat = getDesignMatrix(innerCov[,varOfInterest], Intercept = F)$design
+                    designMat = designMat[,linColumnFinder(designMat)$indepCols]
+  
+                    # Compute offset for gene length and gc content
+                    cqn.gene.expression = cqn(cnt[,innerCov$SampleID],
+                                              x = gene.gc[rownames(cnt), 'percentage_gc_content'],
+                                              lengths = gene.len[rownames(cnt), 'gene.length'],
+                                              lengthMethod = "smooth",
+                                              verbose = FALSE)
+                    cqn.gene.expression$E = cqn.gene.expression$y+cqn.gene.expression$offset
+                      
+                    # Identify outlier expression and assign NA values
+                    log.mat = apply(cqn.gene.expression$E, 1, function(x){
+                      mn = mean(x, na.rm = T)
+                      std.dev = sd(x, na.rm = T)
+                      return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
+                    }) %>% t
+                    cqn.gene.expression$E[log.mat] = NA
+                      
+                    # Estimate voom weights for dispersion control
+                    voom.weights = voom(cnt[,innerCov$SampleID], design = designMat, plot=F, na.rm = T)
+  
+                    # Fit linear model using new weights and new design
+                    baseModel = lmFit(cqn.gene.expression$E,
+                                      design = designMat,
+                                      weights = voom.weights$weights)
+                    
+                    # Perform differential expression
+                    contrasts = levels(cov[,contVar]) %>%
+                      paste(contVar,.,sep = '') %>%
+                      combn(2) %>%
+                      apply(2,paste, collapse = '-') %>%
+                      makeContrasts(contrasts = ., levels = colnames(baseModel$coefficients))
+                    baseModel.cntr =  contrasts.fit(baseModel, contrasts)
+                    baseModel.cntr = eBayes(baseModel.cntr)
+                    innerDiffExp = lapply(1:dim(contrasts)[2], function(i, baseModel.cntr){
+                      topTable(baseModel.cntr, coef = i, number = 50000, confint = T) %>%
+                        rownameToFirstColumn('ensembl_gene_id')
+                    }, baseModel.cntr)
+                    names(innerDiffExp) = colnames(contrasts)
+                    innerDiffExp = innerDiffExp %>%
+                      rbindlist(use.names = T, fill = T, idcol = 'Comparison') %>%
+                      dplyr::mutate(iter = i,
+                                    Comparison = gsub(contVar,'',Comparison))
+                      
+                    return(innerDiffExp)
+                    }
+  
+  diffExp = diffExp %>%
+    dplyr::group_by(Comparison, ensembl_gene_id) %>%
+    tidyr::gather(feature, value, -Comparison, -ensembl_gene_id) %>%
+    dplyr::group_by(Comparison, ensembl_gene_id, feature) %>%
+    dplyr::summarise(value = median(value, na.rm = T)) %>%
+    tidyr::spread(feature, value)
+  
+  return(diffExp)
+}
+```
+
+### Perform differential expression (per brain region)
+```{r diff.exp}
+all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt){
+  n = 5
+  # Filter counts and covariates
+  cnt = cnt[,cov$SampleID]
+  
+  # Formulate covariates matrix
+  FactorCov = c('Diagnosis', 'Batch', 'Gender')
+  ContCov = c('RIN', 'AAD', 'PMI',  'PCT_PF_READS_ALIGNED', 'PCT_CODING_BASES', 
+              'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 'PCT_RIBOSOMAL_BASES')
+  cov[,FactorCov] = lapply(cov[,FactorCov], as.factor)
+  cov[,ContCov] = lapply(cov[,ContCov], as.numeric)
+  rownames(cov) = cov$SampleID
+  cov = cov[,c(FactorCov, ContCov)]
+  assocStat = getAssociationStatistics(cov)
+  
+  # Perform differential expression between case-control
+  varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+                    'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                    'PCT_RIBOSOMAL_BASES')
+  contVar = 'Diagnosis'
+  
+  baseDiffExp <- performDifferentialExpression(cov, cnt, contVar, varOfInterest, n)
+  
+  # Perform differential expression between case-control in a gender specific manner
+  cov$Diagnosis.Gender = factor(paste(cov$Diagnosis, cov$Gender, sep = '.'))
+  varOfInterest = c('Diagnosis.Gender', 'Batch', 'RIN', 'AAD', 'PMI', 
+                    'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                    'PCT_RIBOSOMAL_BASES')
+  contVar = 'Diagnosis.Gender'
+  
+  genderDiffExp <- performDifferentialExpression(cov, cnt, contVar, varOfInterest, n)
+  
+  return(rbindlist(list(baseDiffExp, genderDiffExp), use.names = T, fill = T))
+}, counts)
+
+# Display results
+writeLines('Number of differentially expressed genes between AD-CONTROL at an FDR of 0.05 and fold change of 1.2 are')
+sapply(all.results, function(x){
+  sum(x$adj.P.Val <= 0.05 & abs(x$logFC) >= log2(1.2) & x$Comparison == 'AD-CONTROL', na.rm = T)
+}) %>% rownameToFirstColumn('Region') %>% dplyr::rename(AD_vs_CONTROL = DF) %>%
+  kable(row.names=F)
+
+writeLines('Number of differentially expressed genes between AD.FEMALE-CONTROL.FEMALE at an FDR of 0.05 and fold change of 1.2 are')
+sapply(all.results, function(x){
+  sum(x$adj.P.Val <= 0.05 & abs(x$logFC) >= log2(1.2) & x$Comparison == 'AD.FEMALE-CONTROL.FEMALE', na.rm = T)
+}) %>% rownameToFirstColumn('Region') %>% dplyr::rename(AD.FEMALE_vs_CONTROL.FEMALE = DF) %>%
+  kable(row.names=F)
+
+writeLines('Number of differentially expressed genes between AD.MALE-CONTROL.MALE at an FDR of 0.05 and fold change of 1.2 are')
+sapply(all.results, function(x){
+  sum(x$adj.P.Val <= 0.05 & abs(x$logFC) >= log2(1.2) & x$Comparison == 'AD.MALE-CONTROL.MALE', na.rm = T)
+}) %>% rownameToFirstColumn('Region') %>% dplyr::rename(AD.MALE_vs_CONTROL.MALE = DF) %>%
+  kable(row.names=F)
+
+writeLines('Number of differentially expressed genes between AD.FEMALE-AD.MALE at an FDR of 0.05 and fold change of 1.2 are')
+sapply(all.results, function(x){
+  sum(x$adj.P.Val <= 0.05 & abs(x$logFC) >= log2(1.2) & x$Comparison == 'AD.FEMALE-AD.MALE', na.rm = T)
+}) %>% rownameToFirstColumn('Region') %>% dplyr::rename(AD.FEMALE_vs_AD.MALE = DF) %>%
+  kable(row.names=F)
+
+writeLines('Number of differentially expressed genes between CONTROL.FEMALE-CONTROL.MALE at an FDR of 0.05 and fold change of 1.2 are')
+sapply(all.results, function(x){
+  sum(x$adj.P.Val <= 0.05 & abs(x$logFC) >= log2(1.2) & x$Comparison == 'CONTROL.FEMALE-CONTROL.MALE', na.rm = T)
+}) %>% rownameToFirstColumn('Region') %>% dplyr::rename(CONTROL.FEMALE_vs_CONTROL.MALE = DF) %>%
+  kable(row.names=F)
+```
+
+### Store results in synapse
+```{r synapse.store, include=FALSE, cache=FALSE}
+# Store consolidated data in synapse
+CODE = Folder(name = 'Differential Expression Analysis (per brain region)', parentId = parentId)
+CODE = synStore(CODE)
+
+# Store results in synapse
+save(list = 'all.results', file = 'AllDifferentialExpressionResults.RData')
+OBJ = File('AllDifferentialExpressionResults.RData', 
+           name = 'All Differential Expression Results', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = all.used.ids,
+               executed = thisFile,
+               activityName = activityName,
+               activityDescription = activityDescription)
+```
+### Source code in github
+[Source Code](`r thisFile`)
