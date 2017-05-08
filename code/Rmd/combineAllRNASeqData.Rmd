@@ -1,0 +1,189 @@
+---
+title: "Combine filtered data from all three studies in AMP-AD for metanalysis"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./combineAllRNASeqData.Rmd", 
+                                 parentId ="syn9622393",
+                                 entityName = "All RNASeq data combined")
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file is
+
+# Clear R console screen output
+cat("\014")  
+
+# Load required libraries
+library(CovariateAnalysis) # install from th1vairam repo using devtools::install_github('th1vairam/CovariateAnalysis@devtools')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+synapseLogin()
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+# Synapse parameters
+parentId = 'syn9622393';
+activityName = 'Combine Data';
+activityDescription = 'Combine all RNASeq and covariates data from all three brain banks';
+
+thisFileName <- 'combineAllRNASeqData.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='metaAnal')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+
+### Get filtered covariates/sample metadata from synapse
+```{r covariates, fig.height=6, fig.width=10}
+covariates.ids = c(ROSMAP = 'syn8456631',
+                   MSBB = 'syn8484996',
+                   MAYO = 'syn8466814')
+all.used.ids = as.character(covariates.ids)
+covariates = lapply(covariates.ids, downloadFile)
+
+# Modify ROSMAP covariates
+rosmap.donorinfo <- downloadFile('syn4300313') %>%
+  dplyr::rename(SampleID = Sampleid, Donor_ID = projid) %>%
+  dplyr::select(SampleID, Donor_ID) %>%
+  unique %>%
+  dplyr::filter(!(SampleID == '492_120515' & is.na(Donor_ID)))
+all.used.ids = c(all.used.ids, 'syn4300313')
+
+covariates$ROSMAP = covariates$ROSMAP %>%
+  left_join(rosmap.donorinfo) %>%
+  dplyr::mutate(Gender = factor(msex, levels = c(0,1), labels = c('0' = 'FEMALE', '1' = 'MALE')),
+                RIN = RINcontinuous,
+                AAD = age_death,
+                PMI = pmi,
+                BrainRegion = 'DLPFC',
+                Study = 'ROSMAP') %>%
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
+covariates$ROSMAP$Donor_ID[is.na(covariates$ROSMAP$Donor_ID)] = paste0('NotAva',1:sum(is.na(covariates$ROSMAP$Donor_ID)))
+
+# Modify MSBB covariates
+covariates$MSBB = covariates$MSBB %>%
+  dplyr::mutate(Gender = factor(SEX, levels = c('F', 'M'), labels = c('F' = 'FEMALE', 'M' = 'MALE')),
+                Batch = batch,
+                PMI = PMI/60,
+                AAD = AOD,
+                Donor_ID = individualIdentifier,
+                Study = 'MSBB') %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
+
+# Modify MAYO covariates
+covariates$MAYO = covariates$MAYO %>%
+  dplyr::mutate(Gender = factor(Gender, levels = c('F', 'M'), labels = c('F' = 'FEMALE', 'M' = 'MALE')),
+                Batch = FLOWCELL,
+                AAD = AgeAtDeath,
+                Study = factor(Source, 
+                               levels = c('BannerSunHealth_TomBeach', 'MayoBrainBank_Dickson'),
+                               labels = c('BannerSunHealth_TomBeach' = 'BANNER', 'MAYO'))) %>%
+  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
+  dplyr::select(SampleID, Donor_ID, Study, BrainRegion, Diagnosis, Batch, Gender, RIN, AAD, PMI, PCT_PF_READS_ALIGNED,
+                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) 
+
+### All plots
+covariates1 = rbindlist(covariates, use.names = T, fill = T) %>%
+  dplyr::mutate(BrainRegion = factor(BrainRegion, levels = c('DLPFC', 'IFG', 'STG', 'FP', 'PHG', 'CER', 'TCX')))
+
+plotlist = list()
+p = ggplot(covariates1, aes(x = Diagnosis, y = PMI, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = AAD, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = RIN, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_INTERGENIC_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_INTRONIC_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_RIBOSOMAL_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_CODING_BASES, color = BrainRegion)) + geom_boxplot()
+p
+
+p = ggplot(covariates1, aes(x = Diagnosis, y = PCT_PF_READS_ALIGNED, color = BrainRegion)) + geom_boxplot()
+p
+```
+
+### Get raw reprocessed counts from synapse
+```{r counts}
+# Download sample counts
+counts.id = c(ROSMAP = 'syn8691134',
+              MSBB = 'syn8691099',
+              MAYO1 = 'syn8690799', 
+              MAYO2 = 'syn8690904')
+all.used.ids = c(all.used.ids, as.character(counts.id))
+counts = lapply(counts.id, function(id){
+  tmp = read.table(synGet(id)@filePath, header=T, sep='\t', check.names = F, row.names = 1)
+})
+
+covariates$MAYO1 = covariates$MAYO
+covariates$MAYO2 = covariates$MAYO
+counts = mapply(function(cnt, cov){
+  cnt[,intersect(colnames(cnt), cov$SampleID)] %>%
+    CovariateAnalysis::rownameToFirstColumn('Gene.ID')
+}, counts, covariates[names(counts)], SIMPLIFY = F) %>%
+  plyr::join_all(type = 'full')
+```
+
+### Store results in synapse
+```{r synapse.store, include=FALSE, cache=FALSE}
+# Store consolidated data in synapse
+CODE = Folder(name = 'All RNASeq data combined', parentId = parentId)
+CODE = synStore(CODE)
+
+# Store covariates in synapse
+write.table(covariates1, file = 'allRNASeqCovariates.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('allRNASeqCovariates.tsv', 
+           name = 'All RNASeq covariates', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = all.used.ids,
+               executed = thisFile,
+               activityName = activityName,
+               activityDescription = activityDescription)
+
+# Store raw counts in synapse
+write.table(counts, file = 'allReprocessedCounts.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('allReprocessedCounts.tsv', 
+           name = 'All RNASeq reprocessed raw counts', 
+           parentId = CODE$properties$id)
+OBJ = synStore(OBJ,
+               used = all.used.ids,
+               executed = thisFile,
+               activityName = activityName,
+               activityDescription = activityDescription)
+```
+### Source code in github
+[Source Code](`r thisFile`)
