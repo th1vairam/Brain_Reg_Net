@@ -32,6 +32,8 @@ library(ggplot2)
 library(limma)
 library(edgeR)
 library(cqn)
+library(knitr)
+library(psych)
 
 synapseLogin()
 
@@ -206,7 +208,7 @@ all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt, 
   cov[,ContCov] = lapply(cov[,ContCov], as.numeric)
   rownames(cov) = cov$SampleID
   cov = cov[,c(FactorCov, ContCov)]
-  assocStat = getAssociationStatistics(cov)
+  # assocStat = getAssociationStatistics(cov)
   
   # Perform differential expression between case-control
   varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
