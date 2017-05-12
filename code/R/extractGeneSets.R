@@ -39,11 +39,15 @@ all.files = synQuery('select id,name from file where parentId == "syn4598359"')
 
 GeneSets = plyr::dlply(all.files, .(file.id), .fun = function(y){
   print(paste('Started',y$file.name))
-  tmp = read.table(synGet(y$file.id)@filePath, fill = NA, row.names = NULL, header = FALSE)
+  tmp = read.table(synGet(y$file.id)@filePath, fill = NA, row.names = NULL, header = FALSE, sep = '\t')
   tmp1 = plyr::dlply(tmp, .(V1), .fun = function(x){
-    as.character(unlist(x[-(1)])) %>% unique() %>% setdiff('')
+    sapply(x[-(1)], function(x){
+      str_split(x, ',')[[1]][1]
+    }) %>% 
+      unique() %>% 
+      setdiff('')
   }, 
-  .parallel = T,
+  .parallel = F,
   .paropts = list(.packages = c('dplyr')))
   print(paste('Completed',y$file.name))
   return(tmp1)
@@ -53,6 +57,6 @@ save(list = 'GeneSets', file = 'allEnrichrGeneSets.RData')
 stopCluster(cl)
 
 #### Store in synapse ####
-obj = File('allEnrichrGeneSets.RData', name = 'Gene Sets in RList Format ', parentId = syn4867780)
+obj = File('allEnrichrGeneSets.RData', name = 'Gene Sets in RList Format ', parentId = 'syn4867780')
 obj = synStore(obj, used = all.files$file.id, activityName = activityName, 
                executed = thisFile, activityDescription = activityDescription)
