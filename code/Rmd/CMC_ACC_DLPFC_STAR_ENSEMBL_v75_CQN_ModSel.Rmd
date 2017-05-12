@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId ="syn7501880",
-                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)')
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection 1)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -333,12 +333,12 @@ multiplot(plotlist = p, cols = 3)
 # vcd::mosaic(~ Gender + Dx.Tissue, data = COVARIATES)
 ```
 ### Filter genes
-Remove genes that have less than 5 cpm counts in at least 100% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
+Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
 genesToAnalyze = dlply(METADATA, .(Dx.Tissue), .fun = function(mtd, count){
   processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID %>% droplevels()],
-                                                   MIN_GENE_CPM=5, 
-                                                   MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=1)
+                                                   MIN_GENE_CPM=1, 
+                                                   MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
   processed.counts$filteredExprMatrix$genes
 }, COUNT)
 
@@ -536,7 +536,7 @@ gc()
 ```
 
 ### Distribution of samples (log cpm)
-```{r lcpm.dist}
+```{r lcpm.dist, cache=FALSE}
 # Plot abberent distribution of logcpm counts
 tmp1 = (CQN.GENE_EXPRESSION$E) %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
@@ -644,11 +644,11 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
                        worse = sum(diff <= -5)) %>%
       dplyr::mutate(nchange = better - worse)
     
-    kable(nChange)
+    print(nChange)
     
     # Select variable
     tmp = nChange %>%
-      dplyr::filter(nchange > round(dim(cnt)[1]*0.05)) %>%
+      dplyr::filter(nchange > round(dim(cnt)[1]*0.01)) %>%
       dplyr::top_n(1, nchange)
     
     if (dim(tmp)[1] == 0){
@@ -669,7 +669,7 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
 #### Phase I (clinical, ancestry and sample specific technical variables)
 ```{r phase1}
 # Fit a base model with the following covariates
-adjust.covars = c('Dx.Tissue', 'Institution', 'Gender')
+adjust.covars = c('Dx.Tissue')
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    COVARIATES[colnames(NEW.COUNTS),'Individual_ID'], 
                                    CQN.GENE_EXPRESSION$E, 
@@ -678,7 +678,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
   dplyr::rename(baseModel = BIC)
 
 # Iteratively identify covariates in phase I
-phase1.covars = c('PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
+phase1.covars = c('Institution', 'Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
                                      NEW.COUNTS, baseModelBIC)
@@ -963,7 +963,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)", parentId = parentId)
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection 1)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
@@ -1004,7 +1004,7 @@ annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
-DESIGN$design %>%
+DM1$design %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
 DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
