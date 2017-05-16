@@ -294,7 +294,7 @@ COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], as.numeric)
 Correlation/association between covariates at an FDR <= 0.1
 ```{r covariates.correlation, fig.width=10, fig.height=6}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
-draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left')
+draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left', padding  = unit(c(18,2,2,18), 'mm'))
 ```
 
 ```{r data.explore, fig.width = 12, fig.height = 8}
@@ -348,6 +348,23 @@ genesToAnalyze = unlist(genesToAnalyze) %>%
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], 
                                                  MIN_GENE_CPM=0, 
                                                  MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+
+# Check gene biotype
+## Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+
+## Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "gene_biotype"),
+                       filters = "ensembl_gene_id", 
+                       values = PROCESSED_COUNTS$filteredExprMatrix$genes,
+                       mart = mart)
+
+summary(factor(Ensemble2HGNC$gene_biotype)) %>%
+  rownameToFirstColumn('Biotype') %>%
+  dplyr::rename(fraction = DF) %>%
+  dplyr::mutate(fraction = fraction/dim(PROCESSED_COUNTS$filteredExprMatrix$genes)[1]) %>%
+  dplyr::filter(fraction >= 0.01) %>%
+  kable
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
