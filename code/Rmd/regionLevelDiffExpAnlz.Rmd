@@ -237,32 +237,50 @@ all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt, 
   cov[,ContCov] = lapply(cov[,ContCov], as.numeric)
   rownames(cov) = cov$SampleID
   cov = cov[,c(FactorCov, ContCov)]
+  cov$RIN2 = cov$RIN^2
   # assocStat = getAssociationStatistics(cov)
   
   # Perform differential expression between case-control
-  varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
-                    'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
-                    'PCT_RIBOSOMAL_BASES')
+  if(any(unique(cov$BrainRegion) %in% c('DLPFC'))){
+    varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+                    'PCT_CODING_BASES', 'PCT_INTERGENIC_BASES')
+  } else {
+    if (any(unique(cov$BrainRegion) %in% c('FP', 'STG', 'PHG', 'IFG'))){
+      varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+                        'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 
+                        'PCT_INTRONIC_BASES', 'RIN2')
+    } else (any(unique(cov$BrainRegion) %in% c('CER', 'TCX'))) {
+      varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI',
+                        'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                        'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+    }
+  } 
   contVar = 'Diagnosis'
   
   baseDiffExp <- performDifferentialExpression(cov, cnt, contVar, varOfInterest, gene.len, gene.gc)
   
+  # Perform differential expression between case-control in a AAD specific manner
+  aadDiffExp <- performDifferentialExpressionAAD(cov, cnt, contVar, varOfInterest, gene.len, gene.gc)
+  
   # Perform differential expression between case-control in a gender specific manner
   cov$Diagnosis.Gender = factor(paste(cov$Diagnosis, cov$Gender, sep = '.'))
-  varOfInterest = c('Diagnosis.Gender', 'Batch', 'RIN', 'AAD', 'PMI', 
-                    'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
-                    'PCT_RIBOSOMAL_BASES')
+  if(any(unique(cov$BrainRegion) %in% c('DLPFC'))){
+    varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+                    'PCT_CODING_BASES', 'PCT_INTERGENIC_BASES')
+  } else {
+    if (any(unique(cov$BrainRegion) %in% c('FP', 'STG', 'PHG', 'IFG'))){
+      varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+                        'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 
+                        'PCT_INTRONIC_BASES', 'RIN2')
+    } else (any(unique(cov$BrainRegion) %in% c('CER', 'TCX'))) {
+      varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI',
+                        'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                        'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+    }
+  }
   contVar = 'Diagnosis.Gender'
   
   genderDiffExp <- performDifferentialExpression(cov, cnt, contVar, varOfInterest, gene.len, gene.gc)
-  
-  # Perform differential expression between case-control in a AAD specific manner
-  varOfInterest = c('Diagnosis', 'Gender', 'Batch', 'RIN', 'AAD', 'PMI', 
-                    'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
-                    'PCT_RIBOSOMAL_BASES')
-  contVar = 'Diagnosis'
-  
-  aadDiffExp <- performDifferentialExpressionAAD(cov, cnt, contVar, varOfInterest, gene.len, gene.gc)
   
   return(rbindlist(list(baseDiffExp, genderDiffExp, aadDiffExp), use.names = T, fill = T))
 }, counts, gene.len, gene.gc)
