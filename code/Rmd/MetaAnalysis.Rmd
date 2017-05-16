@@ -7,11 +7,12 @@ output: html_document
 ```{r knit2synapse, eval=FALSE}
 library(synapseClient)
 library(knit2synapse)
+
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./MetaAnalysis.Rmd", 
-                                 parentId ="syn5569102",
-                                 entityName = 'MetaAnalysis of Control vs AD from all three brain banks (Reprocessed RNASeq)')
+                                 parentId ="syn9622393",
+                                 entityName = 'MetaAnalysis of Control vs AD (Reprocessed RNASeq)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -95,13 +96,19 @@ fishersPvalue <- function(pvalue){
 ```{r curate.genelist}
 # Download enrichr gene sets from synapse
 GL_OBJ = synGet('syn4867851')
-ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
+all.used.ids = 'syn4867851'
 load(GL_OBJ@filePath)
 
-gsets = c("GO_Biological_Process", "Reactome_2015", "WikiPathways_2015")
+gsets = c("GO_Biological_Process_2015", "Reactome_2016", "WikiPathways_2016")
 GeneSets.Enrichr = GeneSets[gsets]
 
-# Download AD related gene sets from synapse
+# Download AD genetic loci from synapse
+AD = list(GeneticLoci = synGet('syn4891675')@filePath %>%
+            read.table(header = F) %>% 
+            unlist() %>%
+            as.character())
+
+list()
 GL_OBJ = synGet('syn4893059');
 ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
 load(GL_OBJ@filePath)
