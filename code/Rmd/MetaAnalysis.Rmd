@@ -44,6 +44,7 @@ library(githubr)
 library(Vennerable)
 library(colorfulVennPlot)
 library(rmeta)
+library(xlsx)
 
 synapseLogin()
 
@@ -110,15 +111,13 @@ AD = list(GeneticLoci = synGet('syn4891675')@filePath %>%
             as.character())
 all.used.ids = c(all.used.ids, 'syn4891675')
 
-# Download celltype specific genesets from synapse
+# Download cell type markers from synapse (list from GSE73721 by Mariet)
 load(synGet('syn9818080')@filePath)
 all.used.ids = c(all.used.ids, 'syn9818080')
 
-GeneSets = c(GeneSets.Enrichr, 
-             list(CellTypeMarkers = CellTypeList,
-                  AD = AD))
-
-GeneSets = do.call(c, GeneSets)
+GeneSets = c(list(CellTypeMarkers = CellTypeList,
+                AD = AD),
+                GeneSets.Enrichr)
 ```
 
 ### Get covariates/sample metadata from synapse
