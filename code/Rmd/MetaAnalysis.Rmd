@@ -43,6 +43,7 @@ library(githubr)
 
 library(Vennerable)
 library(colorfulVennPlot)
+library(rmeta)
 
 synapseLogin()
 
@@ -99,7 +100,7 @@ GL_OBJ = synGet('syn4867851')
 all.used.ids = 'syn4867851'
 load(GL_OBJ@filePath)
 
-gsets = c("GO_Biological_Process_2015", "Reactome_2016", "WikiPathways_2016")
+gsets = c("GO_Biological_Process_2015", "Reactome_2016","KEGG_2016")
 GeneSets.Enrichr = GeneSets[gsets]
 
 # Download AD genetic loci from synapse
@@ -107,34 +108,23 @@ AD = list(GeneticLoci = synGet('syn4891675')@filePath %>%
             read.table(header = F) %>% 
             unlist() %>%
             as.character())
+all.used.ids = c(all.used.ids, 'syn4891675')
 
-list()
-GL_OBJ = synGet('syn4893059');
-ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
-load(GL_OBJ@filePath)
+# Download celltype specific genesets from synapse
+load(synGet('syn9818080')@filePath)
+all.used.ids = c(all.used.ids, 'syn9818080')
 
-GeneSets.CM = list(CellTypeMarkers = GeneSets[grep('Zhang', names(GeneSets))],
-                   AD = GeneSets['AD:GeneticLoci'])
-GeneSets = c(GeneSets.Enrichr, GeneSets.CM) # 
+GeneSets = c(GeneSets.Enrichr, 
+             list(CellTypeMarkers = CellTypeList,
+                  AD = AD))
+
+GeneSets = do.call(c, GeneSets)
 ```
 
 ### Get covariates/sample metadata from synapse
 ```{r covariates}
-covariates.ids = c(ROSMAP = 'syn8456631',
-                   MSBB = 'syn8484996',
-                   MAYO = 'syn8466814')
-all.used.ids = covariates.ids
-covariates = lapply(covariates.ids, downloadFile)
-
-covariates$ROSMAP$BrainRegion = 'DLPFC'
-covariates$MSBB = covariates$MSBB %>%
-  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.')
-covariates$MAYO = covariates$MAYO %>%
-  tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.')
-
-covariates = covariates %>% 
-  rbindlist(use.names = T, fill = T, idcol = 'Study') %>%
-  dplyr::select(SampleID, Diagnosis, BrainRegion)
+covariates = downloadFile('syn9765937')
+all.used.ids = c(all.used.ids, 'syn9765937')
 
 kable(table(covariates$Diagnosis, covariates$BrainRegion))
 ```
@@ -154,10 +144,10 @@ tmp = rbindlist(diff.exp, use.names = T, fill = T) %>%
   dplyr::filter(Comparison == 'CONTROL-AD')
 
 tmp$Direction = 'NONE'
-tmp$Direction[tmp$logFC > log2(1.2) & tmp$adj.P.Val <= 0.05] = 'UP'
-tmp$Direction[tmp$logFC < -log2(1.2) & tmp$adj.P.Val <= 0.05] = 'DOWN'
+tmp$Direction[tmp$logFC >= log2(1.2) & tmp$adj.P.Val <= 0.05] = 'UP'
+tmp$Direction[tmp$logFC <= -log2(1.2) & tmp$adj.P.Val <= 0.05] = 'DOWN'
 
-writeLines('Number of differentially expressed genes at an FDR of 0.05')
+writeLines('Number of differentially expressed genes at an FDR of 0.05 and fold change of 1.2')
 tmp %>%
   group_by(Study, BrainRegion, Direction, Comparison) %>%
   summarise(count = n()) %>%
@@ -172,249 +162,292 @@ for(region in c('ROSMAP', 'MSSM', 'MAYO')){
   pl[[region]] = p
 }
 multiplot(plotlist = pl, cols = 1)
+
+diffExpSet = plyr::dlply(tmp, .(BrainRegion), .fun = function(x){
+  dplyr::filter(x, abs(logFC) >= log2(1.2), adj.P.Val <= 0.05) %>%
+    dplyr::select(hgnc_symbol) %>%
+    unlist %>%
+    as.character() %>%
+    unique() %>%
+    setdiff('')
+})
+```
+
+### Meta Analysis
+```{r metaanalysis.min.pval}
+library(metamisc)
+metaAnal <- function(diff.exp, region){
+  # Get raw p.values
+  P.Value = diff.exp %>% 
+    rbindlist(use.names = T, fill = T) %>%
+    dplyr::filter(Comparison == 'CONTROL-AD', BrainRegion %in% region) %>%
+    dplyr::select(ensembl_gene_id, P.Value, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, P.Value)
+  P.Value[is.na(P.Value)] = 1
+  rownames(P.Value) = P.Value$ensembl_gene_id
+  P.Value$ensembl_gene_id = NULL
+  P.Value = data.matrix(P.Value)
+
+  # Perform fisher p-value based meta-analysis
+  fb.pval = P.Value %>%
+    fishersPvalue %>%
+    p.adjust(method = 'fdr') %>%
+    rownameToFirstColumn('gene.id') %>%
+    dplyr::rename(fb.pval = DF)
+  sum(fb.pval$fb.pval <= 0.05)
+
+  # Dersimonian based meta analysis
+  effect.size = diff.exp %>% 
+    rbindlist(use.names = T, fill = T) %>%
+    dplyr::filter(Comparison == 'CONTROL-AD', BrainRegion %in% region) %>%
+    dplyr::select(ensembl_gene_id, logFC, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, logFC)
+  rownames(effect.size) = effect.size$ensembl_gene_id
+  effect.size$ensembl_gene_id = NULL
+  effect.size[is.na(effect.size)] = 0
+
+  effect.var = diff.exp %>% 
+    rbindlist(use.names = T, fill = T) %>%
+    dplyr::filter(Comparison == 'CONTROL-AD', BrainRegion %in% region) %>%
+    dplyr::mutate(sd = (CI.R - logFC)/3,
+                  var = sd^2) %>%
+    dplyr::select(ensembl_gene_id, var, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, var)
+  rownames(effect.var) = effect.var$ensembl_gene_id
+  effect.var$ensembl_gene_id = NULL
+  effect.var[is.na(effect.var)] = 0
+
+  ds.metaAnal = ldply(1:dim(effect.size)[1], function(i, effect.size, effect.var){
+    es = t(effect.size[i,]); es = es[es!=0]
+    ev = t(effect.var[i,]); ev = ev[ev!=0]
+  fit = uvmeta(es, ev, model = "random", method = "MOM")
+  data.frame(ensembl_gene_id = rownames(effect.size)[i],
+             logFC = fit$results[1,1],
+             CI.L = fit$results[1,1] - 3 * sqrt(fit$results[1,2]),
+             CI.R = fit$results[1,1] + 3 * sqrt(fit$results[1,2]))
+  }, effect.size, effect.var)
+
+  tmp = dplyr::rename(fb.pval, ensembl_gene_id = gene.id) %>%
+    left_join(ds.metaAnal) %>%
+    dplyr::filter(fb.pval <= 0.05, sign(CI.L) == sign(CI.R), abs(logFC) >= log2(1.2)) %>%
+    dplyr::arrange(desc(logFC)) %>%
+    left_join(diff.exp %>%
+                rbindlist(use.names = T, fill = T) %>%
+                dplyr::select(ensembl_gene_id, hgnc_symbol) %>%
+                unique())
+}
+
+meta.anal.all= metaAnal(diff.exp, c('DLPFC', 'CER', 'TCX', 'FP', 'STG', 'PHG', 'IFG'))
+meta.anal.imp= metaAnal(diff.exp, c('DLPFC', 'TCX', 'PHG'))
+diffExpSet = c(diffExpSet, list(METANLZ.ALL = setdiff(meta.anal.all$hgnc_symbol, ''),
+                                METANLZ.T3 = setdiff(meta.anal.imp$hgnc_symbol, '')))
 ```
 
 ### Pathway enrichment analysis (individual brain regions)
 ```{r pathway.enrich}
-# setsToTest = rbindlist(diff.exp, use.names = T, fill = T) %>%
-#   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-#   dlply(.(BrainRegion), .fun = function(x){
-#     setdiff(unique(x$hgnc_symbol),c(''))
-#   })
+backgroundGenes = diff.exp %>%
+  rbindlist(use.names = T, fill = T) %>%
+  dplyr::select(hgnc_symbol) %>%
+  unlist() %>%
+  setdiff('')
 
-setsToTest = rbindlist(diff.exp, use.names = T, fill = T) %>%
-  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) > log2(1.2)) %>%
-  dplyr::mutate(Direction = sign(logFC),
-                Direction = factor(Direction, levels = c(-1,1),
-                                   labels = c('-1' = 'DOWN', '1' = 'UP'))) %>%
-  dlply(.(BrainRegion, Direction), .fun = function(x){
-    setdiff(unique(x$hgnc_symbol),c(''))
-  })
-
-
- 
-# Filter gene list
-GeneSets = mapply(function(x,y){
-  names(x) = paste(y,names(x),sep = ':')
-  return(x)
-},GeneSets, names(GeneSets), SIMPLIFY = F) %>%
-  Reduce(c,.)
-GeneSets = GeneSets[setdiff(seq(1,length(GeneSets)), c(grep('Mus musculus', names(GeneSets))))]
-
+# Filter geneset
 GeneSets = lapply(GeneSets, function(x, backgroundGenes){
   x = intersect(x,backgroundGenes)
 }, backgroundGenes)
 GeneSets = GeneSets[sapply(GeneSets, length) >= 15 & sapply(GeneSets, length) <= 1000]
 
-enrichResults = plyr::ldply(setsToTest, .fun = function(genesInGeneSet, geneSets, backgroundGenes){
-  plyr::ldply(geneSets, .fun = fisherEnrichment, genesInGeneSet, backgroundGenes, .parallel = T) %>%
+enrichResults = plyr::ldply(diffExpSet, .fun = function(genesInGeneSet, geneSets, backgroundGenes){
+  plyr::ldply(geneSets, .fun = fisherEnrichment, genesInGeneSet, backgroundGenes, .parallel = T, .id = 'Category') %>%
     dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
 }, GeneSets, backgroundGenes, 
-.parallel = F, .progress = 'text', .paropts = list(.packages = c('plyr','dplyr','CovariateAnalysis')))
+.parallel = F, .progress = 'text', .paropts = list(.packages = c('plyr','dplyr','CovariateAnalysis')),
+.id = 'BrainRegion')
 
-tmp = dplyr::select(enrichResults, BrainRegion, .id, fdr) %>%
-  dplyr::filter(fdr <= 0.05) %>%
-  tidyr::spread(BrainRegion, fdr)
+tmp = dplyr::select(enrichResults, BrainRegion, Category, fdr, Odds.Ratio)
+tmp = tmp[c(grep('CellTypeMarkers', tmp$Category),
+            grep('GeneticLoci', tmp$Category)), ]
+tmp$Odds.Ratio[tmp$fdr > 0.05] = 0
+tmp = tmp %>%
+  dplyr::select(BrainRegion, Category, Odds.Ratio) %>%
+  tidyr::spread(BrainRegion, Odds.Ratio)
+rownames(tmp) = gsub('CellTypeMarkers.','',tmp$Category) %>%
+  gsub('_Zhang_Neuron_2015','',.)
+tmp$Category = NULL
 
-# Store logcpm in synapse
-write.table(tmp, file = 'enrich.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('enrich.tsv', 
-           name = 'Pathway Enrichment Results (AD and Control)', 
-           parentId = CODE$properties$id)
-OBJ = synStore(OBJ,
-               used = as.character(c(covariates.id)),
-               executed = thisFile,
-               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
+h = ComplexHeatmap::Heatmap(tmp, name = 'Odds Ratio', col = wesanderson::wes_palette('Zissou', 4))
+draw(h, heatmap_legend_side = 'left', padding = unit(c(4,2,2,4), 'mm'))
+
+tmp = dplyr::select(enrichResults, BrainRegion, Category, fdr, Odds.Ratio)
+tmp = tmp[c(grep('Reactome', tmp$Category),
+            grep('GO', tmp$Category)), ] %>%
+  unique()
+tmp$Odds.Ratio[tmp$fdr > 0.05] = 0
+tmp = tmp %>%
+  dplyr::select(BrainRegion, Category, Odds.Ratio) %>%
+  tidyr::spread(BrainRegion, Odds.Ratio)
+tmp = tmp[rowSums(tmp[,-(1)]) != 0, c(1, which(colSums(tmp[,-(1)]) != 0) + 1)]
+rownames(tmp) = gsub('GO_Biological_Process_2015.','',tmp$Category) %>%
+  gsub('Reactome_2016.','',.)
+tmp$Category = NULL
+
+h = ComplexHeatmap::Heatmap(tmp, name = 'Odds Ratio', col = wesanderson::wes_palette('Zissou', 4))
+draw(h, heatmap_legend_side = 'left', padding = unit(c(4,2,2,4), 'mm'))
 ```
 
-### Get cell type fraction from synapse
-```{r celltype.frac, eval = FALSE}
-celltype.fraction.ids = c(ROSMAP = 'syn8124520',
-                          MSBB = 'syn8146376',
-                          MAYO = 'syn8135250')
-celltype.fraction = lapply(celltype.fraction.ids, downloadFile) 
+### Gender specific differential expression (individual brain regions)
+```{r gender.specific}
+load(synGet('syn9766351')@filePath)
 
-cell.frac = mapply(function(cov, frc){
-  x = filter(frc, SampleID %in% cov$SampleID) %>%
-    dplyr::select(-`P-value`,-RMSE, -Correlation) %>%
-    tidyr::gather(celltype, fraction, -SampleID) %>%
-    left_join(cov)
-}, covariates, celltype.fraction, SIMPLIFY = F) %>%
-  rbindlist(use.names = T, fill = T) %>%
-  dplyr::mutate(Dx = factor(Dx, levels = c('Control', 'NCI', 'ND', 'SD', 'AD')))
-
-pl = list()
-
-p = ggplot(cell.frac %>% filter(celltype %in% c('neurons', 'microglia', 'astrocytes')), 
-           aes(x = BrainRegion, y = fraction, color = Dx)) + geom_boxplot()
-p = p + facet_grid(celltype~., scales = 'free_y')
-p = p + xlab('Brain Region') + ylab('Fraction')
-p = p + theme(axis.text.x = element_text(hjust = 1, angle = 90), legend.position = 'top')
-pl[[1]] = p
-
-p = ggplot(cell.frac %>% filter(celltype %in% c('endothelial', 'oligodendrocytes', 'OPC')), 
-           aes(x = BrainRegion, y = fraction, color = Dx)) + geom_boxplot()
-p = p + facet_grid(celltype~., scales = 'free_y')
-p = p + xlab('Brain Region') + ylab('Fraction')
-p = p + theme(axis.text.x = element_text(hjust = 1, angle = 90), legend.position = 'top')
-pl[[2]] = p
-
-multiplot(plotlist = pl, cols = 2)
-```
-
-### Get hgnc_symbol mapping from biomaRt
-```{r biomart}
-# Get background gene ids
-backgroundGenes = sapply(diff.exp, function(x) x$hgnc_symbol) %>%
-  Reduce(c,.) %>% unique() %>% setdiff(c(''))
-```
-
-
-
-### Consistently differentially expressed genes (in all 7 brain regions)
-```{r diffexp.all, fig.height=16, fig.width=10}
-# Find genes that are differentially expressed in each brain region
-diff.exp.gl = lapply(diff.exp, function(x){
-  dplyr::filter(x, abs(logFC) >= log2(1.2) & adj.P.Val <= 0.05 & sign(CI.L) == sign(CI.R)) %>%
-    dplyr::select(Region, ensembl_gene_id) %>%
-    unique
+tmp = ldply(all.results, .fun = function(x){
+  x$Direction = 'NONE'
+  x$Direction[x$adj.P.Val <= 0.05 & x$logFC <= -log2(1.2)] = 'DOWN'
+  x$Direction[x$adj.P.Val <= 0.05 & x$logFC >= log2(1.2)] = 'UP'
+  
+  dplyr::filter(x, adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), Comparison == 'AD.FEMALE-CONTROL.FEMALE') %>%
+    dplyr::group_by(Direction) %>%
+    dplyr::summarise(count = n())
 }) %>%
-  rbindlist(use.names = T, fill = T) %>%
-  dlply(.(Region), .fun = function(x){setdiff(unique(x$ensembl_gene_id),c(''))})
+  dplyr::mutate(Direction = paste(Direction,'FEMALE',sep = '.')) %>%
+  tidyr::spread(Direction, count) %>%
+  left_join(
+    ldply(all.results, .fun = function(x){
+      x$Direction = 'NONE'
+      x$Direction[x$adj.P.Val <= 0.05 & x$logFC <= -log2(1.2)] = 'DOWN'
+      x$Direction[x$adj.P.Val <= 0.05 & x$logFC >= log2(1.2)] = 'UP'
+      
+      dplyr::filter(x, adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), Comparison == 'AD.MALE-CONTROL.MALE') %>%
+        dplyr::group_by(Direction) %>%
+        dplyr::summarise(count = n())
+    }) %>%
+      dplyr::mutate(Direction = paste(Direction,'MALE',sep = '.')) %>%
+      tidyr::spread(Direction, count))
 
-tmp1 = rbindlist(diff.exp, use.names = T, fill = T) %>%
-  dplyr::filter(ensembl_gene_id %in% Reduce(c, diff.exp.gl))
+metaAnal.gender <- function(allResults, comp, region){
+  # Get raw p.values
+  P.Value = allResults %>%
+    rbindlist(use.names = T, fill = T, idcol = 'BrainRegion') %>%
+    dplyr::filter(Comparison == comp, BrainRegion %in% region) %>%
+    dplyr::select(ensembl_gene_id, P.Value, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, P.Value)
+  P.Value[is.na(P.Value)] = 1
+  rownames(P.Value) = P.Value$ensembl_gene_id
+  P.Value$ensembl_gene_id = NULL
+  P.Value = data.matrix(P.Value)
+  
+  # Perform fisher p-value based meta-analysis
+  fb.pval = P.Value %>%
+    fishersPvalue %>%
+    p.adjust(method = 'fdr') %>%
+    rownameToFirstColumn('gene.id') %>%
+    dplyr::rename(fb.pval = DF)
+  sum(fb.pval$fb.pval <= 0.05)
+  
+  # Dersimonian based meta analysis
+  effect.size = allResults %>% 
+    rbindlist(use.names = T, fill = T, idcol = 'BrainRegion') %>%
+    dplyr::filter(Comparison == comp, BrainRegion %in% region) %>%
+    dplyr::select(ensembl_gene_id, logFC, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, logFC)
+  rownames(effect.size) = effect.size$ensembl_gene_id
+  effect.size$ensembl_gene_id = NULL
+  effect.size[is.na(effect.size)] = 0
+  
+  effect.var = allResults %>% 
+    rbindlist(use.names = T, fill = T, idcol = 'BrainRegion') %>%
+    dplyr::filter(Comparison == comp, BrainRegion %in% region) %>%
+    dplyr::mutate(sd = (CI.R - logFC)/3,
+                  var = sd^2) %>%
+    dplyr::select(ensembl_gene_id, var, BrainRegion) %>%
+    unique() %>%
+    tidyr::spread(BrainRegion, var)
+  rownames(effect.var) = effect.var$ensembl_gene_id
+  effect.var$ensembl_gene_id = NULL
+  effect.var[is.na(effect.var)] = 0
+  
+  ds.metaAnal = ldply(1:dim(effect.size)[1], function(i, effect.size, effect.var){
+    es = t(effect.size[i,]); 
+    ev = t(effect.var[i,]); 
+    es1 = es[es != 0 & ev != 0]; ev1 = ev[ev != 0 & es != 0]
+    fit = uvmeta(es1, ev1, model = "random", method = "MOM")
+    data.frame(ensembl_gene_id = rownames(effect.size)[i],
+               logFC = fit$results[1,1],
+               CI.L = fit$results[1,1] - 3 * sqrt(fit$results[1,2]),
+               CI.R = fit$results[1,1] + 3 * sqrt(fit$results[1,2]))
+  }, effect.size, effect.var)
+  
+  tmp = dplyr::rename(fb.pval, ensembl_gene_id = gene.id) %>%
+    left_join(ds.metaAnal) %>%
+    dplyr::filter(fb.pval <= 0.05, sign(CI.L) == sign(CI.R)) %>%
+    dplyr::arrange(desc(logFC)) %>%
+    left_join(diff.exp %>%
+                rbindlist(use.names = T, fill = T) %>%
+                dplyr::select(ensembl_gene_id, hgnc_symbol) %>%
+                unique())
+}
 
-tmp1$Direction = 'NONE'
-tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC >= log2(1.2)] = 'UP'
-tmp1$Direction[tmp1$adj.P.Val <= 0.05 & tmp1$logFC <= -log2(1.2)] = 'DOWN'
+meta.female = metaAnal.gender(all.results, comp = 'AD.FEMALE-CONTROL.FEMALE', 
+                              region = c('DLPFC', 'CER', 'TCX', 'FP', 'STG', 'PHG', 'IFG'))
+meta.male = metaAnal.gender(all.results, comp = 'AD.MALE-CONTROL.MALE',
+                            region = c('DLPFC', 'CER', 'TCX', 'FP', 'STG', 'PHG', 'IFG'))
+meta.female.imp = metaAnal.gender(all.results, comp = 'AD.FEMALE-CONTROL.FEMALE', 
+                                  region = c('DLPFC', 'TCX', 'PHG'))
+meta.male.imp = metaAnal.gender(all.results, comp = 'AD.MALE-CONTROL.MALE',
+                                region = c('DLPFC', 'TCX', 'PHG'))
 
-tmp = tmp1 %>%
-  group_by(ensembl_gene_id) %>%
-  summarise(count = sum(Direction != 'NONE')) %>%
-  filter(count == 7) %>%
-  left_join(dplyr::select(tmp1, ensembl_gene_id, hgnc_symbol) %>% unique)
+diffExpSet.gender = llply(all.results, .fun = function(x){
+  dplyr::filter(x, adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), Comparison == 'AD.FEMALE-CONTROL.FEMALE') %>%
+    dplyr::left_join(diff.exp %>%
+                       rbindlist(use.names = T, fill = T) %>%
+                       dplyr::select(ensembl_gene_id, hgnc_symbol) %>%
+                       unique) %>%
+    dplyr::select(hgnc_symbol) %>%
+    unlist() %>% setdiff('')
+})
 
-writeLines(paste('Differentially expressed genes in all 7 brain regions at an FDR of 0.05 and fold change of 1.2 are',
-                 length(unique(tmp$hgnc_symbol))))
-kable(data.frame(ngenes = length(unique(tmp$hgnc_symbol)),
-                 hgnc_symbol = tmp$hgnc_symbol %>% unique %>% paste(collapse = ',')))
+diffExpSet.gender = c(diffExpSet.gender, llply(all.results, .fun = function(x){
+  dplyr::filter(x, adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), Comparison == 'AD.MALE-CONTROL.MALE') %>%
+    dplyr::left_join(diff.exp %>%
+                       rbindlist(use.names = T, fill = T) %>%
+                       dplyr::select(ensembl_gene_id, hgnc_symbol) %>%
+                       unique) %>%
+    dplyr::select(hgnc_symbol) %>%
+    unlist() %>% setdiff('')
+}))
+names(diffExpSet.gender)[1:7] = paste('FEMALE',names(diffExpSet.gender)[1:7],sep = '.')
+names(diffExpSet.gender)[8:14] = paste('MALE',names(diffExpSet.gender)[8:14],sep = '.')
+diffExpSet.gender$FEMALE.METANALZ.ALL = setdiff(meta.female$hgnc_symbol,'')
+diffExpSet.gender$MALE.METANALZ.ALL = setdiff(meta.male$hgnc_symbol,'')
+diffExpSet.gender$FEMALE.METANALZ.T3 = setdiff(meta.female.imp$hgnc_symbol,'')
+diffExpSet.gender$MALE.METANALZ.T3 = setdiff(meta.male.imp$hgnc_symbol,'')
 
-writeLines('Top six differentially expressed genes are')
-tmp.eff.sz = filter(tmp1, hgnc_symbol %in% tmp$hgnc_symbol) %>%
-  group_by(hgnc_symbol) %>% 
-  summarise(es = sum(logFC, na.rm = T)) %>% 
-  top_n(6, abs(es))
+enrichResults.gender = plyr::ldply(diffExpSet.gender, .fun = function(genesInGeneSet, geneSets, backgroundGenes){
+  plyr::ldply(geneSets, .fun = fisherEnrichment, genesInGeneSet, backgroundGenes, .parallel = T, .id = 'Category') %>%
+    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
+}, GeneSets, backgroundGenes, 
+.parallel = F, .progress = 'text', .paropts = list(.packages = c('plyr','dplyr','CovariateAnalysis')),
+.id = 'BrainRegion')
 
-pl = list()
-p = ggplot(tmp1 %>% 
-             filter(hgnc_symbol %in% c('MEIS3', 'PCSK1', 'ADAMTS2')), 
-           aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
-p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top') + scale_fill_manual(values = c('green', 'red'))
-pl[[1]] = p
+tmp = dplyr::select(enrichResults.gender, BrainRegion, Category, fdr, Odds.Ratio)
+tmp = tmp[c(grep('CellTypeMarkers', tmp$Category),
+            grep('GeneticLoci', tmp$Category)), ]
+tmp$Odds.Ratio[tmp$fdr > 0.05] = 0
+tmp = tmp %>%
+  dplyr::select(BrainRegion, Category, Odds.Ratio) %>%
+  tidyr::spread(BrainRegion, Odds.Ratio)
+rownames(tmp) = gsub('CellTypeMarkers.','',tmp$Category) %>%
+  gsub('_Zhang_Neuron_2015','',.)
+tmp$Category = NULL
 
-p = ggplot(tmp1 %>% 
-             filter(hgnc_symbol %in% c('FOXJ1', 'PRELP', 'S100A4')), 
-           aes(x = Region, y = logFC, color = Study, fill = Direction)) + geom_bar(stat = 'identity')
-p = p + facet_grid(hgnc_symbol~.) + geom_errorbar(aes(ymin=CI.L, ymax=CI.R), width = 0.2)
-p = p + theme(legend.position = 'top')  + scale_fill_manual(values = c('green','grey', 'red'))
-pl[[2]] = p
+h = ComplexHeatmap::Heatmap(t(tmp), name = 'Odds Ratio', col = wesanderson::wes_palette('Zissou', 4))
+draw(h, heatmap_legend_side = 'left', padding = unit(c(4,2,2,10), 'mm'))
 
-multiplot(plotlist = pl, cols = 2)
 ```
-
-### Meta Analysis
-```{r metaanalysis.min.pval}
-# Get raw p.values
-P.Value = diff.exp %>% 
-  rbindlist(use.names = T, fill = T) %>%
-  dplyr::select(gene.id, P.Value, Region) %>%
-  unique() %>%
-  tidyr::spread(Region, P.Value)
-P.Value[is.na(P.Value)] = 1
-rownames(P.Value) = P.Value$gene.id
-P.Value$gene.id = NULL
-P.Value = data.matrix(P.Value)
-
-# Perform minimum p-value based meta-analysis
-min.pval = P.Value %>% 
-  apply(1, min, na.rm = T) %>%
-  p.adjust(method = 'bonferroni') %>%
-  rownameToFirstColumn('gene.id') %>%
-  dplyr::rename(min.pval = DF)
-
-# Perform fisher p-value based meta-analysis
-fb.pval = P.Value %>%
-  fishersPvalue %>%
-  p.adjust(method = 'bonferroni') %>%
-  rownameToFirstColumn('gene.id') %>%
-  dplyr::rename(fb.pval = DF)
-```
-
-```{r }
-# Rank prod based analysis
-expr = resid.expr[!duplicated(resid.expr$ensembl_gene_id),-c(1:2)]
-rownames(expr) = resid.expr$ensembl_gene_id[!duplicated(resid.expr$ensembl_gene_id)]
-
-cl = covariates$Status
-names(cl) = covariates$ID
-cl[cl == 'NCI'] = 'Control'
-cl[cl == 'ND'] = 'Control'
-cl[cl == 'SD'] = 'AD'
-cl = cl[cl %in% c('Control','AD')] %>% droplevels 
-cl.tmp = -as.numeric(cl)+2
-names(cl.tmp) = names(cl)
-
-origin = covariates$BrainRegion %>% as.numeric
-names(origin) = covariates$ID
-origin = origin[names(cl)]
-
-expr = expr[, names(cl)]
-
-rankprod.pfp = RPadvance(expr, cl.tmp, origin, num.perm = 100, gene.names = rownames(expr), plot=T, rand = 123456, huge=T)
-rankprod.pval = apply(rankprod.pfp$pfp, 1, min) %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
-  dplyr::rename(rankprod.pval = DF)
-
-metaAnal = join_all(list(min.pval, max.pval, fb.pval, rankprod.pval), type = 'full')
-metaAnal$weight = -log10(metaAnal[,-c(1,6)]) %>% rowSums %>% rank
-metaAnal = metaAnal %>% arrange(desc(weight))
-
-writeLines('Number of genes differentially expressed between AD and control at an FDR of 0.05 are')
-tmp = metaAnal %>% 
-  dplyr::select(-weight) %>%
-  gather(method, pval, -ensembl_gene_id) %>% 
-  group_by(method) %>% 
-  filter(pval <= 0.05) %>%
-  dplyr::select(ensembl_gene_id) %>%
-  unique %>%
-  dlply(.(method), .fun = function(x){unique(x$ensembl_gene_id)})
-kable(sapply(tmp, length) %>% as.data.frame)
-
-tmp1 = Venn(tmp)
-
-plotVenn3d(tmp1@IndicatorWeight[-(1),'.Weight'], labels = names(tmp))
-```
-### Heatmap of expression
-```{r heatmap}
-# Get the overlapping gene sets from all three methods
-tmp.expr = t(scale(t(expr)))
-tmp.expr = scale(tmp.expr)
-tmp.expr = tmp.expr[intersect(intersect(tmp$fb.pval, tmp$min.pval), tmp$rankprod.pval),]
-
-tmp.covariates = dplyr::select(covariates, BrainRegion, Status)
-tmp.covariates$Status[tmp.covariates$Status == 'NCI'] = 'Control'
-tmp.covariates$Status[tmp.covariates$Status == 'ND'] = 'Control'
-tmp.covariates$Status[tmp.covariates$Status == 'SD'] = 'AD'
-tmp.covariates = tmp.covariates %>% droplevels
-rownames(tmp.covariates) = covariates$ID
-
-h1 = HeatmapAnnotation(tmp.covariates)
-Heatmap(tmp.expr, top_annotation = h1, show_row_names = F, show_column_names = F,
-        show_row_dend = F, show_column_dend = F)
-```
-
 
 ### Store results in synapse
 ```{r synapse.store, include=FALSE, cache=FALSE}
@@ -428,50 +461,10 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 CODE = Folder(name = 'MetaAnalysis of Control vs AD Data', parentId = "syn5569102")
 CODE = synStore(CODE)
 
-# Store covariates in synapse
-write.table(covariates, file = 'ALLCovariates.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('ALLCovariates.tsv', 
-           name = 'Covariates', 
-           parentId = CODE$properties$id)
-OBJ = synStore(OBJ,
-               used = as.character(c(covariates.id)),
-               executed = thisFile,
-               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
-
 # Store logcpm in synapse
-write.table(logcpm, file = 'ALLLogCPM.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('ALLLogCPM.tsv', 
-           name = 'Log CPM (AD and Control)', 
-           parentId = CODE$properties$id)
-OBJ = synStore(OBJ,
-               used = as.character(c(covariates.id)),
-               executed = thisFile,
-               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
-
-# Store residual expression in synapse
-write.table(expr, file = 'ALLExpr.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('ALLExpr.tsv', 
-           name = 'Residual Expression (AD and Control)', 
-           parentId = CODE$properties$id)
-OBJ = synStore(OBJ,
-               used = as.character(c(covariates.id)),
-               executed = thisFile,
-               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
-
-# Store diffexp in synapse
-write.table(diffexp, file = 'ALLDiffExp.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('ALLDiffExp.tsv', 
-           name = 'Differential Expression (AD and Control)', 
-           parentId = CODE$properties$id)
-OBJ = synStore(OBJ,
-               used = as.character(c(covariates.id)),
-               executed = thisFile,
-               activityName = 'MetaAnalysis of AMP-AD reprocessed data')
-
-# Store meta analysis in synapse
-write.table(metaAnal, file = 'ALLMetaAnal.tsv', sep = '\t', row.names=F, quote=F)
-OBJ = File('ALLMetaAnal.tsv', 
-           name = 'Meta Analysis (AD and Control)', 
+write.table(tmp, file = 'enrich.tsv', sep = '\t', row.names=F, quote=F)
+OBJ = File('enrich.tsv', 
+           name = 'Pathway Enrichment Results (AD and Control)', 
            parentId = CODE$properties$id)
 OBJ = synStore(OBJ,
                used = as.character(c(covariates.id)),
