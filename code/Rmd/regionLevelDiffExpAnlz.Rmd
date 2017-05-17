@@ -228,6 +228,8 @@ all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt, 
   
   # Filter counts and covariates
   cnt = cnt[,cov$SampleID]
+  BrainRegion = unique(cov$BrainRegion)
+  print(BrainRegion)
   
   # Formulate covariates matrix
   FactorCov = c('Diagnosis', 'Batch', 'Gender')
@@ -241,20 +243,22 @@ all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt, 
   # assocStat = getAssociationStatistics(cov)
   
   # Perform differential expression between case-control
-  if(any(unique(cov$BrainRegion) %in% c('DLPFC'))){
+  if(any(BrainRegion %in% c('DLPFC'))){
     varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
                     'PCT_CODING_BASES', 'PCT_INTERGENIC_BASES')
   } else {
-    if (any(unique(cov$BrainRegion) %in% c('FP', 'STG', 'PHG', 'IFG'))){
+    if (any(BrainRegion %in% c('FP', 'STG', 'PHG', 'IFG'))){
       varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
                         'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 
                         'PCT_INTRONIC_BASES', 'RIN2')
-    } else (any(unique(cov$BrainRegion) %in% c('CER', 'TCX'))) {
-      varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI',
-                        'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
-                        'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+    } else {
+      if (any(BrainRegion %in% c('CER', 'TCX'))) {
+        varOfInterest = c('Diagnosis', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI',
+                          'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                          'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+      }
     }
-  } 
+  }
   contVar = 'Diagnosis'
   
   baseDiffExp <- performDifferentialExpression(cov, cnt, contVar, varOfInterest, gene.len, gene.gc)
@@ -264,18 +268,20 @@ all.results = plyr::dlply(covariates, .(BrainRegion), .fun = function(cov, cnt, 
   
   # Perform differential expression between case-control in a gender specific manner
   cov$Diagnosis.Gender = factor(paste(cov$Diagnosis, cov$Gender, sep = '.'))
-  if(any(unique(cov$BrainRegion) %in% c('DLPFC'))){
-    varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
-                    'PCT_CODING_BASES', 'PCT_INTERGENIC_BASES')
+  if(any(BrainRegion %in% c('DLPFC'))){
+    varOfInterest = c('Diagnosis.Gender', 'Batch', 'RIN', 'AAD', 'PMI', 
+                      'PCT_CODING_BASES', 'PCT_INTERGENIC_BASES')
   } else {
-    if (any(unique(cov$BrainRegion) %in% c('FP', 'STG', 'PHG', 'IFG'))){
-      varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI', 
+    if (any(BrainRegion %in% c('FP', 'STG', 'PHG', 'IFG'))){
+      varOfInterest = c('Diagnosis.Gender', 'Batch', 'RIN', 'AAD', 'PMI', 
                         'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES', 
                         'PCT_INTRONIC_BASES', 'RIN2')
-    } else (any(unique(cov$BrainRegion) %in% c('CER', 'TCX'))) {
-      varOfInterest = c('Diagnosis.Gender', 'Batch', 'Gender', 'RIN', 'AAD', 'PMI',
-                        'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
-                        'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+    } else {
+      if (any(BrainRegion %in% c('CER', 'TCX'))) {
+        varOfInterest = c('Diagnosis.Gender', 'Batch', 'RIN', 'AAD', 'PMI',
+                          'PCT_INTERGENIC_BASES', 'PCT_INTRONIC_BASES', 
+                          'PCT_RIBOSOMAL_BASES', 'PCT_CODING_BASES')
+      }
     }
   }
   contVar = 'Diagnosis.Gender'
