@@ -43,6 +43,7 @@ library(githubr)
 
 library(Vennerable)
 library(colorfulVennPlot)
+library(xlsx)
 
 synapseLogin()
 
@@ -107,15 +108,15 @@ AD = list(GeneticLoci = synGet('syn4891675')@filePath %>%
             read.table(header = F) %>% 
             unlist() %>%
             as.character())
+all.used.ids = c(all.used.ids, 'syn4891675')
 
-list()
-GL_OBJ = synGet('syn4893059');
-ALL_USED_IDs = c(ALL_USED_IDs, GL_OBJ$properties$id)
-load(GL_OBJ@filePath)
+# Download cell type markers from synapse (list from GSE73721 by Mariet)
+load(synGet('syn9818080')@filePath)
+all.used.ids = c(all.used.ids, 'syn9818080')
 
-GeneSets.CM = list(CellTypeMarkers = GeneSets[grep('Zhang', names(GeneSets))],
-                   AD = GeneSets['AD:GeneticLoci'])
-GeneSets = c(GeneSets.Enrichr, GeneSets.CM) # 
+GeneSets = c(list(CellTypeMarkers = CellTypeList,
+                AD = AD),
+                GeneSets.Enrichr)
 ```
 
 ### Get covariates/sample metadata from synapse
