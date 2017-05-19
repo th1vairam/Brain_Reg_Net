@@ -86,7 +86,8 @@ ALL_USED_IDs[length(ALL_USED_IDs)+1] = COUNT_DLPFC_ID
 COUNT_DLPFC = downloadFile(COUNT_DLPFC_ID)
 
 # Join ACC and DLPFC together
-COUNT = join_all(list(COUNT_ACC, COUNT_DLPFC), type = 'full')
+COUNT = join_all(list(COUNT_ACC, COUNT_DLPFC), type = 'full') %>%
+  as.data.frame()
 
 GENE.LEN = dplyr::select(COUNT_ACC, Geneid, Length) %>%
   dplyr::rename(ensembl_gene_id = Geneid) %>%
@@ -94,8 +95,8 @@ GENE.LEN = dplyr::select(COUNT_ACC, Geneid, Length) %>%
 rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
 
 rownames(COUNT) = COUNT$Geneid
-COUNT[,c('Geneid', 'Chr', 'Start', 'End', 'Strand', 'Length')] = NULL
-COUNT = data.matrix(COUNT)
+ind = setdiff(colnames(COUNT), c('Geneid', 'Chr', 'Start', 'End', 'Strand', 'Length'))
+COUNT = data.matrix(COUNT[,ind])
 
 # Get ancestry vector calculated using gemtools
 ANCESTRY_ID = 'syn2511399'
@@ -256,7 +257,7 @@ rownames(GENE.GC.CONT) = GENE.GC.CONT$ensembl_gene_id
 ### Covariates clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c('Individual_ID', "Institution", "Gender", "RibozeroBatch", "LibraryBatch", "FlowcellBatch", "Dx.Tissue")
+FactorCovariates <- c('Individual_ID', "Institution", "Gender", "LibraryBatch", "Dx.Tissue", "RibozeroBatch", "FlowcellBatch")
 ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
                     "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
                     "PercentAligned", "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
@@ -286,7 +287,7 @@ h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'A
 draw(h, heatmap_legend_side = 'left')
 ```
 
-## Explore metatdata
+### Explore metatdata
 ```{r data.explore, fig.width = 12, fig.height = 12}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
 
@@ -367,27 +368,50 @@ Following is the distribution of biotypes
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
 ```{r detect.outliers, fig.height=8, fig.width=8, results='asis', cache = FALSE}
-indToRemove = c('MSSM_RNA_ACC_BP_24', 
-                
-                'MSSM_RNA_ACC_375', 'MSSM_RNA_ACC_170', 'MSSM_RNA_ACC_315', 'MSSM_RNA_ACC_250', 'MSSM_RNA_ACC_21', 'MSSM_RNA_ACC_356', 
-                'MSSM_RNA_ACC_318', 'MSSM_RNA_ACC_222', 'MSSM_RNA_ACC_220', 'MSSM_RNA_ACC_379', 'MSSM_RNA_PFC_133',
-                
-                'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_163', 'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_89', 
-                'MSSM_RNA_PFC_319', 'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_354', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_71', 'PENN_RNA_PFC_56')
+# Based on PC
+indToRemove = c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375', 'MSSM_RNA_ACC_170', 'MSSM_RNA_ACC_315', 'MSSM_RNA_ACC_250',
+                'MSSM_RNA_ACC_21', 'MSSM_RNA_ACC_356', 'MSSM_RNA_ACC_318', 'MSSM_RNA_ACC_222', 'MSSM_RNA_ACC_220',
+                'MSSM_RNA_ACC_379', 'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_163', 'MSSM_RNA_PFC_260',
+                'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_89', 'MSSM_RNA_PFC_319', 'MSSM_RNA_PFC_348',
+                'MSSM_RNA_PFC_354', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_71', 'PENN_RNA_PFC_56',  "MSSM_RNA_ACC_310",
+                "MSSM_RNA_ACC_51",  "MSSM_RNA_ACC_254", "MSSM_RNA_ACC_28", "MSSM_RNA_ACC_293", "MSSM_RNA_ACC_233",
+                "MSSM_RNA_ACC_167", "MSSM_RNA_ACC_353", "MSSM_RNA_ACC_355", "MSSM_RNA_ACC_211", "PENN_RNA_ACC_122",
+                "PENN_RNA_ACC_049", "PENN_RNA_ACC_052", "PENN_RNA_ACC_068", "PENN_RNA_ACC_070", "PITT_RNA_ACC_10020",
+                "PITT_RNA_ACC_1240", "PITT_RNA_ACC_1284", "PITT_RNA_ACC_700", "PITT_RNA_ACC_857", "PITT_RNA_ACC_BP_1589",
+                "MSSM_RNA_PFC_230", "MSSM_RNA_PFC_304", "MSSM_RNA_PFC_309", "MSSM_RNA_PFC_329", "MSSM_RNA_PFC_82",
+                "PENN_RNA_PFC_5", "PENN_RNA_PFC_58", "PENN_RNA_PFC_99", "PITT_RNA_PFC_1284")
 
-# Outliers from Menahce's DLPFC analysis syn3493755
-# outliers = c('MSSM_RNA_BP_PFC_1', 'MSSM_RNA_PFC_21', 'MSSM_RNA_BP_PFC_3', 'MSSM_RNA_PFC_103', 'MSSM_RNA_PFC_105', 'MSSM_RNA_PFC_115', 'MSSM_RNA_PFC_169',  'MSSM_RNA_PFC_17',
-#   'MSSM_RNA_PFC_18', 'MSSM_RNA_PFC_19', 'MSSM_RNA_PFC_213', 'MSSM_RNA_PFC_214', 'MSSM_RNA_PFC_215', 'MSSM_RNA_PFC_216', 'MSSM_RNA_PFC_217', 'MSSM_RNA_PFC_218', 
-#   'MSSM_RNA_PFC_219', 'MSSM_RNA_PFC_222', 'MSSM_RNA_PFC_24', 'MSSM_RNA_PFC_252', 'MSSM_RNA_PFC_259', 'MSSM_RNA_PFC_263', 'MSSM_RNA_PFC_267', 'MSSM_RNA_PFC_275',
-#   'MSSM_RNA_PFC_307', 'MSSM_RNA_PFC_322', 'MSSM_RNA_PFC_325', 'MSSM_RNA_PFC_27', 'MSSM_RNA_PFC_332', 'MSSM_RNA_PFC_333', 'MSSM_RNA_PFC_334', 'MSSM_RNA_PFC_335',
-#   'MSSM_RNA_PFC_340', 'MSSM_RNA_PFC_35', 'MSSM_RNA_PFC_362', 'MSSM_RNA_PFC_372', 'MSSM_RNA_PFC_373', 'MSSM_RNA_PFC_385', 'MSSM_RNA_PFC_393', 'MSSM_RNA_PFC_395',
-#   'MSSM_RNA_PFC_49', 'MSSM_RNA_PFC_54', 'MSSM_RNA_PFC_70', 'MSSM_RNA_PFC_76', 'MSSM_RNA_PFC_77', 'MSSM_RNA_PFC_78', 'MSSM_RNA_PFC_88', 'MSSM_RNA_PFC_93',
-#   'FAKE_DLPFC_CMC_MSSM_426', 'PENN_RNA_PFC_29', 'FAKE_DLPFC_CMC_PENN_055', 'PENN_RNA_PFC_75', 'PENN_RNA_PFC_110', 'FAKE_DLPFC_CMC_PENN_106', 'FAKE_DLPFC_CMC_PENN_107',
-#   'FAKE_DLPFC_CMC_PENN_108', 'MSSM_RNA_PFC_14', 'MSSM_RNA_BP_PFC_21', 'MSSM_RNA_PFC_293', 'MSSM_RNA_PFC_349', 'MSSM_RNA_PFC_353', 'MSSM_RNA_PFC_363', 'MSSM_RNA_PFC_369',
-#   'PENN_RNA_PFC_82', 'PENN_RNA_PFC_89', 'PITT_RNA_PFC_1159', 'PITT_RNA_PFC_1296', 'PITT_RNA_PFC_537',  'PITT_RNA_PFC_567', 'PITT_RNA_PFC_871', 'PITT_RNA_PFC_878',
-#   'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_210',  'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_278', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_348', 'MSSM_RNA_PFC_361',
-#   'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_56', 'PITT_RNA_BP_PFC_10003', 'PITT_RNA_BP_PFC_1047', 'PITT_RNA_BP_PFC_1086', 'PITT_RNA_BP_PFC_1092', 'PITT_RNA_BP_PFC_1247',
-#   'PITT_RNA_BP_PFC_1282', 'PITT_RNA_BP_PFC_1324', 'PITT_RNA_BP_PFC_1374', 'PITT_RNA_BP_PFC_1391', 'PITT_RNA_BP_PFC_686')
+# Based on number of gene outliers
+indToRemove = c(indToRemove, "MSSM_RNA_ACC_BP_15", "MSSM_RNA_ACC_175", "MSSM_RNA_ACC_224", "MSSM_RNA_ACC_240", 
+                "MSSM_RNA_ACC_285", "MSSM_RNA_ACC_344", "MSSM_RNA_ACC_376", "MSSM_RNA_ACC_374", "PENN_RNA_ACC_003", 
+                "PITT_RNA_ACC_539", "MSSM_RNA_PFC_201", "MSSM_RNA_PFC_234", "MSSM_RNA_PFC_355", "MSSM_RNA_PFC_389",
+                "MSSM_RNA_PFC_80", "MSSM_RNA_PFC_83", "PENN_RNA_PFC_22", "PENN_RNA_PFC_59", "PENN_RNA_PFC_62", 
+                "PENN_RNA_PFC_80", "PENN_RNA_PFC_105", "PITT_RNA_PFC_1472", "PITT_RNA_PFC_566", "PITT_RNA_PFC_727", 
+                "PITT_RNA_PFC_802")
+
+# # Outliers from Menahcem's DLPFC analysis syn3493755
+# outliers = c('MSSM_RNA_BP_PFC_1', 'MSSM_RNA_PFC_21', 'MSSM_RNA_BP_PFC_3', 'MSSM_RNA_PFC_103', 
+#              'MSSM_RNA_PFC_105', 'MSSM_RNA_PFC_115', 'MSSM_RNA_PFC_169',  'MSSM_RNA_PFC_17',
+#              'MSSM_RNA_PFC_18', 'MSSM_RNA_PFC_19', 'MSSM_RNA_PFC_213', 'MSSM_RNA_PFC_214', 
+#              'MSSM_RNA_PFC_215', 'MSSM_RNA_PFC_216', 'MSSM_RNA_PFC_217', 'MSSM_RNA_PFC_218',
+#              'MSSM_RNA_PFC_219', 'MSSM_RNA_PFC_222', 'MSSM_RNA_PFC_24', 'MSSM_RNA_PFC_252', 
+#              'MSSM_RNA_PFC_259', 'MSSM_RNA_PFC_263', 'MSSM_RNA_PFC_267', 'MSSM_RNA_PFC_275',
+#              'MSSM_RNA_PFC_307', 'MSSM_RNA_PFC_322', 'MSSM_RNA_PFC_325', 'MSSM_RNA_PFC_27', 
+#              'MSSM_RNA_PFC_332', 'MSSM_RNA_PFC_333', 'MSSM_RNA_PFC_334', 'MSSM_RNA_PFC_335',
+#              'MSSM_RNA_PFC_340', 'MSSM_RNA_PFC_35', 'MSSM_RNA_PFC_362', 'MSSM_RNA_PFC_372', 
+#              'MSSM_RNA_PFC_373', 'MSSM_RNA_PFC_385', 'MSSM_RNA_PFC_393', 'MSSM_RNA_PFC_395',
+#              'MSSM_RNA_PFC_49', 'MSSM_RNA_PFC_54', 'MSSM_RNA_PFC_70', 'MSSM_RNA_PFC_76', 
+#              'MSSM_RNA_PFC_77', 'MSSM_RNA_PFC_78', 'MSSM_RNA_PFC_88', 'MSSM_RNA_PFC_93',
+#              'FAKE_DLPFC_CMC_MSSM_426', 'PENN_RNA_PFC_29', 'FAKE_DLPFC_CMC_PENN_055', 
+#              'PENN_RNA_PFC_75', 'PENN_RNA_PFC_110', 'FAKE_DLPFC_CMC_PENN_106', 'FAKE_DLPFC_CMC_PENN_107',
+#              'FAKE_DLPFC_CMC_PENN_108', 'MSSM_RNA_PFC_14', 'MSSM_RNA_BP_PFC_21', 'MSSM_RNA_PFC_293', 
+#              'MSSM_RNA_PFC_349', 'MSSM_RNA_PFC_353', 'MSSM_RNA_PFC_363', 'MSSM_RNA_PFC_369',
+#              'PENN_RNA_PFC_82', 'PENN_RNA_PFC_89', 'PITT_RNA_PFC_1159', 'PITT_RNA_PFC_1296', 'PITT_RNA_PFC_537', 
+#              'PITT_RNA_PFC_567', 'PITT_RNA_PFC_871', 'PITT_RNA_PFC_878', 'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139',
+#              'MSSM_RNA_PFC_210',  'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_278', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_348',
+#              'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_56', 'PITT_RNA_BP_PFC_10003', 'PITT_RNA_BP_PFC_1047',
+#              'PITT_RNA_BP_PFC_1086', 'PITT_RNA_BP_PFC_1092', 'PITT_RNA_BP_PFC_1247', 'PITT_RNA_BP_PFC_1282', 
+#              'PITT_RNA_BP_PFC_1324', 'PITT_RNA_BP_PFC_1374', 'PITT_RNA_BP_PFC_1391', 'PITT_RNA_BP_PFC_686')
 
 # Find principal components of expression to plot
 PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
@@ -419,7 +443,7 @@ tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
 p = ggplot(tmp1 %>%
              dplyr::filter(SampleID %in% indToRemove),
            aes(x = logCPM, color = SampleID)) + geom_density() 
-p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free')
+p = p + theme(legend.position = 'top') + facet_grid(Dx+.~Tissue, scale = 'free')
 p
 
 indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
@@ -433,46 +457,63 @@ tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples from `r length(unique(COVARIATES$Individual_ID))` unique individuals
 
-Based on the expression pattern following samples were tagged as outliers: `r paste(indToRemove, collapse = ', ')` 
+Based on the expression pattern following `r length(indToRemove)` samples were tagged as outliers based on their mrna expression: `r paste(indToRemove, collapse = ', ')` 
 
 Distribution of samples are:
 `r kable(tmp)`
 
-### Normalisation (with NULL)
-Initial normalisation usign cqn and dispersion control with voom (with NULL design)
-```{r initial.voom.normalisation, fig.height=5, fig.width=5}
-# Compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
-                          lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length'],
-                          lengthMethod = "smooth", 
-                          verbose = FALSE)
+### Identify gene outliers
+Set outlier expression of genes in each samples to NA
+```{r winsorise.data}
+LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
 
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 0
-log.mat = apply(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 1, function(x){
+log.mat = apply(LOG.CPM, 1, function(x){
   mn = mean(x, na.rm = T)
   std.dev = sd(x, na.rm = T)
   return((x < (mn-3*std.dev)) | (x > (mn+3*std.dev)))
 }) %>% t
-PROCESSED_COUNTS$filteredExprMatrix$counts[log.mat] = 0
+PROCESSED_COUNTS$filteredExprMatrix$counts[log.mat] = NA
 
-# Re-compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+# Distribution of fraction NA genes in samples
+tmp.frac = apply(log.mat, 2, sum)/dim(LOG.CPM)[1]
+writeLines('Distribution of fraction NAs in samples')
+quantile(tmp.frac, seq(0, 1, 0.1)) %>%
+  round(3) 
+top.nsamples = names(tmp.frac)[tmp.frac >= 0.02]
+```
+Only `r length(top.nsamples)` samples have more than 2% of NA genes. They are: `r paste(top.nsamples, collapse = ', ')`
+
+### Library Normalisation
+Initial library normalisation usign cqn
+```{r cqn}
+# Function to convert NA values to zero
+changeNAtoZero <- function(mtrx){
+  mtrx[is.na(mtrx)] = 0
+  return(mtrx)
+}
+
+# Compute offset for gene length and gc content
+CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
                           x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
                           lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length'],
                           lengthMethod = "smooth", 
                           verbose = FALSE)
+CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+CQN.GENE_EXPRESSION$E[is.na(PROCESSED_COUNTS$filteredExprMatrix$counts)] = NA
 ```
+
+### Co-expression distribution
 Coexpression of genes 
 ```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
-cr = cor(t(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset))
+cr = cor(t(CQN.GENE_EXPRESSION$E %>% changeNAtoZero))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
-### Outlier analysis
-Clustering of voom adjusted data (with NULL design)
+
+### Sample clustering
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
 # Find principal components of expression to plot
-PC <- prcomp(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, scale.=T, center = T)
+PC <- prcomp(CQN.GENE_EXPRESSION$E %>% changeNAtoZero, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -481,15 +522,40 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
+plotdata$label = plotdata$SampleID
+plotdata$label[!(plotdata$label %in% top.nasamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
-# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
+```
+Tree based clustering of samples
+```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue")])
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
+tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E %>% changeNAtoZero)))
+cols = WGCNA::labels2colors(COVARIATES.tmp);
+
+WGCNA::plotDendroAndColors(tree, 
+                           colors = cols, 
+                           dendroLabels = FALSE, 
+                           abHeight = 0.80, 
+                           main = "Sample dendrogram",
+                           groupLabels = colnames(COVARIATES.tmp))
+```
+```{r temp, include = F}
+dev.off()
+gc()
+```
+
+### Distribution of samples (log cpm)
+```{r lcpm.dist, cache=FALSE}
 # Plot abberent distribution of logcpm counts
-tmp1 = (CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset) %>%
+tmp1 = (CQN.GENE_EXPRESSION$E) %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
   left_join(COVARIATES %>%
@@ -500,33 +566,11 @@ p = ggplot(tmp1, aes(x = logCPM, color = SampleID)) + geom_density()
 p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free')
 p
 ```
-Tree based classification of samples
-```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
-# Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue")])
-COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
-
-tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset)))
-cols = WGCNA::labels2colors(COVARIATES.tmp);
-
-WGCNA::plotDendroAndColors(tree, 
-                           colors = cols, 
-                           dendroLabels = FALSE, 
-                           abHeight = 0.80, 
-                           main = "Sample dendrogram",
-                           groupLabels = colnames(COVARIATES.tmp))
-```
-
-```{r temp, include = F}
-dev.off()
-gc()
-```
 
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
-# Find correlation between PC's of gene expression with covariates
-preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset, 
+preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$E %>% changeNAtoZero, 
                                                  COVARIATES,
                                                  'NULL design(voom-normalized)', 
                                                  isKeyPlot=TRUE, 
@@ -538,64 +582,63 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
-### Normalisation (custom design)
-Since many covariates are correlated, re-normalising COUNTS with a custom design matrix. 
-1. "Dx.Tissue" is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue)
-2.  Model:
-    Gx = Dx.Tissue + Institution + Gender + IntronicRate + RibozeroBatch + PMI + RIN + TranscriptsDetected +
-    Age\_of\_Death + IntergenicRate + MappedReads + PercentAligned + (1/Individual\_ID)    
+### Normalisation
+Based on different model selection methodology (as seen here syn8468116, syn9772932, and syn9774491), following variables are used as covariates: Institution, Gender, RIN, and IntronicRate
+
+NOTE: Dx.Tissue is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue), and Individual\_ID is chosen as the random effect
+
 ```{r custom.normalisation, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c("Dx.Tissue", "Institution", "Gender", "IntronicRate", "RibozeroBatch", "PMI", "RIN",
-                     "TranscriptsDetected", "Age_of_Death", "IntergenicRate", "MappedReads", "PercentAligned");
+postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
                  'as fixed effects and Individual_ID is chosen as random effect'))
   
 # Post adjusted design matrix
-DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
-DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+DESIGN = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
   
 # Estimate voom weights
-VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DM1$design, plot=F)
-VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
+                            design = DESIGN)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
   
 # Re-calculate voom weights with correlation of random effects
-VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                            design=DM1$design, plot=F,
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero,   
+                            design = DESIGN, plot=F,
                             block = COVARIATES$Individual_ID, 
                             correlation = correlation$cor)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
-VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
 ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
+  
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
 ```
 
-### SVA
+### SVA Adjustments for eQTL analysis
+Conditioned on primary variable (Dx.Tissue) and covariates estimate surrogate variables using SVA package
 ```{r sva}
 # Get (null) design matrix
-MODEL0 = DM1$design[,-grep('Dx.Tissue',colnames(DM1$design))] # Get null model by removing variable of interest
+MODEL0 = DESIGN[,-grep('Dx.Tissue',colnames(DESIGN))] # Get null model by removing variable of interest
 MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
-MODEL1 = DM1$design
+MODEL1 = DESIGN
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
 # Source modified functions from sva package
-# source('../R/num.sv.R')
 source('../R/irwsva.build.R')
 source('../R/f.pvalue.R')
 
-# Get residuals from differential expression model
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, VOOM.GENE_EXPRESSION$E)
-
 # Compute actual variance of all principal components
-tmp = svd(RESIDUAL.SVA.GENE_EXPRESSION)
+tmp = svd(RESIDUAL.GENE_EXPRESSION %>% changeNAtoZero)
 actual.var = tmp$d^2/sum(tmp$d^2)
 
 # Compute permuted variance of all principal components
-permuted.var = foreach(i = 1:20, .combine = rbind) %dopar% {
-  tmp.residual = t(apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, sample, replace = FALSE))
+permuted.var = foreach(i = 1:20, .combine = rbind, .packages = c('dplyr')) %dopar% {
+  tmp.residual = t(apply(RESIDUAL.GENE_EXPRESSION %>% changeNAtoZero, 1, sample, replace = FALSE))
   tmp = svd(tmp.residual)
   permuted.var = tmp$d^2/sum(tmp$d^2)
 }
@@ -614,53 +657,51 @@ p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
 p
 
 # Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset,
-                        MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-22)$sv
-
+SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E %>% changeNAtoZero, MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
 # Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
                         design=cbind(MODEL1, SURR.VAR), plot=F)
+VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 
 # Calculate correlation values of random effects
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
 correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$Individual_ID)
 
 # Re-estimate voom weights
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
                         design = cbind(MODEL1, SURR.VAR), plot=F,
-                        block = COVARIATES$Donor_ID, 
+                        block = COVARIATES$Individual_ID, 
                         correlation = correlation$cor)
+VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset
 VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
-
-# Residuals after normalisation
-RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
-                                              CQN.GENE_EXPRESSION$y+CQN.GENE_EXPRESSION$offset)
 ```
 
 ### Residual calculation
-Calculate weighted residuals and add back "Dx" to the residuals
+Calculate weighted residuals and add back "Dx.Tissue" to the residuals
 ```{r varsToAddBack}
+# Residuals after normalisation
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
+                                                  CQN.GENE_EXPRESSION$E)
+
 # Add variable of interest back to the residuals
-varsToAddIn = grep("Dx.Tissue", colnames(VOOM.SVA.FIT$coefficients), value = T)
-RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION + 
+varsToAddIn = grep("Dx.Tissue", colnames(DESIGN), value = T)
+RESIDUAL.SVA.GENE_EXPRESSION = RESIDUAL.SVA.GENE_EXPRESSION + 
   VOOM.SVA.FIT$coefficients[,varsToAddIn] %*% t(VOOM.SVA.FIT$design[,varsToAddIn])
 ```
 Coexpression of genes 
 ```{r coexp2, cache=FALSE, fig.height=5, fig.width=5}
-cr = cor(t(RESIDUAL.GENE_EXPRESSION))
+cr = cor(t(RESIDUAL.SVA.GENE_EXPRESSION %>% changeNAtoZero))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Clustering residual data
 ```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
+PC <- prcomp(RESIDUAL.SVA.GENE_EXPRESSION %>% changeNAtoZero, scale.=T, center = T)
 
 # Plot first 4 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -668,11 +709,14 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC2=PC$rotation[,2])
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
-  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
+  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  dplyr::mutate(label = SampleID)
+plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
-p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~., scales = 'free_y')
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
+p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 ```
 
@@ -681,7 +725,7 @@ p
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue','Institution')])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
+tree = hclust(as.dist(t(RESIDUAL.SVA.GENE_EXPRESSION %>% changeNAtoZero)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -696,98 +740,93 @@ WGCNA::plotDendroAndColors(tree,
 dev.off()
 gc()
 ```
-
 ### Differential expression analysis
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=10, fig.width=15}
-# Post adjusted design matrix
-DESIGN = getDesignMatrix(cbind(COVARIATES[,postAdjustCovars,drop=F], SURR.VAR),
-                               Intercept = F)
-DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
-  
-# Estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
-VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
-correlation <- parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Individual_ID)
-  
-# Re-calculate voom weights with correlation of random effects
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                    design=DESIGN$design, plot=F,
-                    block = COVARIATES$Individual_ID, 
-                    correlation = correlation$cor)
-
-# Fit linear model using new weights and new design
-VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
-FIT = lmFit(VOOM.WEIGHTS)
-
 # Fit contrast
-contrast = makeContrasts(contrasts=c("Dx.TissueControl_ACC-Dx.TissueOther_ACC",
-                                     "Dx.TissueControl_ACC-Dx.TissueSCZ_ACC",
-                                     "Dx.TissueOther_ACC-Dx.TissueSCZ_ACC",
-                                     "Dx.TissueControl_DLPFC-Dx.TissueOther_DLPFC",
-                                     "Dx.TissueControl_DLPFC-Dx.TissueSCZ_DLPFC",
-                                     "Dx.TissueOther_DLPFC-Dx.TissueSCZ_DLPFC"),
-                         levels = colnames(FIT$coefficients))
-FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+contrast = makeContrasts(contrasts=c("Dx.TissueOther_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_ACC-Dx.TissueOther_ACC",
+                                     "Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
+                                     "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueControl_ACC",
+                                     "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_ACC"),
+                         levels = colnames(VOOM.SVA.FIT$coefficients))
+FIT.CONTR = contrasts.fit(VOOM.SVA.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:6, function(i, FIT){
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
-names(DE) = colnames(contrast)
+names(DE) = gsub('Dx.Tissue', '', colnames(contrast))
+names(DE)[7:8] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC')
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Dx.Tissue','',Comparison),
-                Direction = logFC/abs(logFC),
+                Direction = sign(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
                 Direction = as.character(Direction)) %>%
-  tidyr::separate(Comparison, into = c('ref.state','to.state'), sep = '-') %>%
-  tidyr::separate(ref.state, into = c('Dx1','Tissue'), sep = '_') %>%
-  tidyr::separate(to.state, into = c('Dx2','Tissue'), sep = '_') %>%
-  tidyr::unite(Comparison, Dx1, Dx2, sep = '_vs_') %>%
+  tidyr::separate(Comparison, into = c('to.state','ref.state'), sep = '-') %>%
+  tidyr::separate(to.state, into = c('to.Dx','to.Tissue'), sep = '_') %>%
+  tidyr::separate(ref.state, into = c('ref.Dx','ref.Tissue'), sep = '_') %>%
   left_join(Ensemble2HGNC) %>%
   left_join(GENE.LEN)
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::filter(adj.P.Val <= 0.05, ref.Dx != 'Other', to.Dx != 'Other') %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
   dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id)))
 
 tmp1 = DE %>%
-  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), ref.Dx != 'Other', to.Dx != 'Other') %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id)))
 
 kable(full_join(tmp,tmp1))
 
-p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
-p = p + scale_color_manual(values = c('green','grey','red'))
-p = p + facet_grid(Tissue+.~Comparison, scales = 'fixed')
+p = DE %>%
+  dplyr::filter(ref.Dx != 'Other', to.Dx != 'Other', ref.Dx != 'ALL', to.Dx != 'ALL') %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(ref.Dx+.~to.Dx+to.Tissue, scales = 'fixed')
+p = p + ggtitle('Differential Expression between Schizophrenia and Control')
+p
+
+p = DE %>%
+  dplyr::filter(ref.Dx == 'ALL', to.Dx == 'ALL') %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(ref.Tissue+.~to.Tissue, scales = 'fixed')
+p = p + ggtitle('Differential Expression between DLPFC and ACC')
 p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
 ```{r associate.de, fig.height=10, fig.width=15}
 pl = list()
-pl[[1]] = ggplot(DE, aes(x = log10(Length), y = logFC, color = Direction)) + geom_point() 
+pl[[1]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = log10(Length), y = logFC, color = Direction)) + geom_point() 
 pl[[1]] = pl[[1]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = log10(Length), y = logFC))
-pl[[1]] = pl[[1]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[1]] = pl[[1]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[1]] = pl[[1]] + theme(legend.position = 'top')
 
-pl[[2]] = ggplot(DE, aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
+pl[[2]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
 pl[[2]] = pl[[2]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = percentage_gc_content, y = logFC))
-pl[[2]] = pl[[2]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[2]] = pl[[2]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[2]] = pl[[2]] + theme(legend.position = 'top')
 
-pl[[3]] = ggplot(DE, aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
+pl[[3]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
 pl[[3]] = pl[[3]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = AveExpr, y = logFC))
-pl[[3]] = pl[[3]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[3]] = pl[[3]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
 pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 
 multiplot(plotlist = pl, cols = 3)
@@ -797,7 +836,7 @@ multiplot(plotlist = pl, cols = 3)
 Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
 diffexp.genes = DE %>%
-  dlply(.(Comparison, Tissue), .fun = function(x){
+  dlply(.(ref.Dx, ref.Tissue, to.Dx, to.Tissue), .fun = function(x){
     tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
     tmp = tmp[!is.na(tmp)]
   })
@@ -824,8 +863,7 @@ enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, bac
     dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
 }, genesets.to.test, backgroundGenes) %>%
   rbindlist(idcol = 'Comparison', use.names = T, fill = T) %>%
-  tidyr::separate(Comparison, c('Name', 'Region'), sep = '\\.') %>%
-  dplyr::rename(Comparison = Name, Category = .id)
+  dplyr::rename(Category = .id)
 ```
 
 ### Store files in synapse
@@ -872,6 +910,7 @@ annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
+CQN.GENE_EXPRESSION$y[is.na(CQN.GENE_EXPRESSION$E)] = NA
 CQN.GENE_EXPRESSION$y %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
@@ -881,6 +920,7 @@ annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store cqn offsets
+CQN.GENE_EXPRESSION$offset[is.na(CQN.GENE_EXPRESSION$E)] = NA
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
@@ -890,7 +930,7 @@ annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
-DESIGN$design %>%
+DESIGN %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
 DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
@@ -898,25 +938,25 @@ annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
-# Store surrogate variables
+# Store surrogate variable matrix
 SURR.VAR %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'CMC_ACC_DLPFC_SurrVar.tsv', sep = '\t', row.names=F, quote=F)
-SURR.VAR_OBJ = File('CMC_ACC_DLPFC_SurrVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
-annotations(SURR.VAR_OBJ) = annotations(CODE)
-annotations(SURR.VAR_OBJ)$dataSubType = 'SurrogateVariables'
-SURR.VAR_OBJ = synStore(SURR.VAR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+DM1_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+annotations(DM1_OBJ) = annotations(CODE)
+annotations(DM1_OBJ)$dataSubType = 'surrVar'
+DM1_OBJ = synStore(DM1_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store residual gene expression for eqtl analysis
-RESIDUAL.GENE_EXPRESSION %>%
+RESIDUAL.SVA.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-nEXP_OBJ = File('CMC_ACC_DLPFC_netResidualExpression.tsv', 
-                name = 'Normalised, covariates removed residual expression (for eQTL analysis)', 
+  write.table(file = 'CMC_ACC_DLPFC_eqtlResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+eEXP_OBJ = File('CMC_ACC_DLPFC_eqtlResidualExpression.tsv', 
+                name = 'Normalised, covariates removed residual expression (for eqtl analysis)', 
                 parentId = CODE$properties$id)
-annotations(nEXP_OBJ) = annotations(CODE)
-annotations(nEXP_OBJ)$dataSubType = 'residualeQTLAnalysis'
-nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+annotations(eEXP_OBJ) = annotations(CODE)
+annotations(eEXP_OBJ)$dataSubType = 'residualGeneExpForeQTLAnlz'
+eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
 write.table(DE, file = 'CMC_ACC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
@@ -935,7 +975,7 @@ ENRICH_OBJ = File('CMC_ACC_DLPFC_EnrichResults.tsv',
 annotations(ENRICH_OBJ) = annotations(CODE)
 annotations(ENRICH_OBJ)$dataSubType = 'enrichResults'
 ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-stopCluster(cl)
+# stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
@@ -944,7 +984,7 @@ stopCluster(cl)
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
-|  Surrogate Variables                        |  `r SURR.VAR_OBJ$properties$id`  |
-|  Residual Expression (for eQTL analysis)    |  `r nEXP_OBJ$properties$id`      |
+|  Surrogate Variables                        |  `r DM1_OBJ$properties$id`       |
+|  Residual Expression (for eQTL analysis)    |  `r eEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
