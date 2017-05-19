@@ -286,7 +286,7 @@ h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'A
 draw(h, heatmap_legend_side = 'left')
 ```
 
-## Explore metatdata
+### Explore metatdata
 ```{r data.explore, fig.width = 12, fig.height = 12}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
 
@@ -617,6 +617,7 @@ ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
 ```
+
 
 ### Residual calculation
 Calculate weighted residuals and add back "Dx.Tissue" to the residuals
