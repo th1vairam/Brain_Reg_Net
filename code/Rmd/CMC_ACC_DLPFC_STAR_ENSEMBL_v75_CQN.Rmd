@@ -72,7 +72,7 @@ thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refNam
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
 ### Data download
-#### Obtain count matrix and metadata from synapse.
+Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
 # Download reprocessed counts (ACC)
 COUNT_ACC_ID = 'syn8414424'
@@ -463,7 +463,7 @@ Distribution of samples are:
 
 ### Identify gene outliers
 Set outlier expression of genes in each samples to NA
-```{r winsorise.data}
+```{r detect.outlier.genes}
 LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
 
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 0
@@ -846,7 +846,8 @@ annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
-CQN.GENE_EXPRESSION$E %>%
+CQN.GENE_EXPRESSION$y[is.na(CQN.GENE_EXPRESSION$E)] = NA
+CQN.GENE_EXPRESSION$y %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('CMC_ACC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
@@ -855,6 +856,7 @@ annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store cqn offsets
+CQN.GENE_EXPRESSION$offset[is.na(CQN.GENE_EXPRESSION$E)] = NA
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
