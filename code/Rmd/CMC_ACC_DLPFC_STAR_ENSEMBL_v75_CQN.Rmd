@@ -686,6 +686,8 @@ contrast = makeContrasts(contrasts=c("Dx.TissueOther_ACC-Dx.TissueControl_ACC",
                                      "Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueSCZ_ACC",
+                                     "Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",
                                      "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueControl_ACC",
                                      "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_ACC"),
                          levels = colnames(ADJUSTED.FIT$coefficients))
@@ -698,7 +700,7 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
 names(DE) = gsub('Dx.Tissue', '', colnames(contrast))
-names(DE)[7:8] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC')
+names(DE)[9:10] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC')
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
@@ -914,3 +916,6 @@ ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 |  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
+
+### Source Code
+[R markdown](`r thisFile`)
