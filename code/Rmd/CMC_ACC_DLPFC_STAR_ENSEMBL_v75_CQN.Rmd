@@ -463,7 +463,7 @@ Distribution of samples are:
 
 ### Identify gene outliers
 Set outlier expression of genes in each samples to NA
-```{r detect.outlier.genes}
+```{r detect.outlier.genes, cache = FALSE}
 LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
 
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 0
@@ -522,7 +522,7 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
 plotdata$label = plotdata$SampleID
-plotdata$label[!(plotdata$label %in% top.nasamples)] = ''
+plotdata$label[!(plotdata$label %in% top.nsamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
