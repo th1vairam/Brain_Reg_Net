@@ -95,6 +95,11 @@ ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.CLINICAL_ID
 METADATA.CLINICAL_OBJ <- synGet(METADATA.CLINICAL_ID)
 METADATA.CLINICAL <- read.table(METADATA.CLINICAL_OBJ@filePath,sep=',',header=T)
 
+METADATA.CLINICAL_ID1 <- 'syn7116000'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.CLINICAL_ID1
+METADATA.CLINICAL_OBJ1 <- synGet(METADATA.CLINICAL_ID1)
+METADATA.CLINICAL1 <- read.table(METADATA.CLINICAL_OBJ1@filePath,sep=',',header=T)
+
 # Get technical covariates
 METADATA.TECH_ID <- 'syn4300313'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA.TECH_ID
@@ -132,7 +137,9 @@ METADATA <- METADATA.TECH %>%
   left_join(METADATA.PICARD) %>%
   dplyr::select(-projid) %>%
   dplyr::left_join(KEY) %>%
-  dplyr::left_join(METADATA.CLINICAL)
+  dplyr::left_join(METADATA.CLINICAL) %>%
+  dplyr::select(-age_first_ad_dx, -age_death, -age_at_visit_max) %>%
+  dplyr::left_join(METADATA.CLINICAL1)
 
 # Pick higher quality RIN batch for sample 492_120515
 METADATA <- METADATA %>%
@@ -154,14 +161,15 @@ rownames(GENE.GC) = GENE.GC$ensembl_gene_id
 
 ### Data preprocessing
 ```{r preprocess.data,cache=TRUE, echo=TRUE}
-# Remove samples with no cogdx, RIN and PMI scores
+# Remove samples with no cogdx, RIN, PMI scores and age_death
 METADATA <- METADATA %>%
   ungroup %>%
-  filter(Sampleid %in% colnames(COUNT)) %>%
-  filter(!is.na(cogdx), !is.na(braaksc), !is.na(ceradsc)) %>%
-  filter(!is.na(RINcontinuous)) %>%
-  filter(!is.na(pmi)) %>%
-  filter(!is.na(PCT_INTRONIC_BASES)) %>%
+  dplyr::filter(Sampleid %in% colnames(COUNT)) %>%
+  dplyr::filter(!is.na(cogdx), !is.na(braaksc), !is.na(ceradsc)) %>%
+  dplyr::filter(!is.na(RINcontinuous)) %>%
+  dplyr::filter(!is.na(pmi)) %>%
+  dplyr::filter(!is.na(PCT_INTRONIC_BASES)) %>%
+  dplyr::filter(!is.na(age_death)) %>%
   as.data.frame()
 
 METADATA$Diagnosis = 'OTHER'
@@ -622,6 +630,7 @@ p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 
 all.diff.exp = list(cogdx = DE)
+all.fit = list(cogdx = FIT)
 ```
 
 ### Differential expression analysis (with Diagnosis as primary variable)
@@ -632,7 +641,7 @@ Interpretation of Diagnosis
 2. CONTROL: cogdx = 1, braaksc <= 3 and ceradsc >= 3
 3. OTHER: All the other samples
 
-Genes that are differentially expressed at an FDR <= 0.05 are
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
 ```{r diff.exp1, fig.height=6, fig.width=18, cache=FALSE}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), drop = F], Intercept = F)
@@ -647,19 +656,17 @@ FIT = lmFit(CQN.GENE_EXPRESSION$E.NA,
             weights = VOOM.WEIGHTS$weights)
   
 # Fit contrast
-contrast = makeContrasts(contrasts=c("DiagnosisCONTROL-DiagnosisAD",
-                                     "DiagnosisAD-DiagnosisOTHER",
-                                     "DiagnosisCONTROL-DiagnosisOTHER"),
+contrast = makeContrasts(contrasts=c("DiagnosisAD-DiagnosisCONTROL"),
                          levels = colnames(FIT$coefficients))
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:3, function(i, FIT){
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
     rownameToFirstColumn('ensembl_gene_id')
 }, FIT.CONTR)
-names(DE) = gsub('Diagnosis','',colnames(contrast))
+names(DE) = c('AD-CONTROL')
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
@@ -686,6 +693,7 @@ p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 
 all.diff.exp = c(all.diff.exp, list(Diagnosis = DE))
+all.fit = c(all.fit, list(Diagnosis = FIT))
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
@@ -709,9 +717,143 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+### Differential expression analysis (with Diagnosis and Gender)
+Differential expression is performed on the Diagnosis x Gender variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
+```{r diff.exp2, fig.height=6, fig.width=18, cache=FALSE}
+## Modeling Diagnosis, msex and age_death conjointly
+COVARIATES$Diagnosis.msex = paste(COVARIATES$Diagnosis, factor(COVARIATES$msex, labels = c('0' = 'FEMALE', '1' = 'MALE')), sep = '.') %>%
+  factor
+
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c('Diagnosis.msex', setdiff(postAdjustCovars, 'msex')), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+colnames(DESIGN$design) = gsub('Diagnosis.msex','',colnames(DESIGN$design))
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(counts, design=DESIGN$design, plot=F)
+
+# Fit linear model using new weights and new design
+FIT = lmFit(CQN.GENE_EXPRESSION$E.NA,
+            design = DESIGN$design,
+            weights = VOOM.WEIGHTS$weights)
+  
+# Fit contrast
+contrast = makeContrasts(contrasts=c("(AD.FEMALE+AD.MALE)/2-(CONTROL.FEMALE+CONTROL.MALE)/2",
+                                     "(AD.FEMALE+CONTROL.FEMALE)/2-(AD.MALE+CONTROL.MALE)/2",
+                                     "(AD.FEMALE-CONTROL.FEMALE)/2-(AD.MALE-CONTROL.MALE)/2",
+                                     "AD.FEMALE-CONTROL.FEMALE",
+                                     "AD.MALE-CONTROL.MALE"),
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('ensembl_gene_id')
+}, FIT.CONTR)
+names(DE) = c('AD-CONTROL','FEMALE-MALE','AD-CONTROL.IN.FEMALE-MALE','AD-CONTROL.IN.FEMALE', 'AD-CONTROL.IN.MALE')
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique()) %>%
+  dplyr::mutate(Study = 'ROSMAP', Region = 'DLPFC',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction))
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+writeLines('Differentially expressed genes at an FDR 0.05 and logFC 1.2')
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red'))
+p = p + facet_grid(.~Comparison, scales = 'fixed')
+p
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.Gender = DE))
+all.fit = c(all.fit, list(Diagnosis.Gender = FIT))
+```
+
+
+### Differential expression analysis (with Diagnosis and AOD)
+Differential expression is performed on the Diagnosis x AOD variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
+```{r diff.exp3, fig.height=6, fig.width=18, cache=FALSE}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c('Diagnosis', setdiff(postAdjustCovars, 'age_death')), drop = F], Intercept = F)
+ind = grep('Diagnosis', colnames(DESIGN$design))
+DESIGN$design[,ind] = DESIGN$design[,ind] * COVARIATES[rownames(DESIGN$design),'age_death']
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+colnames(DESIGN$design) = gsub('Diagnosis','AOD.',colnames(DESIGN$design))
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(counts, design=DESIGN$design, plot=F)
+
+# Fit linear model using new weights and new design
+FIT = lmFit(CQN.GENE_EXPRESSION$E.NA,
+            design = DESIGN$design,
+            weights = VOOM.WEIGHTS$weights)
+  
+# Fit contrast
+contrast = makeContrasts(contrasts=c("AOD.AD-AOD.CONTROL",
+                                     "(AOD.AD+AOD.CONTROL)/2"),
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('ensembl_gene_id')
+}, FIT.CONTR)
+names(DE) = c('AOD.AD-AOD.CONTROL','AOD')
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique()) %>%
+  dplyr::mutate(Study = 'ROSMAP', Region = 'DLPFC',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction))
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+writeLines('Differentially expressed genes at an FDR 0.05 and logFC 1.2')
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red'))
+p = p + facet_grid(.~Comparison, scales = 'fixed')
+p
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.AOD = DE))
+all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
+```
+
 ### SVA Adjustments for eQTL analysis
 Conditioned on primary variable (Diagnosis) and identified covariates estimate surrogate variables using SVA package
 ```{r sva.adjust}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
 # Get (null) design matrix
 MODEL0 = DESIGN$design[,-grep(primaryVariable[2],colnames(DESIGN$design))] # Get null model by removing variable of interest
 MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
@@ -827,14 +969,23 @@ CODE <- Folder(name = "ROSMAP Reprocessed RNASeq (Normalised)", parentId = paren
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
+# Create seperate acccess list for 90+ data
+changeACL <- function(id){
+  old.acl = synGetEntityACL(METADATA.CLINICAL_OBJ1@properties$id)
+  myaccess = ResourceAccess('3319864', list('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))
+  new.acl = AccessControlList(id = id, resourceAccess = append(old.acl@resourceAccess, myaccess))
+  synCreateEntityACL(new.acl)
+}
+
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
 write.table(COVARIATES, file = 'ROSMAP_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
 COV_OBJ = File('ROSMAP_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
-COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
-                      executed = thisFile, activityDescription = activityDescription)
+COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
+                   executed = thisFile, activityDescription = activityDescription)
+changeACL(COV_OBJ@properties$id)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
@@ -871,6 +1022,7 @@ DM_OBJ = File('ROSMAP_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+changeACL(DM_OBJ@properties$id)
 
 # Store surrogate variables
 SURR.VAR %>%
@@ -904,13 +1056,24 @@ annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-rbindlist(all.diff.exp, use.names = T, fill = T) %>%
+rbindlist(all.diff.exp, use.names = T, fill = T, idcol = 'Model') %>%
   write.table(file = 'ROSMAP_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('ROSMAP_DLPFC_DiffExpression.tsv', name = 'Differential Expression Results (cogdx)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store all differential expression models
+save(all.fit, file = 'ROSMAP_Models.RData')
+FIT_OBJ = File('ROSMAP_Models.RData', 
+               name = 'All Limma Models',
+               parentId = CODE$properties$id)
+annotations(FIT_OBJ) = annotations(CODE)
+annotations(FIT_OBJ)$dataSubType = 'modelFits'
+FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+changeACL(FIT_OBJ@properties$id)
+
 stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
@@ -924,3 +1087,7 @@ stopCluster(cl)
 |  Residual Expression (for eQTL)             |  `r eEXP_OBJ$properties$id`      |
 |  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
+|  Linear Model Fits                          |  `r FIT_OBJ$properties$id`       |
+
+### R Source Code
+[Github](`r thisFile`)
