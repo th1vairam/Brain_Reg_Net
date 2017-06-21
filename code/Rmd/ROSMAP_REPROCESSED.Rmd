@@ -40,6 +40,7 @@ library(cqn)
 library(synapseClient)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+library(rSynapseUtilities)
 
 synapseLogin()
 
@@ -964,18 +965,22 @@ all.annotations = list(
   normalizationType	= 'CQN'
 )
 
+# Create new resource acls
+new.racl = ResourceAccess(principalId = '3319864', 
+                          accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS')) %>%
+  ResourceAccessList() %>%
+  synapseClient::append(ResourceAccess(principalId = '274008', 
+                                       accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))) %>%
+  synapseClient::append(ResourceAccess(principalId = '273995', 
+                                       accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))) %>%
+  synapseClient::append(ResourceAccess(principalId = '3344250', 
+                                       accessType = c('READ', 'DOWNLOAD')))
+  
 # Code
 CODE <- Folder(name = "ROSMAP Reprocessed RNASeq (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
-
-# Create seperate acccess list for 90+ data
-changeACL <- function(id){
-  old.acl = synGetEntityACL(METADATA.CLINICAL_OBJ1@properties$id)
-  myaccess = ResourceAccess('3319864', list('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))
-  new.acl = AccessControlList(id = id, resourceAccess = append(old.acl@resourceAccess, myaccess))
-  synCreateEntityACL(new.acl)
-}
+synChangeEntityACL(CODE@properties$id, new.racl)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
@@ -985,7 +990,7 @@ annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
                    executed = thisFile, activityDescription = activityDescription)
-changeACL(COV_OBJ@properties$id)
+synChangeEntityACL(COV_OBJ@properties$id, new.racl)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
@@ -1022,7 +1027,7 @@ DM_OBJ = File('ROSMAP_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-changeACL(DM_OBJ@properties$id)
+synChangeEntityACL(DM_OBJ@properties$id, new.racl)
 
 # Store surrogate variables
 SURR.VAR %>%
@@ -1072,13 +1077,16 @@ FIT_OBJ = File('ROSMAP_Models.RData',
 annotations(FIT_OBJ) = annotations(CODE)
 annotations(FIT_OBJ)$dataSubType = 'modelFits'
 FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-changeACL(FIT_OBJ@properties$id)
+synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
+
+# Delete folder acl
+synDeleteEntityACL(CODE@properties$id)
 
 stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
-|  Covariates                                 |  `r COV_OBJ$properties$id`       |
+|  Covariates (90+ ages)                      |  `r COV_OBJ$properties$id`       |
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
