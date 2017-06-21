@@ -334,9 +334,9 @@ PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = COVARIATES %>%
-  group_by(Diagnosis, cogdx) %>%
-  summarise(count = n()) %>%
-  spread(Diagnosis, count)
+  dplyr::group_by(Diagnosis, cogdx) %>%
+  dplyr::summarise(count = n()) %>%
+  tidyr::spread(Diagnosis, count)
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
@@ -980,6 +980,7 @@ new.racl = ResourceAccess(principalId = '3319864',
 CODE <- Folder(name = "ROSMAP Reprocessed RNASeq (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
+old.acl = synGetEntityACL(CODE@properties$id)
 synChangeEntityACL(CODE@properties$id, new.racl)
 
 # Store covariates
@@ -1080,7 +1081,7 @@ FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
 
 # Delete folder acl
-synDeleteEntityACL(CODE@properties$id)
+synChangeEntityACL(CODE@properties$id, old.acl@resourceAccess)
 
 stopCluster(cl)
 ```
