@@ -96,13 +96,12 @@ COUNT = data.matrix(COUNT[,ind])
 METADATA_QC_DLPFC_ID = 'syn8539839'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
 METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header = T, sep = ',', row.names = 1) %>%
-  rownameToFirstColumn('Sample.RNA.ID') %>%
-  dplyr::select(Sample.RNA.ID, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
+  dplyr::select(Sample, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
                 Mean_CV, Fragment_Length_StdDev,  Mapped_Pairs, End_1_Mismatch_Rate, End_2_Mismatch_Rate,
                 End_1_Mapping_Rate, End_2_Mapping_Rate, Mapped, Intragenic_Rate, Exonic_Rate, Intergenic_Rate,
                 Intronic_Rate, rRNA_rate, Genes_Detected, Transcripts_Detected, Expression_Profiling_Efficiency,
                 UNIQUE_READS._Uniquely_mapped_reads_percent) %>%
-  dplyr::rename(SampleID = Sample.RNA.ID, 
+  dplyr::rename(SampleID = Sample, 
                 IntragenicRate = Intragenic_Rate, 
                 ExonicRate = Exonic_Rate, 
                 IntronicRate = Intronic_Rate, 
@@ -180,10 +179,10 @@ writeLines(paste('Following',length(METADATA$SampleID[is.na(METADATA$TotalReads)
 writeLines(paste(METADATA$SampleID[is.na(METADATA$TotalReads)], collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!is.na(TotalReads)) 
 
-writeLines('Some control samples with Age of death less than 17 are removed')
-writeLines(paste('Following',length(METADATA$SampleID[METADATA$Age_of_Death <= 17]), 'samples are removed:'))
-writeLines(paste(METADATA$SampleID[METADATA$Age_of_Death <= 17], collapse = ', '))
-METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 17) 
+writeLines('Some control samples with Age of death less than 21 are removed')
+writeLines(paste('Following',length(METADATA$SampleID[METADATA$Age_of_Death <= 21]), 'samples are removed:'))
+writeLines(paste(METADATA$SampleID[METADATA$Age_of_Death <= 21], collapse = ', '))
+METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 21) 
 ```
 
 ```{r preprocess.data1, results='asis'}
@@ -327,10 +326,10 @@ genesToAnalyze = unlist(genesToAnalyze) %>%
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
 pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
   dplyr::rename(ensembl_gene_id = genes) %>%
-  left_join(Ensemble2HGNC) %>%
-  group_by(gene_biotype) %>%
-  summarise(fraction  = n()) %>%
-  filter(fraction > 100) %>%
+  dplyr::left_join(Ensemble2HGNC) %>%
+  dplyr::group_by(gene_biotype) %>%
+  dplyr::summarise(fraction  = n()) %>%
+  dplyr::filter(fraction > 100) %>%
   dplyr::mutate(fraction = fraction/length(PROCESSED_COUNTS$filteredExprMatrix$genes[,1]))
 ```
 `r dim(PROCESSED_COUNTS$filteredExprMatrix$genes)[1]` genes are used for the analysis. 
@@ -381,9 +380,9 @@ PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
-  group_by(Dx, Tissue) %>%
-  summarise(count = n()) %>%
-  spread(Tissue, count)
+  dplyr::group_by(Dx, Tissue) %>%
+  dplyr::summarise(count = n()) %>%
+  tidyr::spread(Tissue, count)
 ```
 Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples
 
@@ -538,16 +537,15 @@ fitFixedEffectModel <- function(varsToFit, lcpm, cnt, covars){
                          .fun = function(i, lcpm, designMat, voomWeights){
                            # Fit a linear models for every gene
                            data = cbind(data.frame(Gx = lcpm[i,]),
-                                        designMat)
-                           wts = voomWeights[i,]
+                                        designMat, 
+                                        weight = voomWeights[i,])
                            
-                           formula = paste(setdiff(colnames(data), c('Gx')), collapse = '+') %>%
+                           formula = paste(setdiff(colnames(data), c('Gx', 'weight')), collapse = '+') %>%
                              paste('Gx ~',., collapse = ' ')
                            
-                           mdl = lm(formula = formula, 
-                                    data = data, 
-                                    subset = 1:dim(data)[1],
-                                    weights = wts)
+                           mdl = stats::lm(formula = formula, 
+                                           data = data, 
+                                           weights = weight)
                            
                            data.frame(ensembl_gene_id = rownames(lcpm)[i], BIC = BIC(mdl))
                          }, 
@@ -785,36 +783,37 @@ DE = lapply(1:3, function(i, FIT){
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
+  data.table::rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Dx.Tissue','',Comparison),
                 Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
                 Direction = as.character(Direction)) %>%
   tidyr::separate(Comparison, into = c('ref.state','to.state'), sep = '-') %>%
-  tidyr::separate(ref.state, into = c('Dx1','Tissue'), sep = '_') %>%
-  tidyr::separate(to.state, into = c('Dx2','Tissue'), sep = '_') %>%
-  tidyr::unite(Comparison, Dx1, Dx2, sep = '_vs_') %>%
+  tidyr::separate(ref.state, into = c('Dx1','Tissue1'), sep = '_') %>%
+  tidyr::separate(to.state, into = c('Dx2','Tissue2'), sep = '_') %>%
   left_join(Ensemble2HGNC) %>%
-  left_join(GENE.LEN)
+  left_join(GENE.LEN) %>%
+  tidyr::unite(Comparison, Dx1, Dx2, sep = '_vs_')
+  
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  group_by(Comparison, Tissue1) %>%
   dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id)))
 
 tmp1 = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  group_by(Comparison, Tissue1) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id)))
 
 kable(full_join(tmp,tmp1))
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
-p = p + facet_grid(Tissue+.~Comparison, scales = 'fixed')
+p = p + facet_grid(Tissue1+.~Comparison, scales = 'fixed')
 p
 ```
 
