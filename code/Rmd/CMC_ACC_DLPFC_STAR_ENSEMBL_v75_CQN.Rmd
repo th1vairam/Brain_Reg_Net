@@ -11,7 +11,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN.Rmd",
-                                 parentId ="syn7501880",
+                                 parentId = "syn9872607",
                                  entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
 ```
 
@@ -61,7 +61,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn7501880';
+parentId = 'syn9872607';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
 
@@ -618,7 +618,6 @@ ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
 ```
 
-
 ### Residual calculation
 Calculate weighted residuals and add back "Dx.Tissue" to the residuals
 ```{r varsToAddBack}
@@ -680,16 +679,13 @@ gc()
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=10, fig.width=15}
 # Fit contrast
-contrast = makeContrasts(contrasts=c("Dx.TissueOther_ACC-Dx.TissueControl_ACC",
-                                     "Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
-                                     "Dx.TissueSCZ_ACC-Dx.TissueOther_ACC",
-                                     "Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
+contrast = makeContrasts(contrasts=c("Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
-                                     "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueSCZ_ACC",
                                      "Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",
-                                     "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueControl_ACC",
-                                     "0.5*Dx.TissueSCZ_DLPFC+0.5*Dx.TissueControl_DLPFC-0.5*Dx.TissueSCZ_ACC-0.5*Dx.TissueControl_ACC"),
+                                     "Dx.TissueSCZ_DLPFC+Dx.TissueSCZ_ACC-Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",         
+                                     "Dx.TissueSCZ_DLPFC+Dx.TissueControl_DLPFC-Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC-Dx.TissueSCZ_ACC+Dx.TissueControl_ACC"),
                          levels = colnames(ADJUSTED.FIT$coefficients))
 FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
@@ -700,7 +696,7 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
 names(DE) = gsub('Dx.Tissue', '', colnames(contrast))
-names(DE)[9:10] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC')
+names(DE)[5:7] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC', 'ALL_ALL-ALL_ALL')
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
@@ -717,15 +713,17 @@ DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, ref.Dx != 'Other', to.Dx != 'Other') %>%
-  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue, logFC) %>%
   group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
-  dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id)))
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
 
 tmp1 = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), ref.Dx != 'Other', to.Dx != 'Other') %>%
-  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue, logFC) %>%
   group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
-  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id)))
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
 
 kable(full_join(tmp,tmp1))
 
@@ -770,14 +768,110 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+```{r diffExp1, fig.height=10, fig.width=15}
+postAdjustCovars = c('Tissue', 'Dx', 'Institution', 'Gender', 'RIN', 'IntronicRate')
+
+# Post adjusted design matrix
+COV1 = COVARIATES
+COV1 = tidyr::separate(COV1, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
+  dplyr::mutate(Dx = factor(Dx, levels = c('SCZ', 'Control', 'Other')), Tissue = factor(Tissue))
+
+DESIGN = getDesignMatrix(COV1[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero,   
+                            design = DESIGN, plot=F,
+                            block = COV1$Individual_ID, 
+                            correlation = correlation$cor)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+
+# Fit linear model using new weights and new design
+ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
+
+# Fit contrast
+contrast = makeContrasts(contrasts=c("TissueACC-TissueDLPFC",
+                                     "DxSCZ-DxControl"),
+                         levels = colnames(ADJUSTED.FIT$coefficients))
+FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE1 = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+    rownameToFirstColumn('ensembl_gene_id') 
+}, FIT.CONTR) 
+names(DE1) = c('ACC-DLPFC', 'SCZ-CONTROL')
+
+DE1 = DE1 %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(Ensemble2HGNC) 
+DE1$Direction[DE1$adj.P.Val > 0.05 | abs(DE1$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE1 %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(Comparison, ensembl_gene_id, logFC) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+tmp1 = DE1 %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
+  dplyr::select(Comparison, ensembl_gene_id, logFC) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+kable(full_join(tmp,tmp1))
+
+p = DE1 %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(Comparison~., scales = 'free_y')
+p = p + ggtitle('Differential Expression between Schizophrenia and Control')
+p
+```
+
 ### Gene set enrichment analysis
 Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
-diffexp.genes = DE %>%
+diffexp.genes.up = DE %>%
   dlply(.(ref.Dx, ref.Tissue, to.Dx, to.Tissue), .fun = function(x){
-    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
+    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC > 0] %>% unique
     tmp = tmp[!is.na(tmp)]
   })
+names(diffexp.genes.up) = paste(names(diffexp.genes.up), 'UP', sep = '.')
+
+diffexp.genes.down = DE %>%
+  dlply(.(ref.Dx, ref.Tissue, to.Dx, to.Tissue), .fun = function(x){
+    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC < 0] %>% unique
+    tmp = tmp[!is.na(tmp)]
+  })
+names(diffexp.genes.down) = paste(names(diffexp.genes.down), 'DOWN', sep = '.')
+
+diffexp.genes.up$ACC.DLPFC.UP = dplyr::filter(DE1, adj.P.Val <= 0.05, logFC > 0, Comparison == 'ACC-DLPFC') %>%
+  dplyr::select(hgnc_symbol) %>%
+  unique() %>% unlist() %>% as.character()
+diffexp.genes.down$ACC.DLPFC.DOWN = dplyr::filter(DE1, adj.P.Val <= 0.05, logFC < 0, Comparison == 'ACC-DLPFC') %>%
+  dplyr::select(hgnc_symbol) %>%
+  unique() %>% unlist() %>% as.character()
+diffexp.genes.up$ACC.DLPFC.UNCHANGED = dplyr::filter(DE1, adj.P.Val > 0.05, Comparison == 'ACC-DLPFC') %>%
+  dplyr::select(hgnc_symbol) %>%
+  unique() %>% unlist() %>% as.character()
+
+diffexp.genes = c(diffexp.genes.up, diffexp.genes.down)
+diffexp.genes = diffexp.genes[c("Control.ACC.SCZ.ACC.UP", "Control.ACC.SCZ.ACC.DOWN",
+                                "Control.DLPFC.SCZ.DLPFC.UP", "Control.DLPFC.SCZ.DLPFC.DOWN",
+                                "ACC.DLPFC.UP", "ACC.DLPFC.DOWN", "ACC.DLPFC.UNCHANGED")]
+diffexp.genes$Control.SCZ.ACC.DLPFC.UP = setdiff(diffexp.genes$Control.ACC.SCZ.ACC.UP, diffexp.genes$Control.DLPFC.SCZ.DLPFC.UP)
+diffexp.genes$Control.SCZ.ACC.DLPFC.DOWN = setdiff(diffexp.genes$Control.ACC.SCZ.ACC.DOWN, diffexp.genes$Control.DLPFC.SCZ.DLPFC.DOWN)
+diffexp.genes$Control.SCZ.DLPFC.ACC.UP = setdiff(diffexp.genes$Control.DLPFC.SCZ.DLPFC.UP, diffexp.genes$Control.ACC.SCZ.ACC.UP)
+diffexp.genes$Control.SCZ.DLPFC.ACC.DOWN = setdiff(diffexp.genes$Control.DLPFC.SCZ.DLPFC.DOWN, diffexp.genes$Control.ACC.SCZ.ACC.DOWN)
+diffexp.genes$Control.SCZ.DLPFC.ACC.BOTH.UP = intersect(diffexp.genes$Control.DLPFC.SCZ.DLPFC.UP, diffexp.genes$Control.ACC.SCZ.ACC.UP)
+diffexp.genes$Control.SCZ.DLPFC.ACC.BOTH.DOWN = intersect(diffexp.genes$Control.DLPFC.SCZ.DLPFC.DOWN, diffexp.genes$Control.ACC.SCZ.ACC.DOWN)
 diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
 backgroundGenes = unique(DE$hgnc_symbol)
 

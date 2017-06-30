@@ -182,7 +182,7 @@ METADATA <- METADATA  %>% dplyr::filter(!is.na(TotalReads))
 writeLines('Some control samples with Age of death less than 21 are removed')
 writeLines(paste('Following',length(METADATA$SampleID[METADATA$Age_of_Death <= 21]), 'samples are removed:'))
 writeLines(paste(METADATA$SampleID[METADATA$Age_of_Death <= 21], collapse = ', '))
-METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 21) 
+METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 21)
 ```
 
 ```{r preprocess.data1, results='asis'}
@@ -254,7 +254,12 @@ Correlation/association between covariates at an FDR <= 0.1
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 tmp = COVARIATES.CORRELATION$ESTIMATE
 tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
-h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate')
+fdr = COVARIATES.CORRELATION$PVAL
+fdr = format(fdr, digits=1)
+h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate',
+            cell_fun = function(j,i,x,y,wifht,height,fill){
+                grid.text(fdr[i,j], x, y)
+              })
 draw(h, heatmap_legend_side = 'left', padding = unit(c(10,2,2,10), "mm"))
 ```
 
@@ -797,17 +802,19 @@ DE = DE %>%
   
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
-tmp = DE %>%
+tmp = de.hbcc %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1, logFC) %>%
   group_by(Comparison, Tissue1) %>%
-  dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id)))
+  dplyr::summarise(FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])),
+                   FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])))
 
-tmp1 = DE %>%
+tmp1 = de.hbcc %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1, logFC) %>%
   group_by(Comparison, Tissue1) %>%
-  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id)))
+  dplyr::summarise(FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > log2(1.2)])),
+                   FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < -log2(1.2)])))
 
 kable(full_join(tmp,tmp1))
 
@@ -841,8 +848,10 @@ multiplot(plotlist = pl, cols = 3)
 ### Gene set enrichment analysis
 Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
-diffexp.genes = DE %>%
-  dlply(.(Comparison, Tissue), .fun = function(x){
+diffexp.genes = de.hbcc %>%
+  dplyr::mutate(Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP'))) %>%
+  dlply(.(Comparison, Tissue1, Direction), .fun = function(x){
     tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
     tmp = tmp[!is.na(tmp)]
   })
@@ -862,7 +871,7 @@ genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.
   do.call(c,.)
 
 # Perform enrichment analysis
-enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
+enrichment.results = plyr::llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
    ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
      CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
     }, x, backgroundGenes, .parallel = TRUE) %>%
