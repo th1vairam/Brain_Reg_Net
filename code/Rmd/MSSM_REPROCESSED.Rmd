@@ -106,6 +106,12 @@ METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, 
     x = dplyr::mutate(x, batch = paste(batch, collapse = ''), RIN = sum(RIN, na.rm = T))  
   }) 
 
+# Get 90+ age
+METADATA_AGE_ID = 'syn10156693'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_AGE_ID
+METADATA_AGE <- read.table(synGet(METADATA_AGE_ID)@filePath, sep='\t', header=T) %>%
+  dplyr::rename(individualIdentifier = BBid)
+
 # Get clinical metadata
 METADATA_CLINICAL_ID <- 'syn6101474'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_CLINICAL_ID
@@ -126,8 +132,10 @@ METADATA.PICARD <- CovariateAnalysis::downloadFile(METADATA.PICARD_ID) %>%
 colnames(METADATA.PICARD) = gsub('AlignmentSummaryMetrics__','',colnames(METADATA.PICARD))
 colnames(METADATA.PICARD) = gsub('RnaSeqMetrics__','',colnames(METADATA.PICARD))
 
-METADATA <- full_join(METADATA_TECH, METADATA_CLINICAL) %>%
-  inner_join(METADATA.PICARD)
+METADATA <- dplyr::full_join(METADATA_TECH, METADATA_CLINICAL) %>%
+  dplyr::inner_join(METADATA.PICARD) %>%
+  dplyr::select(-AOD) %>%
+  dplyr::left_join(METADATA_AGE)
 
 # Get gene specific parameters from synapse
 GENE.PARAM = downloadFile('syn8449369')
@@ -171,6 +179,22 @@ METADATA = METADATA %>%
 
 METADATA <- METADATA %>%
   filter(!is.na(BrainRegion.Diagnosis), !is.na(PMI), !is.na(RIN))
+
+# Fix RIN values for some samples (Based on email conversation with Minghui May 22 2017)
+FIX.RIN = c(hB_RNA_12312_resequenced = 3.9,
+            hB_RNA_12342 = 3.9,
+            hB_RNA_12352 = 4.2,
+            hB_RNA_9191 = 5,
+            hB_RNA_12262_resequenced = 5.2,
+            hB_RNA_9216 = 5.7,
+            hB_RNA_12272_resequenced = 5.8,
+            hB_RNA_12382 = 5.8, 
+            hB_RNA_13359 = 6.4)
+rownames(METADATA) = METADATA$sampleIdentifier
+METADATA[names(FIX.RIN),'RIN'] = FIX.RIN
+
+METADATA = METADATA %>%
+  dplyr::filter(RIN >= 5)
 ```
 
 ```{r preprocess.data1}
@@ -592,6 +616,7 @@ Genes that are differentially expressed at an FDR <= 0.05 are
 COVARIATES.tmp = COVARIATES %>%
   tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
   dplyr::mutate(BrainRegion = factor(BrainRegion))
+
 DESIGN = getDesignMatrix(COVARIATES.tmp[, c('BrainRegion', postAdjustCovars), drop = F], Intercept = F)
 ind = grep('BrainRegion', colnames(DESIGN$design))
 DESIGN$design[,ind] = DESIGN$design[,ind] * as.numeric(COVARIATES.tmp[,'CDR'])
@@ -656,6 +681,9 @@ p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_
 p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
 p = p + facet_grid(Comparison+.~BrainRegion, scales = 'free')
 p
+
+all.diff.exp = list(CDR = DE)
+all.fit = list(CDR = FIT)
 ```
 
 ### Differential expression analysis (with BrainRegion.Diagnosis as primary variable)
@@ -726,8 +754,9 @@ DE = DE %>%
                 Direction = as.character(Direction)) %>%
   tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
   tidyr::separate(from.state, c('BrainRegion','reference'), sep = '\\.') %>%
-  tidyr::separate(to.state, c('BrainRegion','against'), sep = '\\.') %>%
-  tidyr::unite(Comparison, reference, against, sep = '-') %>%
+  tidyr::separate(to.state, c('BrainRegion1','against'), sep = '\\.') %>%
+  dplyr::mutate(Comparison = paste(reference, against, sep = '-')) %>%
+  dplyr::select(-BrainRegion1) %>%
   left_join(GENE.PARAM %>%
               dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
               unique())
@@ -744,6 +773,9 @@ p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_
 p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position='top')
 p = p + facet_grid(BrainRegion+.~Comparison, scales = 'fixed')
 p
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis = DE))
+all.fit = c(all.fit, list(Diagnosis = FIT))
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
@@ -770,9 +802,214 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+### Differential expression analysis (with BrainRegion.Diagnosis and Gender)
+Differential expression is performed on the BrainRegion.Diagnosis x Gender variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
+```{r diff.exp2, fig.height=15, fig.width=13}
+## Modeling Diagnosis, msex and age_death conjointly
+COVARIATES$BrainRegion.Diagnosis.SEX = paste(COVARIATES$BrainRegion.Diagnosis, 
+                                             factor(COVARIATES$SEX, labels = c('F' = 'FEMALE', 'M' = 'MALE')), 
+                                             sep = '.') %>% factor
+
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis.SEX', setdiff(postAdjustCovars, 'SEX')), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E.NA
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E.NA
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c('BrainRegion.Diagnosis.SEXIFG.AD.MALE-BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXIFG.AD.FEMALE-BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXFP.AD.MALE-BrainRegion.Diagnosis.SEXFP.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXFP.AD.FEMALE-BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE+0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE+0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXPHG.AD.MALE-BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXPHG.AD.FEMALE-BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXSTG.AD.MALE-BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE',
+         'BrainRegion.Diagnosis.SEXSTG.AD.FEMALE-BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
+         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE
+         -0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE')
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+colnames(contrast) = c('IFG.AD.MALE-IFG.CONTROL.MALE',
+                       'IFG.AD.FEMALE-IFG.CONTROL.FEMALE',
+                       'IFG.AD.ALL-IFG.CONTROL.ALL',
+                       'IFG.ALL.FEMALE-IFG.ALL.MALE',
+                       'IFG.ALL.ALL-IFG.ALL.ALL',
+                       'FP.AD.MALE-FP.CONTROL.MALE',
+                       'FP.AD.FEMALE-FP.CONTROL.FEMALE',
+                       'FP.AD.ALL-FP.CONTROL.ALL',
+                       'FP.ALL.FEMALE-FP.ALL.MALE',
+                       'FP.ALL.ALL-FP.ALL.ALL',
+                       'PHG.AD.MALE-PHG.CONTROL.MALE',
+                       'PHG.AD.FEMALE-PHG.CONTROL.FEMALE',
+                       'PHG.AD.ALL-PHG.CONTROL.ALL',
+                       'PHG.ALL.FEMALE-PHG.ALL.MALE',
+                       'PHG.ALL.ALL-PHG.ALL.ALL',
+                       'STG.AD.MALE-STG.CONTROL.MALE',
+                       'STG.AD.FEMALE-STG.CONTROL.FEMALE',
+                       'STG.AD.ALL-STG.CONTROL.ALL',
+                       'STG.ALL.FEMALE-STG.ALL.MALE',
+                       'STG.ALL.ALL-STG.ALL.ALL')
+
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('ensembl_gene_id')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('BrainRegion.Diagnosis','',Comparison),
+                Study = 'MSSM',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.SEX = DE))
+all.fit = c(all.fit, list(Diagnosis.SEX = FIT))
+```
+
+### Differential expression analysis (with BrainRegion.Diagnosis and AOD)
+Differential expression is performed on the BrainRegion.Diagnosis x AOD variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
+```{r diff.exp3, fig.height=15, fig.width=13}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], setdiff(postAdjustCovars, 'AOD')), drop = F], Intercept = F)
+ind = grep('Diagnosis', colnames(DESIGN$design))
+DESIGN$design[,ind] = DESIGN$design[,ind] * COVARIATES[rownames(DESIGN$design),'AOD']
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+colnames(DESIGN$design)[ind] = gsub('BrainRegion.Diagnosis', '', paste0(colnames(DESIGN$design)[ind], '.AOD'))
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E.NA
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E.NA
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c("FP.AD.AOD-FP.CONTROL.AOD",
+         "0.5*FP.AD.AOD+0.5*FP.CONTROL.AOD",
+         "IFG.AD.AOD-IFG.CONTROL.AOD",
+         "0.5*IFG.AD.AOD+0.5*IFG.CONTROL.AOD",
+         "PHG.AD.AOD-PHG.CONTROL.AOD",
+         "0.5*PHG.AD.AOD+0.5*PHG.CONTROL.AOD",
+         "STG.AD.AOD-STG.CONTROL.AOD",
+         "0.5*STG.AD.AOD+0.5*STG.CONTROL.AOD")
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+colnames(contrast) = c("FP.AD.AOD-FP.CONTROL.AOD",
+                       "FP.ALL.AOD",
+                       "IFG.AD.AOD-IFG.CONTROL.AOD",
+                       "IFG.ALL.AOD",
+                       "PHG.AD.AOD-PHG.CONTROL.AOD",
+                       "PHG.ALL.AOD",
+                       "STG.AD.AOD-STG.CONTROL.AOD",
+                       "STG.ALL.AOD")
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('ensembl_gene_id')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('BrainRegion.Diagnosis','',Comparison),
+                Study = 'MSSM',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.AOD = DE))
+all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
+```
+
 ### SVA Adjustments for eQTL analysis
 Conditioned on primary variable (BrainRegion.Diagnosis) and identified covariates estimate surrogate variables using SVA package
 ```{r sva.adjust}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
 # Get (null) design matrix
 MODEL0 = DESIGN$design[,-grep(primaryVariable[2],colnames(DESIGN$design))] # Get null model by removing variable of interest
 MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
@@ -901,10 +1138,39 @@ all.annotations = list(
   normalizationType	= 'CQN'
 )
 
+# Function to change entity ACL (also creates new acls if it doesn't exist)
+synChangeEntityACL <- function(id, new.racl){
+  tryCatch({ 
+    # If old acl exist update
+    old.acl = synGetEntityACL(id)
+    old.acl@resourceAccess = new.racl
+    synUpdateEntityACL(old.acl)
+  }, error = function(e){ 
+    # If not create a new acl
+    new.acl = AccessControlList(id = id, resourceAccess = new.racl)
+    synCreateEntityACL(new.acl)
+  })
+}
+
+# Create new resource acls
+new.racl = ResourceAccess(principalId = '3319864', 
+                          accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 
+                                         'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS')) %>%
+  ResourceAccessList() %>%
+  synapseClient::append(ResourceAccess(principalId = '274008', 
+                                       accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 
+                                                      'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))) %>%
+  synapseClient::append(ResourceAccess(principalId = '273995', 
+                                       accessType = c('UPDATE', 'CHANGE_SETTINGS', 'DELETE', 'READ', 
+                                                      'DOWNLOAD', 'MODERATE', 'CREATE', 'CHANGE_PERMISSIONS'))) %>%
+  synapseClient::append(ResourceAccess(principalId = '3359054', 
+                                       accessType = c('READ', 'DOWNLOAD')))
+
 # Code
 CODE <- Folder(name = "MSSM Reprocessed RNASeq (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
+synChangeEntityACL(CODE@properties$id, new.racl)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
@@ -914,6 +1180,7 @@ annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
                       executed = thisFile, activityDescription = activityDescription)
+synChangeEntityACL(COV_OBJ@properties$id, new.racl)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts.NA %>%
@@ -954,6 +1221,7 @@ DM_OBJ = File('MSSM_FP_STG_PHG_IFG_Design.tsv', name = 'Design Matrix', parentId
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+synChangeEntityACL(DM_OBJ@properties$id, new.racl)
 
 # Store surrogate variables
 SURR.VAR %>%
@@ -987,14 +1255,26 @@ annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
 nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(DE, file = 'MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', 
-                name = 'Differential Expression Results (BrainRegion.Diagnosis)', 
+rbindlist(all.diff.exp, use.names = T, fill = T, idcol = 'Model') %>%
+  write.table(file = 'MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', name = 'Differential Expression Results (cogdx)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-stopCluster(cl)
+
+# Store all differential expression models
+save(all.fit, file = 'MSSM_FP_STG_PHG_IFG_Models.RData')
+FIT_OBJ = File('MSSM_FP_STG_PHG_IFG_Models.RData', 
+               name = 'All Limma Models',
+               parentId = CODE$properties$id)
+annotations(FIT_OBJ) = annotations(CODE)
+annotations(FIT_OBJ)$dataSubType = 'modelFits'
+FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
+
+# Delete folder acl
+synDeleteEntityACL(CODE@properties$id)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
