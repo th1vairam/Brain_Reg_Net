@@ -655,8 +655,25 @@ residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, COVARIAT
 residualSigCovars[["PC_res"]][[2]]$plotData
 ```
 
+```{r decompse.RESIDUALS, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
+
+# Plot first 4 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
+p <- p + theme_bw() + theme(legend.position="right")
+p
+```
+
 ### Residual calculation
-Calculate weighted residuals and add back "Dx" to the residuals
+Calculate weighted residuals and add back "BrainRegion.Diagnosis" to the residuals
 ```{r varsToAddBack}
 # Add variable of interest back to the residuals
 varsToAddIn = grep("BrainRegion.Diagnosis", colnames(DM1$design), value = T)
@@ -777,8 +794,8 @@ p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.posi
 p = p + facet_grid(.~Comparison, scales = 'fixed')
 p
 
-all.diff.exp = c(all.diff.exp, list(Diagnosis = DE))
-all.fit = c(all.fit, list(Diagnosis = FIT))
+all.diff.exp = list(Diagnosis = DE)
+all.fit = list(Diagnosis = FIT)
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
@@ -805,14 +822,14 @@ multiplot(plotlist = pl, cols = 3)
 ### Differential expression analysis (with BrainRegion.Diagnosis and Gender)
 Differential expression is performed on the BrainRegion.Diagnosis x Gender variable by controlling for covariates identified above
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp2, fig.height=15, fig.width=13, eval = F}
+```{r diff.exp2, fig.height=7, fig.width=24}
 ## Modeling Diagnosis, msex and age_death conjointly
 COVARIATES$BrainRegion.Diagnosis.Gender = factor(paste(COVARIATES$BrainRegion.Diagnosis,
                                                        COVARIATES$Gender,
                                                        sep = '_'))
 
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis.Gender', setdiff(adjust.covars, 'Gender')), drop = F], Intercept = F)
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis.Gender', setdiff(adjust.covars, c('BrainRegion.Diagnosis', 'Gender'))), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
@@ -833,68 +850,30 @@ VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
-# Fit contrast
 cntr = c()
-for (region in c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
-  tmp = combn(paste0('BrainRegion.Diagnosis.Gender', region, '_', c('AD', 'CONTROL')),2)
-  tmp1 = combn(paste0())
-  cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0('BrainRegion.Diagnosis.Gender', region, '_AD_MALE-BrainRegion.Diagnosis.Gender', region, '_CONTROL_MALE'),
+          paste0('BrainRegion.Diagnosis.Gender', region, '_AD_FEMALE-BrainRegion.Diagnosis.Gender', region, '_CONTROL_FEMALE'),
+          paste0('0.5*BrainRegion.Diagnosis.Gender', region, '_AD_MALE+0.5*BrainRegion.Diagnosis.Gender', region, 
+                 '_AD_FEMALE-0.5*BrainRegion.Diagnosis.Gender', region, '_CONTROL_MALE-0.5*BrainRegion.Diagnosis.Gender',region, '_CONTROL_FEMALE'),
+          paste0('0.5*BrainRegion.Diagnosis.Gender', region, '_AD_FEMALE+0.5*BrainRegion.Diagnosis.Gender', region, 
+                 '_CONTROL_FEMALE-0.5*BrainRegion.Diagnosis.Gender', region, '_AD_MALE-0.5*BrainRegion.Diagnosis.Gender',region, '_CONTROL_MALE'),
+          paste0('0.5*BrainRegion.Diagnosis.Gender', region, '_AD_FEMALE-0.5*BrainRegion.Diagnosis.Gender', region, 
+                 '_CONTROL_FEMALE-0.5*BrainRegion.Diagnosis.Gender', region, '_AD_MALE+0.5*BrainRegion.Diagnosis.Gender',region, '_CONTROL_MALE'))
+  cntr = c(cntr, cnt)
 }
-
-cntr = c('BrainRegion.Diagnosis.SEXIFG.AD.MALE-BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXIFG.AD.FEMALE-BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXIFG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXIFG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXIFG.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXFP.AD.MALE-BrainRegion.Diagnosis.SEXFP.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXFP.AD.FEMALE-BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE+0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXFP.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXFP.AD.MALE+0.5*BrainRegion.Diagnosis.SEXFP.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXPHG.AD.MALE-BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXPHG.AD.FEMALE-BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXPHG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXPHG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXPHG.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXSTG.AD.MALE-BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE',
-         'BrainRegion.Diagnosis.SEXSTG.AD.FEMALE-BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE+0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE',
-         '0.5*BrainRegion.Diagnosis.SEXSTG.AD.FEMALE-0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.FEMALE
-         -0.5*BrainRegion.Diagnosis.SEXSTG.AD.MALE+0.5*BrainRegion.Diagnosis.SEXSTG.CONTROL.MALE')
 contrast = makeContrasts(contrasts=cntr,
                          levels = colnames(FIT$coefficients))
-colnames(contrast) = c('IFG.AD.MALE-IFG.CONTROL.MALE',
-                       'IFG.AD.FEMALE-IFG.CONTROL.FEMALE',
-                       'IFG.AD.ALL-IFG.CONTROL.ALL',
-                       'IFG.ALL.FEMALE-IFG.ALL.MALE',
-                       'IFG.ALL.ALL-IFG.ALL.ALL',
-                       'FP.AD.MALE-FP.CONTROL.MALE',
-                       'FP.AD.FEMALE-FP.CONTROL.FEMALE',
-                       'FP.AD.ALL-FP.CONTROL.ALL',
-                       'FP.ALL.FEMALE-FP.ALL.MALE',
-                       'FP.ALL.ALL-FP.ALL.ALL',
-                       'PHG.AD.MALE-PHG.CONTROL.MALE',
-                       'PHG.AD.FEMALE-PHG.CONTROL.FEMALE',
-                       'PHG.AD.ALL-PHG.CONTROL.ALL',
-                       'PHG.ALL.FEMALE-PHG.ALL.MALE',
-                       'PHG.ALL.ALL-PHG.ALL.ALL',
-                       'STG.AD.MALE-STG.CONTROL.MALE',
-                       'STG.AD.FEMALE-STG.CONTROL.FEMALE',
-                       'STG.AD.ALL-STG.CONTROL.ALL',
-                       'STG.ALL.FEMALE-STG.ALL.MALE',
-                       'STG.ALL.ALL-STG.ALL.ALL')
+cnames = c()
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0(region, '_AD_MALE-', region, '_CONTROL_MALE'),
+          paste0(region, '_AD_FEMALE-', region, '_CONTROL_FEMALE'),
+          paste0(region, '_AD_ALL-', region, '_CONTROL_ALL'),
+          paste0(region, '_ALL_FEMALE-', region, '_ALL_MALE'),
+          paste0(region, '_ALL_ALL-', region,'_ALL_ALL'))
+  cnames = c(cnames, cnt)
+}
+colnames(contrast) = cnames
 
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
@@ -902,26 +881,24 @@ FIT.CONTR = eBayes(FIT.CONTR)
 # Get differnetial expression
 DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
-    rownameToFirstColumn('ensembl_gene_id')
+    rownameToFirstColumn('Gene.ID')
 }, FIT.CONTR)
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
-  dplyr::mutate(Comparison = gsub('BrainRegion.Diagnosis','',Comparison),
-                Study = 'MSSM',
-                Direction = logFC/abs(logFC),
+  dplyr::mutate(Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
                 Direction = as.character(Direction)) %>%
   left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              dplyr::select(Gene.ID, hgnc_symbol, percentage_gc_content, gene.length) %>%
               unique())
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  dplyr::select(Gene.ID, Comparison, Direction) %>%
   group_by(Comparison, Direction) %>%
-  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(Gene.ID))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
 kable(tmp)
 
@@ -933,13 +910,13 @@ all.fit = c(all.fit, list(Diagnosis.SEX = FIT))
 Differential expression is performed on the BrainRegion.Diagnosis x AOD variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp3, fig.height=15, fig.width=13, eval = F}
+```{r diff.exp3, fig.height=7, fig.width=24}
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], setdiff(postAdjustCovars, 'AOD')), drop = F], Intercept = F)
-ind = grep('Diagnosis', colnames(DESIGN$design))
-DESIGN$design[,ind] = DESIGN$design[,ind] * COVARIATES[rownames(DESIGN$design),'AOD']
+DESIGN = getDesignMatrix(COVARIATES[, c(setdiff(adjust.covars, 'AOD')), drop = F], Intercept = F)
+ind = grep('BrainRegion.Diagnosis', colnames(DESIGN$design))
+DESIGN$design[,ind] = DESIGN$design[,ind]*COVARIATES$AOD
+colnames(DESIGN$design)[ind] = paste(colnames(DESIGN$design)[ind], 'AOD', sep = '_')
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
-colnames(DESIGN$design)[ind] = gsub('BrainRegion.Diagnosis', '', paste0(colnames(DESIGN$design)[ind], '.AOD'))
 
 # Estimate voom weights for dispersion control
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
@@ -959,55 +936,58 @@ VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 FIT = lmFit(VOOM.WEIGHTS)
 
 # Fit contrast
-cntr = c("FP.AD.AOD-FP.CONTROL.AOD",
-         "0.5*FP.AD.AOD+0.5*FP.CONTROL.AOD",
-         "IFG.AD.AOD-IFG.CONTROL.AOD",
-         "0.5*IFG.AD.AOD+0.5*IFG.CONTROL.AOD",
-         "PHG.AD.AOD-PHG.CONTROL.AOD",
-         "0.5*PHG.AD.AOD+0.5*PHG.CONTROL.AOD",
-         "STG.AD.AOD-STG.CONTROL.AOD",
-         "0.5*STG.AD.AOD+0.5*STG.CONTROL.AOD")
+cntr = c()
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0('BrainRegion.Diagnosis', region, '_AD_AOD-BrainRegion.Diagnosis', region, '_CONTROL_AOD'),
+          paste0('0.5*BrainRegion.Diagnosis', region, '_AD_AOD+0.5*BrainRegion.Diagnosis', region, '_CONTROL_AOD'))
+  cntr = c(cntr, cnt)
+}
 contrast = makeContrasts(contrasts=cntr,
                          levels = colnames(FIT$coefficients))
-colnames(contrast) = c("FP.AD.AOD-FP.CONTROL.AOD",
-                       "FP.ALL.AOD",
-                       "IFG.AD.AOD-IFG.CONTROL.AOD",
-                       "IFG.ALL.AOD",
-                       "PHG.AD.AOD-PHG.CONTROL.AOD",
-                       "PHG.ALL.AOD",
-                       "STG.AD.AOD-STG.CONTROL.AOD",
-                       "STG.ALL.AOD")
+cnames = c()
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0(region, '_AD_AOD-', region, '_CONTROL_AOD'),
+          paste0(region, '_ALL_AOD'))
+  cnames = c(cnames, cnt)
+}
+colnames(contrast) = cnames
+
 FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
 DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = T) %>%
-    rownameToFirstColumn('ensembl_gene_id')
+    rownameToFirstColumn('Gene.ID')
 }, FIT.CONTR)
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
-  dplyr::mutate(Comparison = gsub('BrainRegion.Diagnosis','',Comparison),
-                Study = 'MSSM',
-                Direction = logFC/abs(logFC),
+  dplyr::mutate(Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
                 Direction = as.character(Direction)) %>%
   left_join(GENE.PARAM %>%
-              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              dplyr::select(Gene.ID, hgnc_symbol, percentage_gc_content, gene.length) %>%
               unique())
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
-  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  dplyr::select(Gene.ID, Comparison, Direction) %>%
   group_by(Comparison, Direction) %>%
-  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(Gene.ID))) %>%
   spread(Direction, FDR_0_05_FC_1.2) 
 kable(tmp)
 
 all.diff.exp = c(all.diff.exp, list(Diagnosis.AOD = DE))
 all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
+```
+
+### Differential expression analysis (with BrainRegion.Diagnosis and Celltype Fractions)
+Differential expression is performed on the BrainRegion.Diagnosis x CelltypeFractions variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
+```{r diff.exp3, fig.height=7, fig.width=24, eval = F}
 ```
 
 ### Gene set enrichment analysis
