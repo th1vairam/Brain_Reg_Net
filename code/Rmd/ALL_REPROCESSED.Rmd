@@ -902,8 +902,8 @@ tmp = DE %>%
   spread(Direction, FDR_0_05_FC_1.2) 
 kable(tmp)
 
-all.diff.exp = c(all.diff.exp, list(Diagnosis.SEX = DE))
-all.fit = c(all.fit, list(Diagnosis.SEX = FIT))
+all.diff.exp = c(all.diff.exp, list(Diagnosis.Gender = DE))
+all.fit = c(all.fit, list(Diagnosis.Gender = FIT))
 ```
 
 ### Differential expression analysis (with BrainRegion.Diagnosis and AOD)
@@ -987,42 +987,139 @@ all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
 Differential expression is performed on the BrainRegion.Diagnosis x CelltypeFractions variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp3, fig.height=7, fig.width=24, eval = F}
+```{r diff.exp4.1, fig.height=10, fig.width=15}
+# Cell type markers
+CELL.FRAC = downloadFile('syn10163089')
+all.used.ids = c(all.used.ids, 'syn10163089')
+
+# Merge covariates to cell type fraction
+NEW.COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID') %>%
+  left_join(CELL.FRAC)
+
+my.theme = theme(legend.position = 'top', axis.text.x = element_text(angle = 45, hjust = 1))
+pl = list()
+pl[[1]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = astrocytes, color = Diagnosis)) + geom_boxplot() + ggtitle('Astrocytes') + my.theme
+pl[[2]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = endothelial, color = Diagnosis)) + geom_boxplot() + ggtitle('Endothelial') + my.theme
+pl[[3]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = microglia, color = Diagnosis)) + geom_boxplot() + ggtitle('Microglia') + my.theme
+pl[[4]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = neurons, color = Diagnosis)) + geom_boxplot() + ggtitle('Neurons') + my.theme
+pl[[5]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = myeloid, color = Diagnosis)) + geom_boxplot() + ggtitle('Myeloid') + my.theme
+pl[[6]] = ggplot(NEW.COVARIATES, aes(x = BrainRegion, y = oligodendrocytes, color = Diagnosis)) + geom_boxplot() + ggtitle('Oligodendrocytes') + my.theme
+multiplot(plotlist = pl, cols = 3)
+
+# Get design matrix
+DESIGN = getDesignMatrix(NEW.COVARIATES[, c(adjust.covars, "astrocytes", "endothelial", "microglia", "myeloid", "neurons", "oligodendrocytes", "OPC"), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c()
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0('BrainRegion.Diagnosis', region, '_AD-BrainRegion.Diagnosis', region, '_CONTROL'))
+  cntr = c(cntr, cnt)
+}
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+cnames = c()
+for (region in  c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  cnt = c(paste0(region, '_AD_CELLFRAC-', region, '_CONTROL_CELLFRAC'))
+  cnames = c(cnames, cnt)
+}
+colnames(contrast) = cnames
+
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('Gene.ID')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(Gene.ID, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(Gene.ID, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(Gene.ID))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.CellFraction = DE))
+all.fit = c(all.fit, list(Diagnosis.CellFraction = FIT))
 ```
 
 ### Gene set enrichment analysis
 Using Fisher's exact test for gene set enrichment analysis
-```{r enrich.de, fig.height=16, fig.width=16, eval = F}
-diffexp.genes = DE %>%
-  dlply(.(Comparison, Tissue), .fun = function(x){
-    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
-    tmp = tmp[!is.na(tmp)]
+```{r enrich.de, fig.height=16, fig.width=16}
+# Perform gene set enrichment analysis using wilcox test from limma
+diffexp.genes = all.diff.exp %>%
+  data.table::rbindlist(idcol='Model', use.names = T, fill = T) %>%
+  dplyr::mutate(Direction = sign(logFC),
+                Direction = factor(Direction, labels = c('-1' = 'DOWN', '1' = 'UP')))
+
+geneSet.test = diffexp.genes %>%
+  plyr::dlply(.(Model, Comparison, Direction), .fun = function(x){
+    unique(x$hgnc_symbol[x$adj.P.Val <= 0.05])
   })
-diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
+  
+statistics.test = diffexp.genes %>%
+  plyr::dlply(.(Model, Comparison), .fun = function(x){
+    tmp = dplyr::select(x, hgnc_symbol, adj.P.Val) %>% dplyr::group_by(hgnc_symbol) %>% dplyr::top_n(1,-adj.P.Val) %>% unique() %>% as.data.frame()
+    rownames(tmp) = tmp$hgnc_symbol
+    return(tmp)
+  })
+names(statistics.test) = paste(names(statistics.test),'UP',sep = '.')
+statistics.test1 = statistics.test
+names(statistics.test1) = gsub('.UP','.DOWN', names(statistics.test1))
+statistics.test = c(statistics.test, statistics.test1)
+
 backgroundGenes = unique(DE$hgnc_symbol)
 
 # Download all related genesets from synapse
-geneset.files = synQuery('select * from file where parentId == "syn3240583"')
-ALL_USED_IDs = c(ALL_USED_IDs, geneset.files$file.id)
-genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.files){
-  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource]) %>%
-    dlply(.(Name), .fun = function(x){
-      str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
-    })
-  }, geneset.files) %>%
+load(synGet('syn4867851')@filePath)
+all.used.ids = c(all.used.ids, 'syn4867851')
+geneSet.ref = GeneSets[c('KEGG_2016', 'GO_Biological_Process_2015', 'Reactome_2016', 'WikiPathways_2016')] %>%
   CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
   do.call(c,.)
 
 # Perform enrichment analysis
-enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
-   ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
-     CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
-    }, x, backgroundGenes, .parallel = TRUE) %>%
-    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
-}, genesets.to.test, backgroundGenes) %>%
-  rbindlist(idcol = 'Comparison', use.names = T, fill = T) %>%
-  tidyr::separate(Comparison, c('Name', 'Region'), sep = '\\.') %>%
-  dplyr::rename(Comparison = Name, Category = .id)
+enrichment.results = mapply(function(gs.test, st.test, gs.ref){
+  plyr::ldply(gs.ref, .fun = function(y, gs.test, st.test){
+    tmp = CovariateAnalysis::fisherEnrichment(gs.test, y, st.test$hgnc_symbol)
+    tmp$wilcox.pval = limma::geneSetTest(which(st.test$hgnc_symbol %in% y), st.test[,'adj.P.Val'])
+    return(tmp)
+  }, gs.test, st.test, .parallel = T, .id = 'GeneSetName') %>%
+    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'),
+                  wilcox.fdr = p.adjust(wilcox.pval, method = 'fdr'))
+}, geneSet.test, statistics.test[names(geneSet.test)], 
+MoreArgs = list(geneSet.ref),
+SIMPLIFY = F) %>%
+  data.table::rbindlist(idcol = 'Comparison', use.names = T, fill = T)
 ```
 
 ### Store files in synapse
@@ -1082,6 +1179,7 @@ annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = all.used.ids, activityName = activityName, 
                       executed = thisFile, activityDescription = activityDescription)
+synChangeEntityACL(COV_OBJ@properties$id, new.racl)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
@@ -1118,33 +1216,44 @@ DM_OBJ = File('AMP_Design.tsv', name = 'Design Matrix', parentId = CODE$properti
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-
-# Store residual gene expression for network analysis
-RESIDUAL.GENE_EXPRESSION %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'AMP_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-nEXP_OBJ = File('AMP_netResidualExpression.tsv', 
-                name = 'Normalised, covariates removed residual expression (for network analysis)', 
-                parentId = CODE$properties$id)
-annotations(nEXP_OBJ) = annotations(CODE)
-annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
-nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+synChangeEntityACL(DM_OBJ@properties$id, new.racl)
 
 # Store differential expression results
-write.table(DE, file = 'AMP_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(diffexp.genes, file = 'AMP_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('AMP_DiffExpression.tsv', 
-                name = 'Differential Expression Results (BrainRegion.Diagnosis)', 
+                name = 'Differential Expression Results', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store enrichment results
+write.table(enrichment.results, file = 'AMP_EnrichmentResults.tsv', sep = '\t', row.names=F, quote=F)
+ENRICH_OBJ = File('AMP_EnrichmentResults.tsv', 
+                  name = 'GeneSet Enrichment Results', 
+                  parentId = CODE$properties$id)
+annotations(ENRICH_OBJ) = annotations(CODE)
+annotations(ENRICH_OBJ)$dataSubType = 'enrichment'
+ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store genesets
+save(list = 'geneSet.test', file = 'AMP_DiffExpGeneSet.RData')
+DEG_OBJ = File('AMP_DiffExpGeneSet.RData',
+               name = 'Differential Expression Gene Set', 
+               parentId = CODE$properties$id)
+annotations(DEG_OBJ) = annotations(CODE)
+annotations(DEG_OBJ)$dataSubType = 'diffExpGS'
+DEG_OBJ = synStore(DEG_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+synDeleteEntityACL(CODE@properties$id)
 ```
 |  *Results*                                  |  *SynapseID*                     |
-|  -----------------------------------------  |   ---------                      |
+|  -----------------------------------------  |   ----------------------------   |
 |  Covariates                                 |  `r COV_OBJ$properties$id`       |
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
-|  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
+|  Enrichment Results                         |  `r ENRICH_OBJ$properties$id`    |
+|  Differentially Expressed Gene Sets         |  `r DEG_OBJ$properties$id`       |
