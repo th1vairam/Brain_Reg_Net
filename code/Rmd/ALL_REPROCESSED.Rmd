@@ -84,7 +84,7 @@ covariates$ROSMAP = covariates$ROSMAP %>%
   dplyr::mutate(SampleID = as.character(SampleID),
                 BrainRegion = 'DLPFC',
                 BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')),
-                msex = factor(msex, labels = c('1'='MALE','0'='FEMALE')),
+                msex = factor(msex, levels = c('1', '0'), labels = c('1'='MALE','0'='FEMALE')),
                 Batch = factor(Batch)) %>%
   dplyr::rename(Gender = msex, RIN = RINcontinuous, AOD = age_death, PMI = pmi) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, Batch, Gender, AOD, PMI, RIN, PCT_PF_READS_ALIGNED, 
@@ -94,7 +94,7 @@ covariates$ROSMAP$individualIdentifier = factor(paste0('ROSMAPpseudoid',1:dim(co
 covariates$MSBB = covariates$MSBB %>%
   dplyr::mutate(SampleID = as.character(SampleID),
                 individualIdentifier = factor(paste0('BB',individualIdentifier)),
-                SEX = factor(SEX, labels = c('M'='MALE','F'='FEMALE')),
+                SEX = factor(SEX, levels = c('M', 'F'), labels = c('M'='MALE','F'='FEMALE')),
                 batch = factor(batch),
                 PMI = PMI/60) %>%
   dplyr::rename(Batch = batch, Gender = SEX) %>%
@@ -104,7 +104,7 @@ covariates$MSBB = covariates$MSBB %>%
 covariates$MAYO = covariates$MAYO %>%
   dplyr::mutate(SampleID = as.character(SampleID),
                 Donor_ID = factor(paste0('MAYO', Donor_ID)),
-                Gender = factor(Gender, labels = c('M'='MALE','F'='FEMALE')),
+                Gender = factor(Gender, levels = c('M', 'F'), labels = c('M'='MALE','F'='FEMALE')),
                 Batch = factor(Source)) %>%
   dplyr::rename(individualIdentifier = Donor_ID, AOD = AgeAtDeath) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, individualIdentifier, Batch, Gender, AOD, PMI, RIN, 
@@ -227,7 +227,7 @@ p[[3]] = p[[3]] + ggtitle('PMI (in hours)') + my.theme
 
 # Intronic Rate
 p[[4]] = ggplot(COVARIATES, aes(x = BrainRegion, y = PCT_INTRONIC_BASES, color = Study, fill = Diagnosis)) + geom_boxplot()
-p[[4]] = p[[4]] + ggtitle('Intronic Factions') + my.theme
+p[[4]] = p[[4]] + ggtitle('Intronic Fractions') + my.theme
 
 # IntergenicRate
 p[[5]] = ggplot(COVARIATES, aes(x = BrainRegion, y = PCT_INTERGENIC_BASES, color = Study, fill = Diagnosis)) + geom_boxplot()
@@ -300,9 +300,11 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   dplyr::mutate(label = SampleID)
 plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
+sdev = round((PC$sdev^2/sum(PC$sdev^2)) * 100, 0)
+  
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
-p <- p + theme_bw() + theme(legend.position="top")
+p <- p + theme_bw() + theme(legend.position="top") + ylab(paste0('PC1(',sdev[2],'%)')) + xlab(paste0('PC1(',sdev[1],'%)'))
 p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
