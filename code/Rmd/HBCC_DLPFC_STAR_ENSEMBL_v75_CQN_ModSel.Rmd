@@ -114,7 +114,7 @@ METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header
                 PercentMapped = UNIQUE_READS._Uniquely_mapped_reads_percent)
 
 # Get merged metadata
-METADATA_ID = 'syn4484273'
+METADATA_ID = 'syn2299154'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
 METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = T, check.names = F)
 
@@ -133,10 +133,14 @@ colnames(METADATA) = gsub('[^[:alnum:]]','_',colnames(METADATA))
 
 METADATA = METADATA %>%
   dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
+                DLPFC_RNA_report__Library_Batch, DLPFC_RNA_report__Ribozero_Batch, DLPFC_RNA_report__Flowcell_Batch,
                 DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, 
                 DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_, DLPFC_RNA_report__Ribozero_Batch, 
                 DLPFC_RNA_report__Library_Batch, DLPFC_RNA_report__Flowcell_Batch) %>%
-  dplyr::rename(PMI = PMI__in_hours_, 
+  dplyr::rename(LibraryBatch = DLPFC_RNA_report__Library_Batch, 
+                RibozeroBatch = DLPFC_RNA_report__Ribozero_Batch, 
+                FlowcellBatch = DLPFC_RNA_report__Flowcell_Batch,
+                PMI = PMI__in_hours_, 
                 IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
                 SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
                 RIN = DLPFC_RNA_isolation__RIN, 
@@ -179,10 +183,10 @@ writeLines(paste('Following',length(METADATA$SampleID[is.na(METADATA$TotalReads)
 writeLines(paste(METADATA$SampleID[is.na(METADATA$TotalReads)], collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!is.na(TotalReads)) 
 
-writeLines('Some control samples with Age of death less than 21 are removed')
-writeLines(paste('Following',length(METADATA$SampleID[METADATA$Age_of_Death <= 21]), 'samples are removed:'))
-writeLines(paste(METADATA$SampleID[METADATA$Age_of_Death <= 21], collapse = ', '))
-METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 21)
+writeLines('Some control samples with Age of death less than 18 are removed')
+writeLines(paste('Following',length(METADATA$SampleID[METADATA$Age_of_Death <= 18]), 'samples are removed:'))
+writeLines(paste(METADATA$SampleID[METADATA$Age_of_Death <= 18], collapse = ', '))
+METADATA <- METADATA  %>% dplyr::filter(Age_of_Death >= 18)
 ```
 
 ```{r preprocess.data1, results='asis'}
@@ -359,6 +363,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
   dplyr::mutate(label = SampleID)
 plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
+plotdata$label[plotdata$Age_of_Death <= 21] = plotdata$SampleID[plotdata$Age_of_Death <= 21]
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Gender, shape=Dx, size=Age_of_Death))
