@@ -807,14 +807,14 @@ DE = DE %>%
   
 DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
-tmp = de.hbcc %>%
+tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
   dplyr::select(ensembl_gene_id, Comparison, Tissue1, logFC) %>%
   group_by(Comparison, Tissue1) %>%
   dplyr::summarise(FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])),
                    FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])))
 
-tmp1 = de.hbcc %>%
+tmp1 = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
   dplyr::select(ensembl_gene_id, Comparison, Tissue1, logFC) %>%
   group_by(Comparison, Tissue1) %>%
@@ -853,7 +853,7 @@ multiplot(plotlist = pl, cols = 3)
 ### Gene set enrichment analysis
 Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
-diffexp.genes = de.hbcc %>%
+diffexp.genes = DE %>%
   dplyr::mutate(Direction = sign(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP'))) %>%
   dlply(.(Comparison, Tissue1, Direction), .fun = function(x){

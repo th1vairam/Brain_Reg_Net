@@ -11,8 +11,8 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
-                                 parentId ="syn7501880",
-                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection 1)')
+                                 parentId ="syn9846623",
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -58,7 +58,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn7501880';
+parentId = 'syn9846623';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
 
@@ -963,7 +963,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection 1)", parentId = parentId)
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
