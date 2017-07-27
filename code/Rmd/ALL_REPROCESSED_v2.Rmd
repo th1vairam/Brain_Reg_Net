@@ -1,5 +1,5 @@
 ---
-title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and BIC based model selection)"
+title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and BIC based model selection with study regressed apriori)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -10,9 +10,9 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./ALL_REPROCESSED.Rmd",
+knit2synapse::knitToFolderEntity(file = "./ALL_REPROCESSED_v2.Rmd",
                                  parentId = "syn8672415",
-                                 entityName = 'ALL Reprocessed RNASeq (Normalised)')
+                                 entityName = 'ALL Reprocessed RNASeq (Normalised) - study effects removed')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -62,7 +62,7 @@ parentId = 'syn8672415';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of reprocessed rnaseq from all 7 brain regions';
 
-thisFileName <- 'ALL_REPROCESSED.Rmd'
+thisFileName <- 'ALL_REPROCESSED_v2.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='AMPAD_reprocessing')
@@ -459,14 +459,11 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ### Model Identification
 ```{r fxn}
 # Function to fit a mixed effect model and return BIC
-fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, cnt, covars){
+fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, voomWeights, covars){
   
   # Get design matrix
   designMat = getDesignMatrix(covars[colnames(lcpm), varsToFit, drop=F], Intercept = F)
   designMat = designMat$design[,linColumnFinder(designMat$design)$indepCols]
-  
-  # Estimate voom weights
-  voomWeights = limma::voom(cnt[rownames(lcpm),colnames(lcpm)], design = designMat, plot=F)$weights
   
   modelBIC = foreach::foreach(i = 1:dim(lcpm)[1],
                               .combine = rbind,
@@ -500,7 +497,7 @@ fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, cnt, covars){
   }
 
 # Function to select covariates in a step-wise regression fashion
-selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt, baseModelBIC){
+selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voomWeight, baseModelBIC){
   
   varsSelected = c()
   pkgs = c('CovariateAnalysis', 'data.table', 'dplyr', 'plyr',
@@ -509,13 +506,13 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
     allModelBIC = foreach(i = 1:length(covarsToSelect),
                           .combine = c,
                           .packages = pkgs,
-                          .export = c('fitMixedEffectModel')) %dopar% {
+                          .export = c('fitMixedEffectModel','voomWeight')) %dopar% {
                             
                             # Fit a mixed effect linear model and get all BIC
                             modelBIC = fitMixedEffectModel(c(adjustCovars, covarsToSelect[i]),
                                                            c('individualIdentifier'), 
                                                            lcpm, 
-                                                           cnt, 
+                                                           voomWeight, 
                                                            covars) %>%
                             plyr::rename(c('BIC' = covarsToSelect[i]))
                               
@@ -537,7 +534,7 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
     
     # Select variable
     tmp = nChange %>%
-      dplyr::filter(nchange > 1) %>%
+      dplyr::filter(nchange > 5) %>%
       dplyr::top_n(1, nchange)
     
     if (dim(tmp)[1] == 0){
@@ -555,22 +552,52 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
   return(varsSelected)
 }
 ```
+#### Regress out Study 
+```{r regress.study}
+# Get design matrix
+DESIGN.MAT = getDesignMatrix(COVARIATES[colnames(NEW.COUNTS), 'Study', drop=F], Intercept = F)
+DESIGN.MAT = DESIGN.MAT$design[,linColumnFinder(DESIGN.MAT$design)$indepCols]
+  
+# Estimate voom weights
+VOOM.WEIGHTS = limma::voom(NEW.COUNTS, design = DESIGN.MAT, plot=F)
+
+# Fit a linear model
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Calculate residuals
+RESIDUAL.EXPR = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
+
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.EXPR, scale.=T, center = T)
+
+# Plot first 4 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
+p <- p + theme_bw() + theme(legend.position="right")
+p
+```
 #### Phase I (clinical, ancestry and sample specific technical variables)
 ```{r phase1}
 # Fit a base model with the following covariates
 adjust.covars = c('BrainRegion.Diagnosis')
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    c('individualIdentifier'), 
-                                   CQN.GENE_EXPRESSION$E, 
-                                   NEW.COUNTS, 
+                                   RESIDUAL.EXPR, 
+                                   VOOM.WEIGHTS$weights, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
 # Iteratively identify covariates in phase I
-phase1.covars = c('Study', 'Gender', 'PMI', 'AOD', 'RIN', 'RIN2')
+phase1.covars = c('Gender', 'PMI', 'AOD', 'RIN', 'RIN2')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     NEW.COUNTS, baseModelBIC)
+                                     VOOM.WEIGHTS$weights, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
@@ -581,8 +608,8 @@ Clinical and technical variables selected in phase I are `r paste(adjust.covars,
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    c('individualIdentifier'), 
-                                   CQN.GENE_EXPRESSION$E, 
-                                   NEW.COUNTS, 
+                                   RESIDUAL.EXPR, 
+                                   VOOM.WEIGHTS$weights, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
@@ -590,7 +617,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
 phase2.covars = c('Batch')
 vars.selected = selectCovarsToAdjust(phase2.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     NEW.COUNTS, baseModelBIC)
+                                     VOOM.WEIGHTS$weights, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
@@ -601,8 +628,8 @@ Clinical, technical and batch variables selected after phase I and II of model i
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    c('individualIdentifier'), 
-                                   CQN.GENE_EXPRESSION$E, 
-                                   NEW.COUNTS, 
+                                   RESIDUAL.EXPR, 
+                                   VOOM.WEIGHTS$weights, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
@@ -610,7 +637,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
 phase3.covars = c("PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 vars.selected = selectCovarsToAdjust(phase3.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     NEW.COUNTS, baseModelBIC)
+                                     VOOM.WEIGHTS$weights, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
