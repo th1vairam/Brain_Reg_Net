@@ -61,7 +61,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn9872607';
+parentId = "syn7501880";
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
 
@@ -644,12 +644,12 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
   dplyr::mutate(label = SampleID)
-plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
+# plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
-p <- p + geom_text(aes(label= label), size=4, hjust=0)
+# p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 ```
 
