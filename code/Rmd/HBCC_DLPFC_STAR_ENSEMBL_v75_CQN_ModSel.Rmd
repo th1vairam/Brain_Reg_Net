@@ -778,15 +778,18 @@ gc()
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=10, fig.width=15}
 # Fit contrast
-contrast = makeContrasts(contrasts=c("Dx.TissueBP_DLPFC-Dx.TissueControl_DLPFC",
+contrast = makeContrasts(contrasts=c("Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
-                                     "Dx.TissueSCZ_DLPFC-Dx.TissueBP_DLPFC"),
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
+                                     "Dx.TissueOther_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_ACC-Dx.TissueOther_ACC"),
                          levels = colnames(ADJUSTED.FIT$coefficients))
 FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:3, function(i, FIT){
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
   topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
