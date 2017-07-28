@@ -11,7 +11,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_SVA.Rmd",
-                                 parentId = "syn9872607",
+                                 parentId = "syn7501880",
                                  entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - SVA')
 ```
 
@@ -62,7 +62,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = "syn9872607";
+parentId = "syn7501880";
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
 
@@ -632,12 +632,12 @@ source('../R/irwsva.build.R')
 source('../R/f.pvalue.R')
 
 # Compute actual variance of all principal components
-tmp = svd(RESIDUAL.GENE_EXPRESSION %>% changeNAtoZero)
+tmp = svd(RESIDUAL.GENE_EXPRESSION)
 actual.var = tmp$d^2/sum(tmp$d^2)
 
 # Compute permuted variance of all principal components
 permuted.var = foreach(i = 1:20, .combine = rbind, .packages = c('dplyr')) %dopar% {
-  tmp.residual = t(apply(RESIDUAL.GENE_EXPRESSION %>% changeNAtoZero, 1, sample, replace = FALSE))
+  tmp.residual = t(apply(RESIDUAL.GENE_EXPRESSION, 1, sample, replace = FALSE))
   tmp = svd(tmp.residual)
   permuted.var = tmp$d^2/sum(tmp$d^2)
 }
@@ -656,12 +656,12 @@ p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
 p
 
 # Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E %>% changeNAtoZero, MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
+SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E, MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
 # Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
+VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
                         design=cbind(MODEL1, SURR.VAR), plot=F)
 VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 
@@ -669,7 +669,7 @@ VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$Individual_ID)
 
 # Re-estimate voom weights
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts %>% changeNAtoZero, 
+VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
                         design = cbind(MODEL1, SURR.VAR), plot=F,
                         block = COVARIATES$Individual_ID, 
                         correlation = correlation$cor)
@@ -1172,7 +1172,7 @@ ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
-|  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
+|  Residual Expression (for eQTL analysis)    |  `r eEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
 
