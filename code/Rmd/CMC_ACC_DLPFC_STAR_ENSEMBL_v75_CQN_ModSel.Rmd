@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId ="syn9846623",
-                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model')
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Dense Model')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -642,7 +642,7 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
       dplyr::group_by(ModelName) %>%
       dplyr::summarise(better = sum(diff >= 5), 
                        worse = sum(diff <= -5)) %>%
-      dplyr::mutate(nchange = better - worse)
+      dplyr::mutate(nchange = better)
     
     print(nChange)
     
@@ -963,7 +963,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model", parentId = parentId)
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Dense Model", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
