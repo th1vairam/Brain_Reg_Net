@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId ="syn9846623",
-                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model')
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Dense Model')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -642,7 +642,7 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt
       dplyr::group_by(ModelName) %>%
       dplyr::summarise(better = sum(diff >= 5), 
                        worse = sum(diff <= -5)) %>%
-      dplyr::mutate(nchange = better - worse)
+      dplyr::mutate(nchange = better)
     
     print(nChange)
     
@@ -846,21 +846,21 @@ FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
 
 # Get differnetial expression
-DE = lapply(1:6, function(i, FIT){
-  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  limma::topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
 names(DE) = colnames(contrast)
 
 DE = DE %>% 
-  rbindlist(idcol = 'Comparison') %>%
+  data.table::rbindlist(idcol = 'Comparison') %>%
   dplyr::mutate(Comparison = gsub('Dx.Tissue','',Comparison),
                 Direction = logFC/abs(logFC),
                 Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
                 Direction = as.character(Direction)) %>%
   tidyr::separate(Comparison, into = c('ref.state','to.state'), sep = '-') %>%
-  tidyr::separate(ref.state, into = c('Dx1','Tissue'), sep = '_') %>%
-  tidyr::separate(to.state, into = c('Dx2','Tissue'), sep = '_') %>%
+  tidyr::separate(ref.state, into = c('Dx1','Tissue1'), sep = '_') %>%
+  tidyr::separate(to.state, into = c('Dx2','Tissue2'), sep = '_') %>%
   tidyr::unite(Comparison, Dx1, Dx2, sep = '_vs_') %>%
   left_join(Ensemble2HGNC) %>%
   left_join(GENE.LEN)
@@ -868,21 +868,21 @@ DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
 
 tmp = DE %>%
   dplyr::filter(adj.P.Val <= 0.05) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  group_by(Comparison, Tissue1) %>%
   dplyr::summarise(FDR_0_05 = length(unique(ensembl_gene_id)))
 
 tmp1 = DE %>%
   dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
-  dplyr::select(ensembl_gene_id, Comparison, Tissue) %>%
-  group_by(Comparison, Tissue) %>%
+  dplyr::select(ensembl_gene_id, Comparison, Tissue1) %>%
+  group_by(Comparison, Tissue1) %>%
   dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id)))
 
 kable(full_join(tmp,tmp1))
 
 p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
 p = p + scale_color_manual(values = c('green','grey','red'))
-p = p + facet_grid(Tissue+.~Comparison, scales = 'fixed')
+p = p + facet_grid(Tissue1+.~Comparison, scales = 'fixed')
 p
 ```
 
@@ -911,7 +911,7 @@ multiplot(plotlist = pl, cols = 3)
 Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
 diffexp.genes = DE %>%
-  dlply(.(Comparison, Tissue), .fun = function(x){
+  dlply(.(Comparison, Tissue1), .fun = function(x){
     tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05] %>% unique
     tmp = tmp[!is.na(tmp)]
   })
@@ -963,7 +963,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Sparse Model", parentId = parentId)
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - Dense Model", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
@@ -1052,3 +1052,6 @@ ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 |  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
+
+### Source Code
+[R markdown](`r thisFile`)
