@@ -10,9 +10,9 @@ library(knit2synapse)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_SVA.Rmd",
+knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_MSSM.Rmd",
                                  parentId = "syn7501880",
-                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - SVA')
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - MSSM')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -36,7 +36,6 @@ library(edgeR)
 library(biomaRt)
 library(RColorBrewer)
 library(cqn)
-library(sva)
 
 library(synapseClient)
 library(knitr)
@@ -66,7 +65,7 @@ parentId = "syn7501880";
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
 
-thisFileName <- 'CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_SVA.Rmd'
+thisFileName <- 'CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_MSSM.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
@@ -135,7 +134,7 @@ METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = T, check.na
 
 ## Metadata with specific information for RNASeq processing
 metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", "Dx", 
-                          
+                      
                           "ACC_RNA_isolation: Exclude?", "ACC_RNA_isolation: Sample RNA ID",
                           "ACC_RNA_isolation: RIN", "ACC_RNA_report: Exclude?", 
                           
@@ -181,6 +180,7 @@ METADATA = rbindlist(list(METADATA_ACC, METADATA_DLPFC), use.names = T, fill = T
   join_all %>%
   dplyr::mutate(LibraryBatch = as.factor(LibraryBatch)) %>%
   left_join(ANCESTRY) %>%
+  dplyr::filter(Institution == 'MSSM') %>%
   unique
 
 # Replace AFF and BP samples as other
@@ -257,7 +257,7 @@ rownames(GENE.GC.CONT) = GENE.GC.CONT$ensembl_gene_id
 ### Covariates clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c('Individual_ID', "Institution", "Gender", "LibraryBatch", "Dx.Tissue", "RibozeroBatch", "FlowcellBatch")
+FactorCovariates <- c("Individual_ID", "Gender", "LibraryBatch", "Dx.Tissue", "RibozeroBatch", "FlowcellBatch")
 ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
                     "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
                     "PercentAligned", "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
@@ -452,7 +452,7 @@ Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCE
 Based on the expression pattern following `r length(indToRemove)` samples were tagged as outliers based on their mrna expression: `r paste(indToRemove, collapse = ', ')` 
 
 Distribution of samples are:
-  `r kable(tmp)`
+`r kable(tmp)`
 
 ### Winsorise counts (Gene outliers in samples)
 ```{r winsorise.data}
@@ -583,27 +583,27 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 ### Normalisation
-Based on different model selection methodology (as seen here syn8468116, syn9772932, and syn9774491), following variables are used as covariates: Institution, Gender, RIN, and IntronicRate
+Based on different model selection methodology (as seen here syn8468116, syn9772932, and syn9774491), following variables are used as covariates: Gender, RIN, and IntronicRate
 
 NOTE: Dx.Tissue is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue), and Individual\_ID is chosen as the random effect
 
 ```{r custom.normalisation, results='asis'}
 # Primary variable of interest
-postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'RIN', 'IntronicRate')
+postAdjustCovars = c('Dx.Tissue', 'Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
                  'as fixed effects and Individual_ID is chosen as random effect'))
-
+  
 # Post adjusted design matrix
 DESIGN = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
 DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
-
+  
 # Estimate voom weights
 VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design = DESIGN)
 VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
-
+  
 # Re-calculate voom weights with correlation of random effects
 VOOM.GENE_EXPRESSION = voom(NEW.COUNTS,   
                             design = DESIGN, plot=F,
@@ -613,94 +613,29 @@ VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
 ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
-
+  
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
-```
-
-### SVA Adjustments for eQTL analysis
-Conditioned on primary variable (Dx.Tissue) and covariates estimate surrogate variables using SVA package
-```{r sva}
-# Get (null) design matrix
-MODEL0 = DESIGN[,-grep('Dx.Tissue',colnames(DESIGN))] # Get null model by removing variable of interest
-MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
-MODEL1 = DESIGN
-MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
-
-# Source modified functions from sva package
-source('../R/irwsva.build.R')
-source('../R/f.pvalue.R')
-
-# Compute actual variance of all principal components
-tmp = svd(RESIDUAL.GENE_EXPRESSION)
-actual.var = tmp$d^2/sum(tmp$d^2)
-
-# Compute permuted variance of all principal components
-permuted.var = foreach(i = 1:20, .combine = rbind, .packages = c('dplyr')) %dopar% {
-  tmp.residual = t(apply(RESIDUAL.GENE_EXPRESSION, 1, sample, replace = FALSE))
-  tmp = svd(tmp.residual)
-  permuted.var = tmp$d^2/sum(tmp$d^2)
-}
-permuted.var = apply(permuted.var, 2, mean)
-NUM.SV = sum(actual.var >= permuted.var[1])
-
-# Plot variance components
-var.comp = data.frame(component = 1:length(actual.var), 
-                      residual = actual.var, 
-                      permuted.residual = permuted.var) %>%
-  tidyr::gather(data, value, -component)
-p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.2)), aes(x = component, y = value, color = data)) + geom_point()
-p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
-p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
-p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
-p
-
-# Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E, MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
-colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
-rownames(SURR.VAR) = rownames(MODEL1)
-
-# Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
-                        design=cbind(MODEL1, SURR.VAR), plot=F)
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-
-# Calculate correlation values of random effects
-correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$Individual_ID)
-
-# Re-estimate voom weights
-VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
-                        design = cbind(MODEL1, SURR.VAR), plot=F,
-                        block = COVARIATES$Individual_ID, 
-                        correlation = correlation$cor)
-VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-
-# Fit linear model using new weights and new design
-VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
 ```
 
 ### Residual calculation
 Calculate weighted residuals and add back "Dx.Tissue" to the residuals
 ```{r varsToAddBack}
-# Residuals after normalisation
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
-
 # Add variable of interest back to the residuals
 varsToAddIn = grep("Dx.Tissue", colnames(DESIGN), value = T)
-RESIDUAL.SVA.GENE_EXPRESSION = RESIDUAL.SVA.GENE_EXPRESSION + 
-  VOOM.SVA.FIT$coefficients[,varsToAddIn] %*% t(VOOM.SVA.FIT$design[,varsToAddIn])
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
+  ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(DESIGN[,varsToAddIn])
 ```
 Coexpression of genes 
 ```{r coexp2, cache=FALSE, fig.height=5, fig.width=5}
-cr = cor(t(RESIDUAL.SVA.GENE_EXPRESSION))
+cr = cor(t(RESIDUAL.GENE_EXPRESSION))
 hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Clustering residual data
 ```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.SVA.GENE_EXPRESSION, scale.=T, center = T)
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
 
 # Plot first 4 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -724,7 +659,7 @@ p
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue','Institution')])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tree = hclust(as.dist(t(RESIDUAL.SVA.GENE_EXPRESSION)))
+tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -851,16 +786,16 @@ postAdjustCovars = c('Dx.Tissue.Gender', 'Institution', 'RIN', 'IntronicRate')
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
                  'as fixed effects and Individual_ID is chosen as random effect'))
-
+  
 # Post adjusted design matrix
 DESIGN1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
 DESIGN1 = DESIGN1[,linColumnFinder(DESIGN1)$indepCols]
-
+  
 # Estimate voom weights
 VOOM.GENE_EXPRESSION1 = voom(NEW.COUNTS, design = DESIGN1)
 VOOM.GENE_EXPRESSION1$E = CQN.GENE_EXPRESSION$E
 correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION1, block = COVARIATES$Individual_ID)
-
+  
 # Re-calculate voom weights with correlation of random effects
 VOOM.GENE_EXPRESSION1 = voom(NEW.COUNTS,   
                              design = DESIGN1, plot=F,
@@ -938,12 +873,12 @@ postAdjustCovars = c('Tissue', 'Dx', 'Institution', 'Gender', 'RIN', 'IntronicRa
 # Post adjusted design matrix
 DESIGN2 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
 DESIGN2 = DESIGN2[,linColumnFinder(DESIGN2)$indepCols]
-
+  
 # Estimate voom weights
 VOOM.GENE_EXPRESSION2 = voom(NEW.COUNTS, design = DESIGN2)
 VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
 correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION2, block = COVARIATES$Individual_ID)
-
+  
 # Re-calculate voom weights with correlation of random effects
 VOOM.GENE_EXPRESSION2 = voom(NEW.COUNTS,   
                              design = DESIGN2, plot=F,
@@ -1018,14 +953,14 @@ diffexp.genes.up = all.diff.exp %>%
   dlply(.(Comparison), .fun = function(x){
     tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC > 0] %>% unique
     tmp = tmp[!is.na(tmp)]
-    })
+  })
 names(diffexp.genes.up) = paste(names(diffexp.genes.up), 'UP', sep = '.')
 
 diffexp.genes.down = all.diff.exp %>%
   dlply(.(Comparison), .fun = function(x){
     tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC < 0] %>% unique
     tmp = tmp[!is.na(tmp)]
-    })
+  })
 names(diffexp.genes.down) = paste(names(diffexp.genes.down), 'DOWN', sep = '.')
 
 diffexp.genes = c(diffexp.genes.up, diffexp.genes.down)
@@ -1039,21 +974,22 @@ genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.
   tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource]) %>%
     dlply(.(Name), .fun = function(x){
       str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
-      })
+    })
   }, geneset.files) %>%
   CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
   do.call(c,.)
 
 # Perform enrichment analysis
 enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
-  ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
-    CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
+   ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
+     CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
     }, x, backgroundGenes, .parallel = TRUE) %>%
     dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
-  }, genesets.to.test, backgroundGenes) %>%
+}, genesets.to.test, backgroundGenes) %>%
   rbindlist(idcol = 'Comparison', use.names = T, fill = T) %>%
   dplyr::rename(Category = .id)
 ```
+
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Set annotations
@@ -1071,11 +1007,12 @@ all.annotations = list(
    
   normalizationStatus	= TRUE,
   
-  normalizationType	= 'CQN, SVA'
+  normalizationType	= 'CQN',
+  institution = 'MSSM'
 )
 
 # Code
-CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - SVA", parentId = parentId)
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - MSSM", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 
@@ -1126,28 +1063,19 @@ annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
-# Store surrogate variable matrix
-SURR.VAR %>%
-  rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'CMC_ACC_DLPFC_SurrVar.tsv', sep = '\t', row.names=F, quote=F)
-DM1_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
-annotations(DM1_OBJ) = annotations(CODE)
-annotations(DM1_OBJ)$dataSubType = 'surrVar'
-DM1_OBJ = synStore(DM1_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
-
-# Store residual gene expression for eqtl analysis
-RESIDUAL.SVA.GENE_EXPRESSION %>%
+# Store residual gene expression for network analysis
+RESIDUAL.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_eqtlResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-eEXP_OBJ = File('CMC_ACC_DLPFC_eqtlResidualExpression.tsv', 
-                name = 'Normalised, covariates removed residual expression (for eqtl analysis)', 
+  write.table(file = 'CMC_ACC_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+nEXP_OBJ = File('CMC_ACC_DLPFC_netResidualExpression.tsv', 
+                name = 'Normalised, covariates removed residual expression (for network analysis)', 
                 parentId = CODE$properties$id)
-annotations(eEXP_OBJ) = annotations(CODE)
-annotations(eEXP_OBJ)$dataSubType = 'residualGeneExpForeQTLAnlz'
-eEXP_OBJ = synStore(eEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+annotations(nEXP_OBJ) = annotations(CODE)
+annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
+nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(DE, file = 'CMC_ACC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+write.table(all.diff.exp, file = 'CMC_ACC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('CMC_ACC_DLPFC_DiffExpression.tsv', 
                 name = 'Differential Expression Results (Dx.Tissue)', 
                 parentId = CODE$properties$id)
@@ -1172,7 +1100,7 @@ ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
-|  Residual Expression (for eQTL analysis)    |  `r eEXP_OBJ$properties$id`      |
+|  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
 |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
 |  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
 
