@@ -280,7 +280,7 @@ ContCovariates = c(ContCovariates, 'RIN2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
 ```{r covariates.correlation, fig.width=10, fig.height=8}
-COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
+COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES[,setdiff(colnames(COVARIATES), 'Institution')], PVAL = 0.05)
 tmp = COVARIATES.CORRELATION$ESTIMATE
 tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
 h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate')
@@ -680,16 +680,11 @@ Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=15, fig.width=20}
 # Fit contrast
 contrast = makeContrasts(contrasts=c("Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
-                                     "Dx.TissueSCZ_ACC-Dx.TissueOther_ACC",
-                                     "Dx.TissueOther_ACC-Dx.TissueControl_ACC",
                                      
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
-                                     "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
-                                     "Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
                                      
                                      "Dx.TissueSCZ_DLPFC-Dx.TissueSCZ_ACC",
                                      "Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",
-                                     "Dx.TissueOther_DLPFC-Dx.TissueOther_ACC",
                                      
                                      "Dx.TissueSCZ_DLPFC+Dx.TissueSCZ_ACC-Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",         
                                      "Dx.TissueSCZ_DLPFC+Dx.TissueControl_DLPFC-Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
@@ -704,7 +699,7 @@ DE = lapply(1:dim(contrast)[2], function(i, FIT){
     rownameToFirstColumn('ensembl_gene_id') 
 }, FIT.CONTR) 
 names(DE) = gsub('Dx.Tissue', '', colnames(contrast))
-names(DE)[10:12] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC', 'ALL_ALL-ALL_ALL')
+names(DE)[5:7] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC', 'ALL_ALL-ALL_ALL')
 
 DE = DE %>% 
   rbindlist(idcol = 'Comparison') %>%
@@ -868,10 +863,10 @@ Genes that are differentially expressed at an FDR <= 0.05 are
 COVARIATES = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue')) %>%
   dplyr::mutate(Dx = factor(Dx, levels = c('SCZ', 'Control', 'Other')),
                 Tissue = factor(Tissue))
-postAdjustCovars = c('Tissue', 'Dx', 'Institution', 'Gender', 'RIN', 'IntronicRate')
+postAdjustCovars = c('Tissue', 'Dx', 'Gender', 'RIN', 'IntronicRate')
 
 # Post adjusted design matrix
-DESIGN2 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN2 = getDesignMatrix(droplevels(COVARIATES[,postAdjustCovars,drop=F]),Intercept = T)$design
 DESIGN2 = DESIGN2[,linColumnFinder(DESIGN2)$indepCols]
   
 # Estimate voom weights
@@ -890,9 +885,9 @@ VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
 ADJUSTED.FIT2 = lmFit(VOOM.GENE_EXPRESSION2)
 
 # Fit contrast
-contrast = makeContrasts(contrasts=c("TissueACC-TissueDLPFC",
-                                     "DxSCZ-DxControl",
-                                     "GenderFemale"),
+contrast = makeContrasts(contrasts=c("TissueDLPFC",
+                                     "DxControl",
+                                     "GenderMale"),
                          levels = colnames(ADJUSTED.FIT2$coefficients))
 FIT.CONTR2 = contrasts.fit(ADJUSTED.FIT2, contrasts=contrast)
 FIT.CONTR2 = eBayes(FIT.CONTR2)
