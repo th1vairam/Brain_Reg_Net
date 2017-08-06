@@ -184,7 +184,7 @@ METADATA = rbindlist(list(METADATA_ACC, METADATA_DLPFC), use.names = T, fill = T
   unique
 
 # Replace AFF and BP samples as other
-levels(METADATA$Dx) = c("Control", "SCZ")
+levels(METADATA$Dx) = c("Other", "Other", "Control", "SCZ")
 ```
 
 ### Data preprocessing
