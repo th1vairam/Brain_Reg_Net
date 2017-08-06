@@ -261,7 +261,7 @@ COVARIATES$RIN2 = COVARIATES$RIN^2
 ContCovariates = c(ContCovariates, 'RIN2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
-```{r covariates.correlation, fig.width=10, fig.height=8}
+```{r covariates.correlation, fig.width=15, fig.height=15}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 tmp = COVARIATES.CORRELATION$ESTIMATE
 tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
@@ -437,7 +437,7 @@ Initial library normalisation usign cqn
 # Compute offset for gene length and gc content
 CQN.GENE_EXPRESSION = cqn(NEW.COUNTS, 
                           x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
-                          lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length'],
+                          lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
                           lengthMethod = "smooth", 
                           verbose = FALSE)
 CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
@@ -542,7 +542,7 @@ preAdjustedSigCovars = runPCAandPlotCorrelations(tmp,
 ```
 
 Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
-```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
+```{r preAdjustedSigCovars.NULL, fig.width=12, fig.height=8}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
@@ -790,9 +790,9 @@ gc()
 
 ### Differential expression analysis (SCZ - Control)
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp, fig.height=15, fig.width=20}
+```{r diffExp, fig.height=8, fig.width=8}
 # Covariates to adjust
-postAdjustCovars = adjust.covars
+postAdjustCovars = c('Dx.Tissue', 'Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', ')))
@@ -862,7 +862,7 @@ p
 ```
 
 ### Associate differential expression results with gc content, gene length and average expression
-```{r associate.de, fig.height=10, fig.width=15}
+```{r associate.de, fig.height= 6, fig.width = 12}
 pl = list()
 pl[[1]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
                  aes(x = log10(Length), y = logFC, color = Direction)) + geom_point() 
@@ -887,7 +887,7 @@ multiplot(plotlist = pl, cols = 3)
 
 ### Differential expression analysis (Gender specific SCZ - Control)
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp1, fig.height=15, fig.width=20}
+```{r diffExp1, fig.height=6, fig.width=12}
 # Covariates to adjust
 COVARIATES$Dx.Tissue.Gender = factor(paste(COVARIATES$Dx.Tissue, COVARIATES$Gender, sep = '_'))
 postAdjustCovars = c('Dx.Tissue.Gender', 'RIN', 'IntronicRate')
@@ -961,7 +961,7 @@ table(COVARIATES$Dx.Tissue, COVARIATES$Gender)
 
 ### Differential expression analysis (ACC - DLPFC, SCZ - Control, Female - Male)
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diffExp2, fig.height=16, fig.width=8}
+```{r diffExp2, fig.height=10, fig.width=6}
 postAdjustCovars = c('Dx.Tissue', 'Gender', 'RIN', 'IntronicRate')
 
 # Post adjusted design matrix
