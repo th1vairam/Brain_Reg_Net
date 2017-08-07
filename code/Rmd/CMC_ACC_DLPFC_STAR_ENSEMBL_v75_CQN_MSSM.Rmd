@@ -419,7 +419,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
 plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
@@ -526,7 +526,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
   tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
@@ -534,7 +534,7 @@ p
 Tree based clustering of samples
 ```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue")])
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Gender", "LibraryBatch", "Dx.Tissue")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E)))
@@ -648,7 +648,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
 # plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
@@ -656,7 +656,7 @@ p
 
 ```{r decompse.normalise.data2.1, fig.height=8, fig.width=12, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue','Institution')])
+COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue'),drop=F])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
@@ -667,7 +667,7 @@ WGCNA::plotDendroAndColors(tree,
                            dendroLabels = FALSE, 
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
-                           groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue','Institution')]))
+                           groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue'),drop=F]))
 ```
 
 ```{r temp1, include=F}
@@ -781,7 +781,7 @@ Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp1, fig.height=15, fig.width=20}
 # Covariates to adjust
 COVARIATES$Dx.Tissue.Gender = factor(paste(COVARIATES$Dx.Tissue, COVARIATES$Gender, sep = '_'))
-postAdjustCovars = c('Dx.Tissue.Gender', 'Institution', 'RIN', 'IntronicRate')
+postAdjustCovars = c('Dx.Tissue.Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', '),
@@ -868,10 +868,10 @@ Genes that are differentially expressed at an FDR <= 0.05 are
 COVARIATES = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue')) %>%
   dplyr::mutate(Dx = factor(Dx, levels = c('SCZ', 'Control', 'Other')),
                 Tissue = factor(Tissue))
-postAdjustCovars = c('Tissue', 'Dx', 'Institution', 'Gender', 'RIN', 'IntronicRate')
+postAdjustCovars = c('Tissue', 'Dx', 'Gender', 'RIN', 'IntronicRate')
 
 # Post adjusted design matrix
-DESIGN2 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN2 = getDesignMatrix(droplevels(COVARIATES[,postAdjustCovars,drop=F]),Intercept = T)$design
 DESIGN2 = DESIGN2[,linColumnFinder(DESIGN2)$indepCols]
   
 # Estimate voom weights
@@ -890,9 +890,9 @@ VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
 ADJUSTED.FIT2 = lmFit(VOOM.GENE_EXPRESSION2)
 
 # Fit contrast
-contrast = makeContrasts(contrasts=c("TissueACC-TissueDLPFC",
-                                     "DxSCZ-DxControl",
-                                     "GenderFemale"),
+contrast = makeContrasts(contrasts=c("TissueDLPFC",
+                                     "DxControl",
+                                     "GenderMale"),
                          levels = colnames(ADJUSTED.FIT2$coefficients))
 FIT.CONTR2 = contrasts.fit(ADJUSTED.FIT2, contrasts=contrast)
 FIT.CONTR2 = eBayes(FIT.CONTR2)
@@ -1000,15 +1000,14 @@ all.annotations = list(
   assay	 = 'RNAseq',
   
   tissueTypeAbrv	= 'DLPFC, ACC', 
-  study = 'CMC', 
+  study = 'MSSM', 
 
   organism = 'HomoSapiens',
   consortium	= 'CMC',
    
   normalizationStatus	= TRUE,
   
-  normalizationType	= 'CQN',
-  institution = 'MSSM'
+  normalizationType	= 'CQN'
 )
 
 # Code
