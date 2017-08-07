@@ -995,15 +995,14 @@ all.annotations = list(
   assay	 = 'RNAseq',
   
   tissueTypeAbrv	= 'DLPFC, ACC', 
-  study = 'CMC', 
+  study = 'PITT', 
 
   organism = 'HomoSapiens',
   consortium	= 'CMC',
    
   normalizationStatus	= TRUE,
   
-  normalizationType	= 'CQN',
-  institution = 'PITT'
+  normalizationType	= 'CQN'
 )
 
 # Code
@@ -1021,7 +1020,7 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
                       executed = thisFile, activityDescription = activityDescription)
 
 # Store filtered counts
-PROCESSED_COUNTS$filteredExprMatrix$counts %>%
+NEW.COUNTS %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
 COUNT_OBJ = File('CMC_ACC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
