@@ -712,8 +712,8 @@ CODE <- synStore(CODE)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
-write.table(COVARIATES, file = 'CMC_ACC_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('CMC_ACC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+write.table(COVARIATES, file = 'HBCC_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('HBCC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
 annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
@@ -722,8 +722,8 @@ COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName,
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('CMC_ACC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('HBCC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
 annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -731,8 +731,8 @@ COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id)
 # Store filtered counts
 NEW.COUNTS %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_nCounts.tsv', sep = '\t', row.names=F, quote=F)
-NCOUNT_OBJ = File('CMC_ACC_DLPFC_nCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_nCounts.tsv', sep = '\t', row.names=F, quote=F)
+NCOUNT_OBJ = File('HBCC_DLPFC_nCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
 annotations(NCOUNT_OBJ) = annotations(CODE)
 annotations(NCOUNT_OBJ)$dataSubType = 'estimatedCounts'
 NCOUNT_OBJ = synStore(NCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -740,8 +740,8 @@ NCOUNT_OBJ = synStore(NCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store logCPM
 CQN.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-LCOUNT_OBJ = File('CMC_ACC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('HBCC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
 annotations(LCOUNT_OBJ) = annotations(CODE)
 annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -749,8 +749,8 @@ LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store cqn offsets
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('CMC_ACC_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
+OFFSET_OBJ = File('HBCC_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
 annotations(OFFSET_OBJ) = annotations(CODE)
 annotations(OFFSET_OBJ)$dataSubType = 'offset'
 OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -758,8 +758,8 @@ OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store design matrix
 DM1$design %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
-DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('HBCC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
 annotations(DM_OBJ) = annotations(CODE)
 annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -767,8 +767,8 @@ DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store design matrix
 SURR.VAR %>%
   rownameToFirstColumn('SampleID') %>%
-  write.table(file = 'CMC_ACC_DLPFC_SurrVar.tsv', sep = '\t', row.names=F, quote=F)
-SURR.VAR_OBJ = File('CMC_ACC_DLPFC_SurrVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
+  write.table(file = 'HBCC_DLPFC_SurrVar.tsv', sep = '\t', row.names=F, quote=F)
+SURR.VAR_OBJ = File('HBCC_DLPFC_SurrVar.tsv', name = 'Surrogate Variables', parentId = CODE$properties$id)
 annotations(SURR.VAR_OBJ) = annotations(CODE)
 annotations(SURR.VAR_OBJ)$dataSubType = 'surrogateVariable'
 SURR.VAR_OBJ = synStore(SURR.VAR_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
@@ -776,8 +776,8 @@ SURR.VAR_OBJ = synStore(SURR.VAR_OBJ, activity = synGetActivity(COV_OBJ$properti
 # Store residual gene expression for network analysis
 RESIDUAL.SVA.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
-  write.table(file = 'CMC_ACC_DLPFC_eqtlResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-eEXP_OBJ = File('CMC_ACC_DLPFC_eqtlResidualExpression.tsv', 
+  write.table(file = 'HBCC_DLPFC_eqtlResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+eEXP_OBJ = File('HBCC_DLPFC_eqtlResidualExpression.tsv', 
                 name = 'Normalised, covariates removed residual expression (for eQTL analysis)', 
                 parentId = CODE$properties$id)
 annotations(eEXP_OBJ) = annotations(CODE)
