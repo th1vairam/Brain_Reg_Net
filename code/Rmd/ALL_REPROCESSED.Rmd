@@ -385,6 +385,7 @@ LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   return(x)
 }) %>% t
 CQN.GENE_EXPRESSION$E = LOG.CPM
+NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 ```
 
 ### Sample clustering
@@ -1192,6 +1193,15 @@ COUNT_OBJ = File('AMP_Counts.tsv', name = 'Counts (filtered raw)', parentId = CO
 annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store filtered counts
+NEW.COUNTS %>%
+  rownameToFirstColumn('Gene.ID') %>%
+  write.table(file = 'AMP_nCounts.tsv', sep = '\t', row.names=F, quote=F)
+NCOUNT_OBJ = File('AMP_nCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
+annotations(NCOUNT_OBJ) = annotations(CODE)
+annotations(NCOUNT_OBJ)$dataSubType = 'estimatedCounts'
+NCOUNT_OBJ = synStore(NCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
 CQN.GENE_EXPRESSION$E %>%

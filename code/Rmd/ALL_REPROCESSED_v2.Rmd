@@ -385,6 +385,7 @@ LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   return(x)
 }) %>% t
 CQN.GENE_EXPRESSION$E = LOG.CPM
+NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 ```
 
 ### Sample clustering
@@ -457,7 +458,7 @@ preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
 ### Model Identification
-```{r fxn}
+```{r fxn, eval = F}
 # Function to fit a mixed effect model and return BIC
 fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, voomWeights, covars){
   
@@ -555,7 +556,7 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voo
 #### Regress out Study 
 ```{r regress.study}
 # Get design matrix
-DESIGN.MAT = getDesignMatrix(COVARIATES[colnames(NEW.COUNTS), 'Study', drop=F], Intercept = F)
+DESIGN.MAT = getDesignMatrix(COVARIATES[colnames(NEW.COUNTS), 'Study', drop=F], Intercept = T)
 DESIGN.MAT = DESIGN.MAT$design[,linColumnFinder(DESIGN.MAT$design)$indepCols]
   
 # Estimate voom weights
@@ -581,9 +582,12 @@ p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
 p <- p + theme_bw() + theme(legend.position="right")
 p
+
+adjust.covars = c('BrainRegion.Diagnosis', 'RIN', 'RIN2', 'Gender', 'PMI', 'AOD', 'Batch', 'PCT_RIBOSOMAL_BASES', 
+                  'PCT_INTRONIC_BASES', 'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES')
 ```
 #### Phase I (clinical, ancestry and sample specific technical variables)
-```{r phase1}
+```{r phase1, eval = F}
 # Fit a base model with the following covariates
 adjust.covars = c('BrainRegion.Diagnosis')
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
@@ -604,7 +608,7 @@ adjust.covars = c(adjust.covars, vars.selected)
 Clinical and technical variables selected in phase I are `r paste(adjust.covars, collapse = ', ')`
 
 #### Phase II (batch effects)
-```{r phase2}
+```{r phase2, eval = F}
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    c('individualIdentifier'), 
@@ -624,7 +628,7 @@ adjust.covars = c(adjust.covars, vars.selected)
 Clinical, technical and batch variables selected after phase I and II of model identification are `r paste(adjust.covars, collapse = ', ')`
 
 #### Phase III (RNASeq alignment specific covariates)
-```{r phase3}
+```{r phase3, eval = F}
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
                                    c('individualIdentifier'), 
@@ -659,8 +663,10 @@ DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
 VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design=DM1$design, plot=F)
 
 # Estimate consensus correlation coefficient
-correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
-  
+# correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
+correlation = list()
+correlation$cor = 0.45
+
 # Re-calculate voom weights with correlation of random effects
 VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 
                             design=DM1$design, plot=F,
@@ -668,11 +674,11 @@ VOOM.GENE_EXPRESSION = voom(NEW.COUNTS,
                             correlation = correlation$cor)
 
 # Fit linear model using new weights and new design
-VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+VOOM.GENE_EXPRESSION$E = RESIDUAL.EXPR
 ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
   
 # Residuals after normalisation
-RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, VOOM.GENE_EXPRESSION$E)
 
 # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
 residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, COVARIATES,
@@ -769,7 +775,7 @@ VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$de
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
@@ -867,7 +873,7 @@ VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$de
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
@@ -953,7 +959,7 @@ VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$de
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
@@ -1045,7 +1051,7 @@ VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$de
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
@@ -1196,7 +1202,7 @@ new.racl = ResourceAccess(principalId = '3319864',
   ResourceAccessList() 
 
 # Code
-CODE <- Folder(name = "ALL Reprocessed RNASeq (Normalised)", parentId = parentId)
+CODE <- Folder(name = "ALL Reprocessed RNASeq (Normalised) - study effects removed", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 synChangeEntityACL(CODE@properties$id, new.racl)
