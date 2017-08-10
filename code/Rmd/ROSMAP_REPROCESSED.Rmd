@@ -570,7 +570,7 @@ p
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Batch', 'msex', primaryVariable)])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION$expr.zero)))
+tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -1062,6 +1062,20 @@ RESIDUAL.NET.GENE_EXPRESSION = apply(RESIDUAL.NET.GENE_EXPRESSION, 1, function(x
 
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Function to change entity ACL (also creates new acls if it doesn't exist)
+synChangeEntityACL <- function(id, new.racl){
+  tryCatch({ 
+    # If old acl exist update
+    old.acl = synGetEntityACL(id)
+    old.acl@resourceAccess = new.racl
+    synUpdateEntityACL(old.acl)
+  }, error = function(e){ 
+    # If not create a new acl
+    new.acl = AccessControlList(id = id, resourceAccess = new.racl)
+    synCreateEntityACL(new.acl)
+  })
+}
+
 # Set annotations
 all.annotations = list(
   dataType = 'mRNA',
