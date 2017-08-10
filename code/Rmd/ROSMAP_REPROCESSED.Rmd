@@ -1140,7 +1140,7 @@ NEW.COUNTS %>%
   write.table(file = 'ROSMAP_DLPFC_eCounts.tsv', sep = '\t', row.names=F, quote=F)
 ECOUNT_OBJ = File('ROSMAP_DLPFC_eCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
 annotations(ECOUNT_OBJ) = annotations(CODE)
-annotations(ECOUNT_OBJ)$dataSubType = 'filteredCounts'
+annotations(ECOUNT_OBJ)$dataSubType = 'estimatedCounts'
 ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
