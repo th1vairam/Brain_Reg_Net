@@ -175,6 +175,7 @@ METADATA$Diagnosis[METADATA$CDR >= 1 & METADATA$bbscore >= 4 & METADATA$NP.1 >= 
 levels(METADATA$batch)[levels(METADATA$batch) == ''] = 'NoBatch'
 
 METADATA = METADATA %>%
+  dplyr::mutate(BrainRegion1 = BrainRegion) %>%
   tidyr::unite(BrainRegion.Diagnosis, BrainRegion, Diagnosis, sep = '.')
 
 METADATA <- METADATA %>%
@@ -195,6 +196,12 @@ METADATA[names(FIX.RIN),'RIN'] = FIX.RIN
 
 METADATA = METADATA %>%
   dplyr::filter(RIN >= 5)
+
+METADATA$ApoE[METADATA$Apo1 != 4 & METADATA$Apo2 != 4] = 0
+METADATA$ApoE[METADATA$Apo1 == 4 | METADATA$Apo2 == 4] = 1
+METADATA$ApoE[METADATA$Apo1 == 4 & METADATA$Apo2 == 4] = 2
+METADATA$BrainRegion.ApoE = paste(METADATA$BrainRegion1, METADATA$ApoE, sep = '.') %>%
+  factor()
 ```
 
 ```{r preprocess.data1}
@@ -215,8 +222,8 @@ Following `r length(indRemoved)` samples were removed: `r indRemoved`
 ### Covariate clustering
 Determine relationship between covariates
 ```{r covariates.clustering}
-primaryVariable <- c("CDR", "BrainRegion.Diagnosis")
-FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrainRegion.Diagnosis", "CDR")
+primaryVariable <- c("CDR", "BrainRegion.Diagnosis", "BrainRegion.ApoE")
+FactorCovariates <- c("individualIdentifier", "batch", "RACE", "SEX", "BrainRegion.Diagnosis", "CDR", "BrainRegion.ApoE")
 ContCovariates <- c("RIN", "RIN2", "AOD","PMI",  "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES",
                     "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 
@@ -357,6 +364,7 @@ Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCE
 Based on the expression pattern following samples were tagged as outliers: `r paste(indToRemove, collapse = ', ')`
 
 Distribution of samples are: `r kable(tmp)`
+
 ### Winsorise counts (Gene outliers in samples)
 ```{r winsorise.data}
 LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
@@ -403,8 +411,7 @@ LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   return(x)
 }) %>% t
 CQN.GENE_EXPRESSION$E = LOG.CPM
-
-PROCESSED_COUNTS$filteredExprMatrix$counts = NEW.COUNTS
+NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 ```
 
 ```{r explore.data, cache=FALSE, fig.height=5, fig.width=10}
@@ -511,14 +518,15 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
 
   # Estimate voom weights for dispersion control
-  VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DM1$design, plot=F)
+  VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design=DM1$design, plot=F)
 
-  # Calculate correlation values of random effects
+  # # Calculate correlation values of random effects
   correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
                                              block = COVARIATES$individualIdentifier)
+  # correlation = list(); correlation$cor = 0.4
 
   # Re-estimate voom weights
-  VOOM.GENE_EXPRESSION = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+  VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 
                               design=DM1$design, plot=F, 
                               block = COVARIATES$individualIdentifier, 
                               correlation = correlation$cor)
@@ -551,9 +559,8 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
 
   postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
   loopCount = loopCount + 1
-  print(loopCount)
+  # print(loopCount)
 }
-RESIDUAL.GENE_EXPRESSION
 modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
                   'as fixed effects')
 
@@ -640,14 +647,14 @@ colnames(DESIGN$design)[ind] = paste0(colnames(DESIGN$design),'.CDR')
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -726,14 +733,14 @@ DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], postAdjustCovars), d
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -818,11 +825,89 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+### Differential expression analysis (with BrainRegion.ApoE as primary variable)
+Differential expression is performed on the primary variable by controlling for covariates identified above
+
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diff.exp2, fig.height=15, fig.width=13}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[3], postAdjustCovars), drop = F], Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(NEW.COUNTS,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c()
+for (region in c('FP', 'STG', 'PHG', 'IFG')){
+  tmp = combn(paste0('BrainRegion.ApoE', region, '.', c('0', '1', '2')),2)
+  cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
+}
+
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('ensembl_gene_id')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('BrainRegion.ApoE','',Comparison),
+                Study = 'MSSM',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  tidyr::separate(Comparison, c('from.state','to.state'), sep = '-') %>%
+  tidyr::separate(from.state, c('BrainRegion','reference'), sep = '\\.') %>%
+  tidyr::separate(to.state, c('BrainRegion1','against'), sep = '\\.') %>%
+  dplyr::mutate(Comparison = paste(reference, against, sep = '-')) %>%
+  dplyr::select(-BrainRegion1) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction, BrainRegion) %>%
+  group_by(BrainRegion, Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position='top')
+p = p + facet_grid(BrainRegion+.~Comparison, scales = 'fixed')
+p
+
+all.diff.exp = c(all.diff.exp, list(ApoE = DE))
+all.fit = c(all.fit, list(ApoE = FIT))
+```
+
 ### Differential expression analysis (with BrainRegion.Diagnosis and Gender)
 Differential expression is performed on the BrainRegion.Diagnosis x Gender variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp2, fig.height=15, fig.width=13}
+```{r diff.exp3, fig.height=15, fig.width=13}
 ## Modeling Diagnosis, msex and age_death conjointly
 COVARIATES$BrainRegion.Diagnosis.SEX = paste(COVARIATES$BrainRegion.Diagnosis, 
                                              factor(COVARIATES$SEX, labels = c('F' = 'FEMALE', 'M' = 'MALE')), 
@@ -942,7 +1027,7 @@ all.fit = c(all.fit, list(Diagnosis.SEX = FIT))
 Differential expression is performed on the BrainRegion.Diagnosis x AOD variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp3, fig.height=15, fig.width=13}
+```{r diff.exp4, fig.height=15, fig.width=13}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c(primaryVariable[2], setdiff(postAdjustCovars, 'AOD')), drop = F], Intercept = F)
 ind = grep('Diagnosis', colnames(DESIGN$design))
@@ -951,14 +1036,14 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 colnames(DESIGN$design)[ind] = gsub('BrainRegion.Diagnosis', '', paste0(colnames(DESIGN$design)[ind], '.AOD'))
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
   
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -1071,7 +1156,7 @@ colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
 # Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
                         design=cbind(MODEL1, SURR.VAR), plot=F)
 
 # Calculate correlation values of random effects
@@ -1079,7 +1164,7 @@ VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$individualIdentifier)
 
 # Re-estimate voom weights
-VOOM.SVA.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
                         design = cbind(MODEL1, SURR.VAR), plot=F,
                         block = COVARIATES$individualIdentifier, 
                         correlation = correlation$cor)
@@ -1106,7 +1191,7 @@ DESIGN.NET = getDesignMatrix(COVARIATES[, postAdjustCovars, drop = F], Intercept
 DESIGN.NET = DESIGN.NET$design[,linColumnFinder(DESIGN.NET$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.NET.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.NET.WEIGHTS = voom(NEW.COUNTS, 
                         design=DESIGN.NET, plot=F)
 
 # Calculate correlation values of random effects
@@ -1114,7 +1199,7 @@ VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 correlation = parallelDuplicateCorrelation(VOOM.NET.WEIGHTS, block = COVARIATES$individualIdentifier)
 
 # Re-estimate voom weights
-VOOM.NET.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+VOOM.NET.WEIGHTS = voom(NEW.COUNTS, 
                         design = DESIGN.NET, plot=F,
                         block = COVARIATES$individualIdentifier, 
                         correlation = correlation$cor)
@@ -1130,6 +1215,20 @@ RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
 
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Function to change entity ACL (also creates new acls if it doesn't exist)
+synChangeEntityACL <- function(id, new.racl){
+  tryCatch({ 
+    # If old acl exist update
+    old.acl = synGetEntityACL(id)
+    old.acl@resourceAccess = new.racl
+    synUpdateEntityACL(old.acl)
+  }, error = function(e){ 
+    # If not create a new acl
+    new.acl = AccessControlList(id = id, resourceAccess = new.racl)
+    synCreateEntityACL(new.acl)
+  })
+}
+
 # Set annotations
 all.annotations = list(
   dataType = 'mRNA',
@@ -1150,20 +1249,6 @@ all.annotations = list(
   
   normalizationType	= 'CQN'
 )
-
-# Function to change entity ACL (also creates new acls if it doesn't exist)
-synChangeEntityACL <- function(id, new.racl){
-  tryCatch({ 
-    # If old acl exist update
-    old.acl = synGetEntityACL(id)
-    old.acl@resourceAccess = new.racl
-    synUpdateEntityACL(old.acl)
-  }, error = function(e){ 
-    # If not create a new acl
-    new.acl = AccessControlList(id = id, resourceAccess = new.racl)
-    synCreateEntityACL(new.acl)
-  })
-}
 
 # Create new resource acls
 new.racl = ResourceAccess(principalId = '3319864', 
@@ -1204,8 +1289,17 @@ annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
+# Store filtered counts
+NEW.COUNTS %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  write.table(file = 'MSSM_FP_STG_PHG_IFG_eCounts.tsv', sep = '\t', row.names=F, quote=F)
+ECOUNT_OBJ = File('MSSM_FP_STG_PHG_IFG_eCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
+annotations(ECOUNT_OBJ) = annotations(CODE)
+annotations(ECOUNT_OBJ)$dataSubType = 'estimatedCounts'
+ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
 # Store logCPM
-CQN.GENE_EXPRESSION$E %>%
+CQN.GENE_EXPRESSION$y %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'MSSM_FP_STG_PHG_IFG_logCPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('MSSM_FP_STG_PHG_IFG_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
@@ -1289,6 +1383,7 @@ synDeleteEntityACL(CODE@properties$id)
 |  -----------------------------------------  |   ---------                      |
 |  Covariates                                 |  `r COV_OBJ$properties$id`       |
 |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
+|  Counts (estimated)                         |  `r ECOUNT_OBJ$properties$id`    |
 |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
 |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
 |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
