@@ -85,10 +85,11 @@ covariates$ROSMAP = covariates$ROSMAP %>%
                 BrainRegion = 'DLPFC',
                 BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')),
                 msex = factor(msex, levels = c('1', '0'), labels = c('1'='MALE','0'='FEMALE')),
-                Batch = factor(Batch)) %>%
+                Batch = factor(Batch),
+                BrainRegion.ApoE = paste('DLPFC', apoe_genotype, sep = '.')) %>%
   dplyr::rename(Gender = msex, RIN = RINcontinuous, AOD = age_death, PMI = pmi) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, Batch, Gender, AOD, PMI, RIN, PCT_PF_READS_ALIGNED, 
-                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
 covariates$ROSMAP$individualIdentifier = factor(paste0('ROSMAPpseudoid',1:dim(covariates$ROSMAP)[1]))
 
 covariates$MSBB = covariates$MSBB %>%
@@ -99,7 +100,8 @@ covariates$MSBB = covariates$MSBB %>%
                 PMI = PMI/60) %>%
   dplyr::rename(Batch = batch, Gender = SEX) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, individualIdentifier, Batch, Gender, AOD, PMI, RIN, 
-                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, 
+                PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
 
 covariates$MAYO = covariates$MAYO %>%
   dplyr::mutate(SampleID = as.character(SampleID),
@@ -108,7 +110,9 @@ covariates$MAYO = covariates$MAYO %>%
                 Batch = factor(Source)) %>%
   dplyr::rename(individualIdentifier = Donor_ID, AOD = AgeAtDeath) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, individualIdentifier, Batch, Gender, AOD, PMI, RIN, 
-                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, 
+                PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
+levels(covariates$MAYO$BrainRegion.Diagnosis) = c("CER.AD", "CER.CONTROL", "CER.OTHER", "TCX.AD", "TCX.CONTROL", "TCX.OTHER")
 
 # Download sample counts
 counts.id = c(ROSMAP = 'syn8691134',
@@ -128,7 +132,8 @@ covariates = rbindlist(covariates, use.names = T, fill = T, idcol = 'Study') %>%
   tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
   dplyr::filter(Diagnosis != 'OTHER') %>%
   dplyr::mutate(BrainRegion = factor(BrainRegion, levels = c('DLPFC', 'FP', 'IFG', 'PHG', 'STG', 'CER', 'TCX')),
-                BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')))
+                BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')),
+                BrainRegion.ApoE = factor(as.character(BrainRegion.ApoE)))
 
 # Match covariates to expression data
 indToRetain = intersect(covariates$SampleID, colnames(counts))
@@ -173,7 +178,7 @@ GENE.PARAM = left_join(GENE.PARAM, Ensemble2HGNC)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("individualIdentifier", "Study", "BrainRegion.Diagnosis", "BrainRegion", "Diagnosis",
-                      "Gender", "Batch")
+                      "Gender", "Batch", "BrainRegion.ApoE")
 ContCovariates <- c("AOD", "PMI", "RIN", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES",
                     "PCT_RIBOSOMAL_BASES")
 
@@ -823,10 +828,83 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+### Differential expression analysis (with BrainRegion.ApoE as primary variable)
+Differential expression is performed on the primary variable by controlling for covariates identified above
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diff.exp2, fig.height=7, fig.width=24}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.ApoE', setdiff(adjust.covars, 'BrainRegion.Diagnosis')), drop = F], 
+                         Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+  
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c()
+for (region in c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  tmp = combn(paste0('BrainRegion.ApoE', region, '_', c('0', '1', '2')),2)
+  cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
+}
+
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT.CONTR){
+  topTable(FIT.CONTR, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('Gene.ID')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('BrainRegion.ApoE','',Comparison),
+                Study = 'ALL',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position='top')
+p = p + facet_grid(.~Comparison, scales = 'fixed')
+p
+
+all.diff.exp = c(all.diff.exp, list(ApoE = DE))
+all.fit = c(all.fit, list(ApoE = FIT))
+```
+
 ### Differential expression analysis (with BrainRegion.Diagnosis and Gender)
 Differential expression is performed on the BrainRegion.Diagnosis x Gender variable by controlling for covariates identified above
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp2, fig.height=7, fig.width=24}
+```{r diff.exp3, fig.height=7, fig.width=24}
 ## Modeling Diagnosis, msex and age_death conjointly
 COVARIATES$BrainRegion.Diagnosis.Gender = factor(paste(COVARIATES$BrainRegion.Diagnosis,
                                                        COVARIATES$Gender,
