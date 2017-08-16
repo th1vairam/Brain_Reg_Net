@@ -164,7 +164,7 @@ levels(METADATA$FlowcellBatch)[1] = 'NotAvailable'
 levels(METADATA$RibozeroBatch)[1] = 'NotAvailable'
 
 # Get quality surrogate variables
-qSV_DEG_MAT_ID = 'syn10284941'
+qSV_DEG_MAT_ID = 'syn10315615'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = qSV_DEG_MAT_ID
 qSV_DEG_MAT = downloadFile(qSV_DEG_MAT_ID)
 tmp = t(qSV_DEG_MAT[,-(1)])
