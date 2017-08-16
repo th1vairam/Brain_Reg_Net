@@ -1,0 +1,1135 @@
+---
+title: "Covariate analysis of CMC RNASeq data reprocessed with STAR-feature counts workflow with Ensembl v75 (ACC and DLPFC with CQN and qSVA normlaisation)"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE}
+library(synapseClient)
+library(knit2synapse)
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_qSVA.Rmd",
+                                 parentId = "syn7501880",
+                                 entityName = 'ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - qSVA')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(reshape2)
+library(limma)
+library(gplots)
+library(WGCNA)
+library(psych)
+library(edgeR)
+library(biomaRt)
+library(RColorBrewer)
+library(cqn)
+library(sva)
+
+library(synapseClient)
+library(knitr)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+
+synapseLogin()
+
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE}
+parentId = "syn7501880";
+activityName = 'Covariate adjustments';
+activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (ACC and DLPFC)';
+
+thisFileName <- 'CMC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_qSVA.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+### Data download
+Obtain count matrix and metadata from synapse.
+```{r download.data, cache=TRUE}
+# Download reprocessed counts (ACC)
+COUNT_ACC_ID = 'syn8414424'
+ALL_USED_IDs = COUNT_ACC_ID
+COUNT_ACC = downloadFile(COUNT_ACC_ID) 
+
+# Download reprocessed counts (DLPFC)
+COUNT_DLPFC_ID = 'syn8413221';
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = COUNT_DLPFC_ID
+COUNT_DLPFC = downloadFile(COUNT_DLPFC_ID)
+
+# Join ACC and DLPFC together
+COUNT = join_all(list(COUNT_ACC, COUNT_DLPFC), type = 'full') %>%
+  as.data.frame()
+
+GENE.LEN = dplyr::select(COUNT_ACC, Geneid, Length) %>%
+  dplyr::rename(ensembl_gene_id = Geneid) %>%
+  unique()
+rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
+
+rownames(COUNT) = COUNT$Geneid
+ind = setdiff(colnames(COUNT), c('Geneid', 'Chr', 'Start', 'End', 'Strand', 'Length'))
+COUNT = data.matrix(COUNT[,ind])
+
+# Get ancestry vector calculated using gemtools
+ANCESTRY_ID = 'syn2511399'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = ANCESTRY_ID
+ANCESTRY = read.table(synGet(ANCESTRY_ID)@filePath, fill = T, header = T, sep = '\t') %>%
+  plyr::rename(c('DNA_report..Genotyping.Sample_ID' = 'GenotypingSampleID'))
+
+# Get RNA qc metrics from synapse
+METADATA_QC_ACC_ID = 'syn2929053'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_ACC_ID
+METADATA_QC_ACC = read.table(synGet(METADATA_QC_ACC_ID)@filePath, fill = T, header = T, sep = ',') %>%
+  lapply(as.character)
+
+# Get RNA qc metrics from synapse
+METADATA_QC_DLPFC_ID = 'syn2279446'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
+METADATA_QC_DLPFC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header = T, sep = ',') %>%
+  lapply(as.character)
+
+METADATA_QC = rbindlist(list(METADATA_QC_ACC, METADATA_QC_DLPFC), use.names = T, fill = T) %>%
+  dplyr::filter(is.na(Exclude.)) %>%
+  dplyr::select(Sample.RNA.ID, Ribozero.Batch, Library.Batch, Flowcell.Batch, Mapped.Reads, 
+                Intragenic.Rate, Exonic.Rate, Intronic.Rate, Intergenic.Rate, Genes.Detected, 
+                Transcripts.Detected, Expression.Profiling.Efficiency, rRNA.Rate, Total.Reads, Percent.Aligned) %>%
+  dplyr::rename(SampleID = Sample.RNA.ID, RibozeroBatch = Ribozero.Batch, LibraryBatch = Library.Batch, 
+                FlowcellBatch = Flowcell.Batch, MappedReads = Mapped.Reads, IntragenicRate = Intragenic.Rate, 
+                ExonicRate = Exonic.Rate, IntronicRate = Intronic.Rate, IntergenicRate = Intergenic.Rate, 
+                GenesDetected = Genes.Detected, TranscriptsDetected = Transcripts.Detected, 
+                ExpProfEfficiency = Expression.Profiling.Efficiency, rRNARate = rRNA.Rate, 
+                TotalReads = Total.Reads, PercentAligned = Percent.Aligned)
+
+# Get merged metadata
+METADATA_ID = 'syn4484273'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
+METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = T, check.names = F)
+
+## Metadata with specific information for RNASeq processing
+metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", "Dx", 
+                      
+                          "ACC_RNA_isolation: Exclude?", "ACC_RNA_isolation: Sample RNA ID",
+                          "ACC_RNA_isolation: RIN", "ACC_RNA_report: Exclude?", 
+                          
+                          "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
+                          "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?",
+                          
+                          "DNA_genotyping_report: Genotyping Sample_ID")
+
+# Filter metadata 
+ind = colnames(METADATA) %in% metadataVarOfInterest
+METADATA = METADATA[,ind]
+colnames(METADATA) = gsub('[^[:alnum:]]','_',colnames(METADATA))
+
+METADATA_ACC = METADATA %>%
+  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
+                DNA_genotyping_report__Genotyping_Sample_ID, ACC_RNA_isolation__Exclude_, 
+                ACC_RNA_isolation__Sample_RNA_ID, ACC_RNA_isolation__RIN, ACC_RNA_report__Exclude_) %>%
+  dplyr::rename(PMI = PMI__in_hours_, 
+                IsolationExclude = ACC_RNA_isolation__Exclude_, 
+                SampleID = ACC_RNA_isolation__Sample_RNA_ID, 
+                RIN = ACC_RNA_isolation__RIN, 
+                ReportExclude = ACC_RNA_report__Exclude_,
+                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID) %>%
+  dplyr::filter(SampleID %in% colnames(COUNT)) %>%
+  dplyr::mutate(Tissue = 'ACC')
+
+METADATA_DLPFC = METADATA %>%
+  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
+                DNA_genotyping_report__Genotyping_Sample_ID, DLPFC_RNA_isolation__Exclude_, 
+                DLPFC_RNA_isolation__Sample_RNA_ID, DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_) %>%
+  dplyr::rename(PMI = PMI__in_hours_, 
+                IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
+                SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
+                RIN = DLPFC_RNA_isolation__RIN, 
+                ReportExclude = DLPFC_RNA_report__Exclude_,
+                GenotypingSampleID = DNA_genotyping_report__Genotyping_Sample_ID) %>%
+  dplyr::filter(SampleID %in% colnames(COUNT)) %>%
+  dplyr::mutate(Tissue = 'DLPFC')
+
+METADATA = rbindlist(list(METADATA_ACC, METADATA_DLPFC), use.names = T, fill = T) %>%
+  droplevels() %>%
+  list(.,METADATA_QC) %>%
+  join_all %>%
+  dplyr::mutate(LibraryBatch = as.factor(LibraryBatch)) %>%
+  left_join(ANCESTRY) %>%
+  unique
+
+# Replace AFF and BP samples as other
+levels(METADATA$Dx) = c("Other", "Other", "Control", "SCZ")
+
+# Get quality surrogate variables
+qSV_DEG_MAT_DLPFC_ID = 'syn10284943'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = qSV_DEG_MAT_DLPFC_ID
+qSV_DEG_MAT_DLPFC = downloadFile(qSV_DEG_MAT_DLPFC_ID)
+
+qSV_DEG_MAT_ACC_ID = 'syn10284942'
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = qSV_DEG_MAT_ACC_ID
+qSV_DEG_MAT_ACC = downloadFile(qSV_DEG_MAT_ACC_ID)
+
+qSV_DEG_MAT = rbindlist(list(qSV_DEG_MAT_DLPFC, qSV_DEG_MAT_ACC), use.names = T, fill = T)
+tmp = t(qSV_DEG_MAT[,-(1)])
+colnames(tmp) = qSV_DEG_MAT$V1
+qSV_DEG_MAT = tmp[,colnames(tmp) %in% colnames(COUNT)]
+rownames(qSV_DEG_MAT) = rownames(tmp)
+
+qSV = sva::qsva(qSV_DEG_MAT)
+colnames(qSV) = paste0('qSV', 1:dim(qSV)[2])
+
+METADATA = METADATA %>%
+  left_join(qSV %>% rownameToFirstColumn('SampleID'))
+```
+
+### Data preprocessing
+```{r preprocess.data}
+# Remove samples marked as exclude and samples with no Gender, Ethnicity, PMI, and RIN
+writeLines('Following counts are missing any metadata')
+writeLines(paste(setdiff(colnames(COUNT), levels(METADATA$SampleID)), collapse = ', '))
+METADATA <- METADATA %>% filter(SampleID %in% colnames(COUNT)) 
+
+writeLines('Following samples are marked exclude')
+writeLines(paste(METADATA$SampleID[METADATA$IsolationExclude == 1 | METADATA$ReportExclude == 1], collapse = ', '))
+METADATA <- METADATA  %>% filter(IsolationExclude == 0, ReportExclude == 0) 
+
+writeLines('Following samples are missing PMI information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$PMI)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(PMI)) 
+
+writeLines('Following samples are missing gender information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$Gender)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(Gender)) 
+
+writeLines('Following samples are missing RIN information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$RIN)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(RIN)) 
+
+writeLines('Following samples are missing EV information')
+writeLines(paste(METADATA$SampleID[is.na(METADATA$EV.1)], collapse = ', '))
+METADATA <- METADATA  %>% filter(!is.na(METADATA$EV.1)) 
+
+writeLines('Remove samples missing qSVs')
+writeLines(paste('Following',length(METADATA$SampleID[is.na(METADATA$qSV1)]), 'samples are removed:'))
+writeLines(paste(METADATA$SampleID[is.na(METADATA$qSV1)], collapse = ', '))
+METADATA <- METADATA  %>% dplyr::filter(!is.na(qSV1))
+```
+
+```{r preprocess.data1, results='asis'}
+# Match covariates to expression data
+indToRetain = intersect(METADATA$SampleID, colnames(COUNT))
+removedIDs = setdiff(colnames(COUNT), METADATA$SampleID)
+
+COUNT = COUNT[,indToRetain]
+
+rownames(METADATA) = METADATA$SampleID
+METADATA = METADATA[indToRetain,]
+
+METADATA %>% 
+  group_by(Dx, Tissue) %>% 
+  summarise(count = n()) %>% 
+  spread(Tissue, count) %>%
+  kable()
+
+METADATA = METADATA %>%
+  dplyr::mutate(Dx.Tissue = paste(Dx, Tissue, sep = '.'))
+```
+Following sample are removed `r paste(removedIDs, collapse = ',')`
+
+```{r gene.param}
+## Get GC content from biomart
+backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
+
+# Define biomart object
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "dec2016.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")
+
+# Query biomart
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gc_content", "gene_biotype"),
+                       filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
+                       mart = mart)
+
+GENE.GC.CONT = Ensemble2HGNC %>%
+  dplyr::select(ensembl_gene_id, percentage_gc_content) %>%
+  unique
+rownames(GENE.GC.CONT) = GENE.GC.CONT$ensembl_gene_id
+```
+
+### Covariates clustering
+Determine relationship between covariates. 
+```{r covariates.clustering}
+FactorCovariates <- c('Individual_ID', "Institution", "Gender", "LibraryBatch", "Dx.Tissue", "RibozeroBatch", "FlowcellBatch")
+ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
+                    "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
+                    "PercentAligned", "EV.1", "EV.2", "EV.3", "EV.4", "EV.5", "qSV1", "qSV2", "qSV3")
+
+# Find inter relation between factor covariates
+COVARIATES = METADATA[,c(FactorCovariates,ContCovariates),drop=F]
+COVARIATES[,FactorCovariates] <- data.frame(lapply(COVARIATES[,FactorCovariates],function(x){
+  x <- sapply(x,function(y){str_replace_all(as.character(y),'[^[:alnum:]]','_')})}))
+rownames(COVARIATES) <- METADATA$SampleID
+
+# Convert factor covariates to factors
+COVARIATES[,FactorCovariates] = lapply(COVARIATES[,FactorCovariates], factor)
+COVARIATES[,ContCovariates] = lapply(COVARIATES[,ContCovariates], function(x){
+  x = as.numeric(as.character(gsub('[\\,\\%]','',x)))
+})
+
+# Add in RIN^2 values
+COVARIATES$RIN2 = COVARIATES$RIN^2
+ContCovariates = c(ContCovariates, 'RIN2')
+```
+Correlation/association between covariates at an FDR <= 0.1
+```{r covariates.correlation, fig.width=10, fig.height=8}
+COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
+tmp = COVARIATES.CORRELATION$ESTIMATE
+tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
+h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate')
+draw(h, heatmap_legend_side = 'left')
+```
+
+### Explore metatdata
+```{r data.explore, fig.width = 12, fig.height = 12}
+my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
+
+# RIN
+p = list()
+p[[1]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = RIN)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('RIN') + my.theme
+
+# Age of Death
+p[[2]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = Age_of_Death)) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + my.theme
+
+# PMI
+p[[3]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = PMI)) + geom_boxplot()
+p[[3]] = p[[3]] + ggtitle('PMI (in hours)') + my.theme
+
+# Intronic Rate
+p[[4]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntronicRate)) + geom_boxplot()
+p[[4]] = p[[4]] + ggtitle('Intronic Rate') + my.theme
+
+# IntergenicRate
+p[[5]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntergenicRate)) + geom_boxplot()
+p[[5]] = p[[5]] + ggtitle('Intergenic Rate') + my.theme
+
+# Transcripts Detected
+p[[6]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = TranscriptsDetected)) + geom_boxplot()
+p[[6]] = p[[6]] + ggtitle('Transcripts Detected') + my.theme
+
+# Mapped Reads
+p[[7]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = MappedReads)) + geom_boxplot()
+p[[7]] = p[[7]] + ggtitle('Mapped Reads') + my.theme
+
+# PercentAligned
+p[[8]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = PercentAligned)) + geom_boxplot()
+p[[8]] = p[[8]] + ggtitle('Percent Aligned') + my.theme
+
+# rRNARate
+p[[9]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = rRNARate)) + geom_boxplot()
+p[[9]] = p[[9]] + ggtitle('rRNARate') + my.theme
+
+multiplot(plotlist = p, cols = 3)
+
+# Institution
+# vcd::mosaic(~ Institution + Dx.Tissue, data = COVARIATES)
+
+# Gender
+# vcd::mosaic(~ Gender + Dx.Tissue, data = COVARIATES)
+```
+### Filter genes
+Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
+```{r cpmnormalisation}
+genesToAnalyze = COVARIATES %>% 
+  rownameToFirstColumn('SampleID') %>%
+  dlply(.(Dx.Tissue), .fun = function(mtd, count){
+  processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
+                                                   MIN_GENE_CPM=1, 
+                                                   MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
+  processed.counts$filteredExprMatrix$genes
+}, COUNT)
+
+genesToAnalyze = unlist(genesToAnalyze) %>% 
+  unique() %>%
+  intersect(GENE.GC.CONT$ensembl_gene_id[!is.na(GENE.GC.CONT$percentage_gc_content)]) %>%
+  intersect(GENE.LEN$ensembl_gene_id[!is.na(GENE.LEN$Length)])
+
+PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
+pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
+  dplyr::rename(ensembl_gene_id = genes) %>%
+  left_join(Ensemble2HGNC) %>%
+  group_by(gene_biotype) %>%
+  summarise(fraction  = n()) %>%
+  filter(fraction > 100) %>%
+  dplyr::mutate(fraction = fraction/length(PROCESSED_COUNTS$filteredExprMatrix$genes[,1]))
+```
+`r dim(PROCESSED_COUNTS$filteredExprMatrix$genes)[1]` genes are used for the analysis. 
+
+Following is the distribution of biotypes
+`r kable(pct.pc)`
+
+### Outlier analysis
+Detect outlier samples based on their expression (logCPM) pattern
+```{r detect.outliers, fig.height=8, fig.width=8, results='asis', cache = FALSE}
+# Based on PC
+indToRemove = c('MSSM_RNA_ACC_BP_24', 'MSSM_RNA_ACC_375', 'MSSM_RNA_ACC_170', 'MSSM_RNA_ACC_315', 'MSSM_RNA_ACC_250',
+                'MSSM_RNA_ACC_21', 'MSSM_RNA_ACC_356', 'MSSM_RNA_ACC_318', 'MSSM_RNA_ACC_222', 'MSSM_RNA_ACC_220',
+                'MSSM_RNA_ACC_379', 'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139', 'MSSM_RNA_PFC_163', 'MSSM_RNA_PFC_260',
+                'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_89', 'MSSM_RNA_PFC_319', 'MSSM_RNA_PFC_348',
+                'MSSM_RNA_PFC_354', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_71', 'PENN_RNA_PFC_56',  "MSSM_RNA_ACC_310",
+                "MSSM_RNA_ACC_51",  "MSSM_RNA_ACC_254", "MSSM_RNA_ACC_28", "MSSM_RNA_ACC_293", "MSSM_RNA_ACC_233",
+                "MSSM_RNA_ACC_167", "MSSM_RNA_ACC_353", "MSSM_RNA_ACC_355", "MSSM_RNA_ACC_211", "PENN_RNA_ACC_122",
+                "PENN_RNA_ACC_049", "PENN_RNA_ACC_052", "PENN_RNA_ACC_068", "PENN_RNA_ACC_070", "PITT_RNA_ACC_10020",
+                "PITT_RNA_ACC_1240", "PITT_RNA_ACC_1284", "PITT_RNA_ACC_700", "PITT_RNA_ACC_857", "PITT_RNA_ACC_BP_1589",
+                "MSSM_RNA_PFC_230", "MSSM_RNA_PFC_304", "MSSM_RNA_PFC_309", "MSSM_RNA_PFC_329", "MSSM_RNA_PFC_82",
+                "PENN_RNA_PFC_5", "PENN_RNA_PFC_58", "PENN_RNA_PFC_99", "PITT_RNA_PFC_1284")
+
+# # Outliers from Menahcem's DLPFC analysis syn3493755
+# outliers = c('MSSM_RNA_BP_PFC_1', 'MSSM_RNA_PFC_21', 'MSSM_RNA_BP_PFC_3', 'MSSM_RNA_PFC_103', 
+#              'MSSM_RNA_PFC_105', 'MSSM_RNA_PFC_115', 'MSSM_RNA_PFC_169',  'MSSM_RNA_PFC_17',
+#              'MSSM_RNA_PFC_18', 'MSSM_RNA_PFC_19', 'MSSM_RNA_PFC_213', 'MSSM_RNA_PFC_214', 
+#              'MSSM_RNA_PFC_215', 'MSSM_RNA_PFC_216', 'MSSM_RNA_PFC_217', 'MSSM_RNA_PFC_218',
+#              'MSSM_RNA_PFC_219', 'MSSM_RNA_PFC_222', 'MSSM_RNA_PFC_24', 'MSSM_RNA_PFC_252', 
+#              'MSSM_RNA_PFC_259', 'MSSM_RNA_PFC_263', 'MSSM_RNA_PFC_267', 'MSSM_RNA_PFC_275',
+#              'MSSM_RNA_PFC_307', 'MSSM_RNA_PFC_322', 'MSSM_RNA_PFC_325', 'MSSM_RNA_PFC_27', 
+#              'MSSM_RNA_PFC_332', 'MSSM_RNA_PFC_333', 'MSSM_RNA_PFC_334', 'MSSM_RNA_PFC_335',
+#              'MSSM_RNA_PFC_340', 'MSSM_RNA_PFC_35', 'MSSM_RNA_PFC_362', 'MSSM_RNA_PFC_372', 
+#              'MSSM_RNA_PFC_373', 'MSSM_RNA_PFC_385', 'MSSM_RNA_PFC_393', 'MSSM_RNA_PFC_395',
+#              'MSSM_RNA_PFC_49', 'MSSM_RNA_PFC_54', 'MSSM_RNA_PFC_70', 'MSSM_RNA_PFC_76', 
+#              'MSSM_RNA_PFC_77', 'MSSM_RNA_PFC_78', 'MSSM_RNA_PFC_88', 'MSSM_RNA_PFC_93',
+#              'FAKE_DLPFC_CMC_MSSM_426', 'PENN_RNA_PFC_29', 'FAKE_DLPFC_CMC_PENN_055', 
+#              'PENN_RNA_PFC_75', 'PENN_RNA_PFC_110', 'FAKE_DLPFC_CMC_PENN_106', 'FAKE_DLPFC_CMC_PENN_107',
+#              'FAKE_DLPFC_CMC_PENN_108', 'MSSM_RNA_PFC_14', 'MSSM_RNA_BP_PFC_21', 'MSSM_RNA_PFC_293', 
+#              'MSSM_RNA_PFC_349', 'MSSM_RNA_PFC_353', 'MSSM_RNA_PFC_363', 'MSSM_RNA_PFC_369',
+#              'PENN_RNA_PFC_82', 'PENN_RNA_PFC_89', 'PITT_RNA_PFC_1159', 'PITT_RNA_PFC_1296', 'PITT_RNA_PFC_537', 
+#              'PITT_RNA_PFC_567', 'PITT_RNA_PFC_871', 'PITT_RNA_PFC_878', 'MSSM_RNA_PFC_133', 'MSSM_RNA_PFC_139',
+#              'MSSM_RNA_PFC_210',  'MSSM_RNA_PFC_260', 'MSSM_RNA_PFC_278', 'MSSM_RNA_PFC_299', 'MSSM_RNA_PFC_348',
+#              'MSSM_RNA_PFC_361', 'MSSM_RNA_PFC_60', 'PENN_RNA_PFC_56', 'PITT_RNA_BP_PFC_10003', 'PITT_RNA_BP_PFC_1047',
+#              'PITT_RNA_BP_PFC_1086', 'PITT_RNA_BP_PFC_1092', 'PITT_RNA_BP_PFC_1247', 'PITT_RNA_BP_PFC_1282', 
+#              'PITT_RNA_BP_PFC_1324', 'PITT_RNA_BP_PFC_1374', 'PITT_RNA_BP_PFC_1391', 'PITT_RNA_BP_PFC_686')
+
+# Find principal components of expression to plot
+PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
+  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  dplyr::mutate(label = SampleID)
+plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
+p <- p + geom_text(aes(label= label), size=4, hjust=0)
+p
+
+# Plot abberent distribution of logcpm counts
+tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
+  left_join(COVARIATES %>%
+              rownameToFirstColumn('SampleID') %>%
+              tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
+
+p = ggplot(tmp1 %>%
+             dplyr::filter(SampleID %in% indToRemove),
+           aes(x = logCPM, color = SampleID)) + geom_density() 
+p = p + theme(legend.position = 'top') + facet_grid(Dx+.~Tissue, scale = 'free')
+p
+
+indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
+PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
+COVARIATES = COVARIATES[indToRetain,]
+
+tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
+  group_by(Dx, Tissue) %>%
+  summarise(count = n()) %>%
+  spread(Tissue, count)
+```
+Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCESSED_COUNTS$filteredExprMatrix)[2]` samples from `r length(unique(COVARIATES$Individual_ID))` unique individuals
+
+Based on the expression pattern following `r length(indToRemove)` samples were tagged as outliers based on their mrna expression: `r paste(indToRemove, collapse = ', ')` 
+
+Distribution of samples are:
+`r kable(tmp)`
+
+### Winsorise counts (Gene outliers in samples)
+```{r winsorise.data}
+LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
+
+# Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
+LOG.CPM = apply(LOG.CPM, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  
+  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
+  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
+  
+  x[x < (mn-3*std.dev)] = x[ind.low]
+  x[x > (mn+3*std.dev)] = x[ind.high]
+  return(x)
+}) %>% t
+
+# Back calculate counts for further analysis
+LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
+NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
+```
+
+### Library Normalisation
+Initial library normalisation usign cqn
+```{r cqn}
+# Compute offset for gene length and gc content
+CQN.GENE_EXPRESSION = cqn(NEW.COUNTS, 
+                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
+                          lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length'],
+                          lengthMethod = "smooth", 
+                          verbose = FALSE)
+CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+
+# Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
+CQN.GENE_EXPRESSION$E = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
+  mn = mean(x, na.rm = T)
+  std.dev = sd(x, na.rm = T)
+  
+  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
+  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
+  
+  x[x < (mn-3*std.dev)] = x[ind.low]
+  x[x > (mn+3*std.dev)] = x[ind.high]
+  return(x)
+}) %>% t
+
+# Back calculate counts for further analysis
+LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
+NEW.COUNTS = (2^CQN.GENE_EXPRESSION$E) * t(replicate(dim(CQN.GENE_EXPRESSION$E)[1], LIB.SIZE))/1e6
+```
+
+### Co-expression distribution
+Coexpression of genes 
+```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
+cr = cor(t(CQN.GENE_EXPRESSION$E))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+```
+
+### Sample clustering
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
+# Find principal components of expression to plot
+PC <- prcomp(CQN.GENE_EXPRESSION$E, scale.=T, center = T)
+
+# Plot first 2 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
+  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
+# p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
+p
+```
+Tree based clustering of samples
+```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue")])
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E)))
+cols = WGCNA::labels2colors(COVARIATES.tmp);
+
+WGCNA::plotDendroAndColors(tree, 
+                           colors = cols, 
+                           dendroLabels = FALSE, 
+                           abHeight = 0.80, 
+                           main = "Sample dendrogram",
+                           groupLabels = colnames(COVARIATES.tmp))
+```
+```{r temp, include = F}
+dev.off()
+gc()
+```
+
+### Distribution of samples (log cpm)
+```{r lcpm.dist, cache=FALSE}
+# Plot abberent distribution of logcpm counts
+tmp1 = (CQN.GENE_EXPRESSION$E) %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
+  left_join(COVARIATES %>%
+              rownameToFirstColumn('SampleID') %>%
+              tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
+
+p = ggplot(tmp1, aes(x = logCPM, color = SampleID)) + geom_density() 
+p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free')
+p
+```
+
+### Significant Covariates
+Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
+```{r preAdjusted.covariates, cache=TRUE}
+# Find correlation between PC's of gene expression with covariates
+preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$E, 
+                                                 COVARIATES,
+                                                 'NULL design(voom-normalized)', 
+                                                 isKeyPlot=TRUE, 
+                                                 MIN_PVE_PCT_PC = 1)
+```
+
+Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$significantCovars`
+```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
+preAdjustedSigCovars[["PC_res"]][[2]]$plotData
+```
+### Normalisation
+Based on different model selection methodology (as seen here syn8468116, syn9772932, and syn9774491), following variables are used as covariates: Institution, Gender, RIN, and IntronicRate, with qSV 1 to 3
+
+NOTE: Dx.Tissue is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue), and Individual\_ID is chosen as the random effect
+
+```{r custom.normalisation, results='asis'}
+# Primary variable of interest
+postAdjustCovars = c('Dx.Tissue', 'Institution', 'Gender', 'RIN', 'IntronicRate', 'qSV1', 'qSV2', 'qSV3')
+
+writeLines(paste('Using following covariates in the model:',
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects and Individual_ID is chosen as random effect'))
+  
+# Post adjusted design matrix
+DESIGN = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
+  
+# Estimate voom weights
+VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design = DESIGN)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.GENE_EXPRESSION = voom(NEW.COUNTS,   
+                            design = DESIGN, plot=F,
+                            block = COVARIATES$Individual_ID, 
+                            correlation = correlation$cor)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+
+# Fit linear model using new weights and new design
+ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
+  
+# Residuals after normalisation
+RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
+```
+
+### Residual calculation
+Calculate weighted residuals and add back "Dx.Tissue" to the residuals
+```{r varsToAddBack}
+# Add variable of interest back to the residuals
+varsToAddIn = grep("Dx.Tissue", colnames(DESIGN), value = T)
+RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
+  ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(DESIGN[,varsToAddIn])
+```
+Coexpression of genes 
+```{r coexp2, cache=FALSE, fig.height=5, fig.width=5}
+cr = cor(t(RESIDUAL.GENE_EXPRESSION))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+```
+
+### Clustering residual data
+```{r decompse.normalise.data2, fig.height=8, fig.width=8, results='asis'}
+# Find principal components of expression to plot
+PC <- prcomp(RESIDUAL.GENE_EXPRESSION, scale.=T, center = T)
+
+# Plot first 4 PCs
+plotdata <- data.frame(SampleID=rownames(PC$rotation), 
+                       PC1=PC$rotation[,1], 
+                       PC2=PC$rotation[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
+  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  dplyr::mutate(label = SampleID)
+# plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
+
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
+# p <- p + geom_text(aes(label= label), size=4, hjust=0)
+p
+```
+
+```{r decompse.normalise.data2.1, fig.height=8, fig.width=12, results='asis'}
+# Eucledian tree based analysis
+COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue','Institution')])
+COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
+
+tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
+cols = WGCNA::labels2colors(COVARIATES.tmp);
+
+WGCNA::plotDendroAndColors(tree, 
+                           colors = cols, 
+                           dendroLabels = FALSE, 
+                           abHeight = 0.80, 
+                           main = "Sample dendrogram",
+                           groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue','Institution')]))
+```
+
+```{r temp1, include=F}
+dev.off()
+gc()
+```
+
+### Differential expression analysis (SCZ - Control)
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp, fig.height=15, fig.width=20}
+# Fit contrast
+contrast = makeContrasts(contrasts=c("Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_ACC-Dx.TissueOther_ACC",
+                                     "Dx.TissueOther_ACC-Dx.TissueControl_ACC",
+                                     
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueOther_DLPFC",
+                                     "Dx.TissueOther_DLPFC-Dx.TissueControl_DLPFC",
+                                     
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueSCZ_ACC",
+                                     "Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",
+                                     "Dx.TissueOther_DLPFC-Dx.TissueOther_ACC",
+                                     
+                                     "Dx.TissueSCZ_DLPFC+Dx.TissueSCZ_ACC-Dx.TissueControl_DLPFC-Dx.TissueControl_ACC",         
+                                     "Dx.TissueSCZ_DLPFC+Dx.TissueControl_DLPFC-Dx.TissueSCZ_ACC-Dx.TissueControl_ACC",
+                                     "Dx.TissueSCZ_DLPFC-Dx.TissueControl_DLPFC-Dx.TissueSCZ_ACC+Dx.TissueControl_ACC"),
+                         levels = colnames(ADJUSTED.FIT$coefficients))
+FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+    rownameToFirstColumn('ensembl_gene_id') 
+}, FIT.CONTR) 
+names(DE) = gsub('Dx.Tissue', '', colnames(contrast))
+names(DE)[10:12] = c('SCZ_ALL-Control_ALL', 'ALL_DLPFC-ALL_ACC', 'ALL_ALL-ALL_ALL')
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('Dx.Tissue','',Comparison),
+                Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  tidyr::separate(Comparison, into = c('to.state','ref.state'), sep = '-') %>%
+  tidyr::separate(to.state, into = c('to.Dx','to.Tissue'), sep = '_') %>%
+  tidyr::separate(ref.state, into = c('ref.Dx','ref.Tissue'), sep = '_') %>%
+  left_join(Ensemble2HGNC) %>%
+  left_join(GENE.LEN)
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05, ref.Dx != 'Other', to.Dx != 'Other') %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue, logFC) %>%
+  group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+tmp1 = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2), ref.Dx != 'Other', to.Dx != 'Other') %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, ref.Dx, ref.Tissue, logFC) %>%
+  group_by(to.Dx, to.Tissue, ref.Dx, ref.Tissue) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+kable(full_join(tmp,tmp1))
+
+p = DE %>%
+  dplyr::filter(ref.Dx != 'ALL', to.Dx != 'ALL') %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(ref.Dx+ref.Tissue~.+to.Dx+to.Tissue, scales = 'fixed')
+p = p + ggtitle('Differential Expression between Schizophrenia and Control')
+p
+
+p = DE %>%
+  dplyr::filter(ref.Dx == 'ALL', to.Dx == 'ALL') %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(ref.Tissue+.~to.Tissue, scales = 'fixed')
+p = p + ggtitle('Differential Expression between DLPFC and ACC')
+p
+```
+
+### Associate differential expression results with gc content, gene length and average expression
+```{r associate.de, fig.height=10, fig.width=15}
+pl = list()
+pl[[1]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = log10(Length), y = logFC, color = Direction)) + geom_point() 
+pl[[1]] = pl[[1]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = log10(Length), y = logFC))
+pl[[1]] = pl[[1]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[1]] = pl[[1]] + theme(legend.position = 'top')
+
+pl[[2]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
+pl[[2]] = pl[[2]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = percentage_gc_content, y = logFC))
+pl[[2]] = pl[[2]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[2]] = pl[[2]] + theme(legend.position = 'top')
+
+pl[[3]] = ggplot(DE %>% dplyr::filter(ref.Dx == 'Control', to.Dx == 'SCZ'), 
+                 aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
+pl[[3]] = pl[[3]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = AveExpr, y = logFC))
+pl[[3]] = pl[[3]] + facet_grid(ref.Tissue~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[3]] = pl[[3]] + theme(legend.position = 'top')
+
+multiplot(plotlist = pl, cols = 3)
+```
+
+### Differential expression analysis (Gender specific SCZ - Control)
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp1, fig.height=15, fig.width=20}
+# Covariates to adjust
+COVARIATES$Dx.Tissue.Gender = factor(paste(COVARIATES$Dx.Tissue, COVARIATES$Gender, sep = '_'))
+postAdjustCovars = c('Dx.Tissue.Gender', 'Institution', 'RIN', 'IntronicRate', 'qSV1', 'qSV2', 'qSV3')
+
+writeLines(paste('Using following covariates in the model:',
+                 paste(postAdjustCovars, collapse=', '),
+                 'as fixed effects and Individual_ID is chosen as random effect'))
+  
+# Post adjusted design matrix
+DESIGN1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN1 = DESIGN1[,linColumnFinder(DESIGN1)$indepCols]
+  
+# Estimate voom weights
+VOOM.GENE_EXPRESSION1 = voom(NEW.COUNTS, design = DESIGN1)
+VOOM.GENE_EXPRESSION1$E = CQN.GENE_EXPRESSION$E
+correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION1, block = COVARIATES$Individual_ID)
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.GENE_EXPRESSION1 = voom(NEW.COUNTS,   
+                             design = DESIGN1, plot=F,
+                             block = COVARIATES$Individual_ID, 
+                             correlation = correlation$cor)
+VOOM.GENE_EXPRESSION1$E = CQN.GENE_EXPRESSION$E
+
+# Fit linear model using new weights and new design
+ADJUSTED.FIT1 = lmFit(VOOM.GENE_EXPRESSION1)
+
+# Fit contrast
+contrast = makeContrasts(contrasts=c("Dx.Tissue.GenderSCZ_ACC_Male-Dx.Tissue.GenderControl_ACC_Male",
+                                     "Dx.Tissue.GenderSCZ_ACC_Female-Dx.Tissue.GenderControl_ACC_Female",
+                                     
+                                     "Dx.Tissue.GenderSCZ_DLPFC_Male-Dx.Tissue.GenderControl_DLPFC_Male",
+                                     "Dx.Tissue.GenderSCZ_DLPFC_Female-Dx.Tissue.GenderControl_DLPFC_Female"),
+                         levels = colnames(ADJUSTED.FIT1$coefficients))
+FIT.CONTR1 = contrasts.fit(ADJUSTED.FIT1, contrasts=contrast)
+FIT.CONTR1 = eBayes(FIT.CONTR1)
+
+# Get differnetial expression
+DE1 = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+    rownameToFirstColumn('ensembl_gene_id') 
+}, FIT.CONTR1) 
+names(DE1) = gsub('Dx.Tissue.Gender', '', colnames(contrast)) 
+
+DE1 = DE1 %>% 
+  data.table::rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('Dx.Tissue.Gender','',Comparison),
+                Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  tidyr::separate(Comparison, into = c('to.state','ref.state'), sep = '-') %>%
+  tidyr::separate(to.state, into = c('to.Dx', 'to.Tissue', 'to.Gender'), sep = '_') %>%
+  tidyr::separate(ref.state, into = c('ref.Dx', 'ref.Tissue', 'ref.Gender'), sep = '_') %>%
+  left_join(Ensemble2HGNC) %>%
+  left_join(GENE.LEN)
+DE1$Direction[DE1$adj.P.Val > 0.05 | abs(DE1$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE1 %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, to.Gender, ref.Dx, ref.Tissue, ref.Gender, logFC) %>%
+  group_by(to.Dx, to.Tissue, to.Gender, ref.Dx, ref.Tissue, ref.Gender) %>%
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+tmp1 = DE1 %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
+  dplyr::select(ensembl_gene_id, to.Dx, to.Tissue, to.Gender, ref.Dx, ref.Tissue, ref.Gender, logFC) %>%
+  group_by(to.Dx, to.Tissue, to.Gender, ref.Dx, ref.Tissue, ref.Gender) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+kable(full_join(tmp,tmp1))
+
+p = DE1 %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(ref.Tissue~.+ref.Gender, scales = 'fixed')
+p = p + ggtitle('Differential Expression between Schizophrenia and Control')
+p
+
+table(COVARIATES$Dx.Tissue, COVARIATES$Gender)
+```
+
+### Differential expression analysis (ACC - DLPFC, SCZ - Control, Female - Male)
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp2, fig.height=16, fig.width=8}
+COVARIATES = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue')) %>%
+  dplyr::mutate(Dx = factor(Dx, levels = c('SCZ', 'Control', 'Other')),
+                Tissue = factor(Tissue))
+postAdjustCovars = c('Tissue', 'Dx', 'Institution', 'Gender', 'RIN', 'IntronicRate', 'qSV1', 'qSV2', 'qSV3')
+
+# Post adjusted design matrix
+DESIGN2 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN2 = DESIGN2[,linColumnFinder(DESIGN2)$indepCols]
+  
+# Estimate voom weights
+VOOM.GENE_EXPRESSION2 = voom(NEW.COUNTS, design = DESIGN2)
+VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
+correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION2, block = COVARIATES$Individual_ID)
+  
+# Re-calculate voom weights with correlation of random effects
+VOOM.GENE_EXPRESSION2 = voom(NEW.COUNTS,   
+                             design = DESIGN2, plot=F,
+                             block = COVARIATES$Individual_ID, 
+                             correlation = correlation$cor)
+VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
+
+# Fit linear model using new weights and new design
+ADJUSTED.FIT2 = lmFit(VOOM.GENE_EXPRESSION2)
+
+# Fit contrast
+contrast = makeContrasts(contrasts=c("TissueACC-TissueDLPFC",
+                                     "DxSCZ-DxControl",
+                                     "GenderFemale"),
+                         levels = colnames(ADJUSTED.FIT2$coefficients))
+FIT.CONTR2 = contrasts.fit(ADJUSTED.FIT2, contrasts=contrast)
+FIT.CONTR2 = eBayes(FIT.CONTR2)
+
+# Get differnetial expression
+DE2 = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+    rownameToFirstColumn('ensembl_gene_id') 
+}, FIT.CONTR2) 
+names(DE2) = c('ACC-DLPFC', 'SCZ-CONTROL', 'FEMALE-MALE')
+
+DE2 = DE2 %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(Ensemble2HGNC) 
+DE2$Direction[DE2$adj.P.Val > 0.05 | abs(DE2$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE2 %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(Comparison, ensembl_gene_id, logFC) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+tmp1 = DE2 %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
+  dplyr::select(Comparison, ensembl_gene_id, logFC) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+kable(full_join(tmp,tmp1))
+
+p = DE2 %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(Comparison~., scales = 'free_y')
+p = p + ggtitle('Differential Expression')
+p
+```
+
+### Gene set enrichment analysis
+Using Fisher's exact test for gene set enrichment analysis
+```{r enrich.de, fig.height=16, fig.width=16}
+all.diff.exp = list(DE %>%
+                      tidyr::unite(Comparison1, to.Dx, to.Tissue) %>%
+                      tidyr::unite(Comparison2, ref.Dx, ref.Tissue) %>%
+                      tidyr::unite(Comparison, Comparison1, Comparison2, sep = '-'), 
+                    DE1%>%
+                      tidyr::unite(Comparison1, to.Dx, to.Tissue, to.Gender) %>%
+                      tidyr::unite(Comparison2, ref.Dx, ref.Tissue, ref.Gender) %>%
+                      tidyr::unite(Comparison, Comparison1, Comparison2, sep = '-'), 
+                    DE2) %>%
+  data.table::rbindlist(fill = TRUE, use.names = TRUE)
+diffexp.genes.up = all.diff.exp %>%
+  dlply(.(Comparison), .fun = function(x){
+    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC > 0] %>% unique
+    tmp = tmp[!is.na(tmp)]
+  })
+names(diffexp.genes.up) = paste(names(diffexp.genes.up), 'UP', sep = '.')
+
+diffexp.genes.down = all.diff.exp %>%
+  dlply(.(Comparison), .fun = function(x){
+    tmp = x$hgnc_symbol[x$adj.P.Val <= 0.05 & x$logFC < 0] %>% unique
+    tmp = tmp[!is.na(tmp)]
+  })
+names(diffexp.genes.down) = paste(names(diffexp.genes.down), 'DOWN', sep = '.')
+
+diffexp.genes = c(diffexp.genes.up, diffexp.genes.down)
+diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
+backgroundGenes = unique(DE$hgnc_symbol)
+
+# Download all related genesets from synapse
+geneset.files = synQuery('select * from file where parentId == "syn3240583"')
+ALL_USED_IDs = c(ALL_USED_IDs, geneset.files$file.id)
+genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.files){
+  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource]) %>%
+    dlply(.(Name), .fun = function(x){
+      str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
+    })
+  }, geneset.files) %>%
+  CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
+  do.call(c,.)
+
+# Perform enrichment analysis
+enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
+   ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
+     CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
+    }, x, backgroundGenes, .parallel = TRUE) %>%
+    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
+}, genesets.to.test, backgroundGenes) %>%
+  rbindlist(idcol = 'Comparison', use.names = T, fill = T) %>%
+  dplyr::rename(Category = .id)
+```
+
+### Store files in synapse
+```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
+# Set annotations
+all.annotations = list(
+  dataType = 'mRNA',
+  dataSubType = 'geneExp',
+  summaryLevel = 'gene',
+  assay	 = 'RNAseq',
+  
+  tissueTypeAbrv	= 'DLPFC, ACC', 
+  study = 'CMC', 
+
+  organism = 'HomoSapiens',
+  consortium	= 'CMC',
+   
+  normalizationStatus	= TRUE,
+  
+  normalizationType	= 'qSVA'
+)
+
+# Code
+CODE <- Folder(name = "ACC and DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN - qSVA", parentId = parentId)
+annotations(CODE) = all.annotations
+CODE <- synStore(CODE)
+
+# Store covariates
+COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
+write.table(COVARIATES, file = 'CMC_ACC_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
+COV_OBJ = File('CMC_ACC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+annotations(COV_OBJ) = annotations(CODE)
+annotations(COV_OBJ)$dataSubType = 'covariates'
+COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                      executed = thisFile, activityDescription = activityDescription)
+
+# Store filtered counts
+PROCESSED_COUNTS$filteredExprMatrix$counts %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  write.table(file = 'CMC_ACC_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
+COUNT_OBJ = File('CMC_ACC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
+annotations(COUNT_OBJ) = annotations(CODE)
+annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
+COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store logCPM
+CQN.GENE_EXPRESSION$y[is.na(CQN.GENE_EXPRESSION$E)] = NA
+CQN.GENE_EXPRESSION$y %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  write.table(file = 'CMC_ACC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
+LCOUNT_OBJ = File('CMC_ACC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
+annotations(LCOUNT_OBJ) = annotations(CODE)
+annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
+LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store cqn offsets
+CQN.GENE_EXPRESSION$offset[is.na(CQN.GENE_EXPRESSION$E)] = NA
+CQN.GENE_EXPRESSION$offset %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  write.table(file = 'CMC_ACC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
+OFFSET_OBJ = File('CMC_ACC_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
+annotations(OFFSET_OBJ) = annotations(CODE)
+annotations(OFFSET_OBJ)$dataSubType = 'offset'
+OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store design matrix
+DESIGN %>%
+  rownameToFirstColumn('SampleID') %>%
+  write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
+DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+annotations(DM_OBJ) = annotations(CODE)
+annotations(DM_OBJ)$dataSubType = 'designMatrix'
+DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store residual gene expression for network analysis
+RESIDUAL.GENE_EXPRESSION %>%
+  rownameToFirstColumn('ensembl_gene_id') %>%
+  write.table(file = 'CMC_ACC_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
+nEXP_OBJ = File('CMC_ACC_DLPFC_netResidualExpression.tsv', 
+                name = 'Normalised, covariates removed residual expression (for network analysis)', 
+                parentId = CODE$properties$id)
+annotations(nEXP_OBJ) = annotations(CODE)
+annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
+nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store differential expression results
+write.table(all.diff.exp, file = 'CMC_ACC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+DEXP_OBJ = File('CMC_ACC_DLPFC_DiffExpression.tsv', 
+                name = 'Differential Expression Results (Dx.Tissue)', 
+                parentId = CODE$properties$id)
+annotations(DEXP_OBJ) = annotations(CODE)
+annotations(DEXP_OBJ)$dataSubType = 'diffExp'
+DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store enrichment results
+write.table(enrichment.results, file = 'CMC_ACC_DLPFC_EnrichResults.tsv', sep = '\t', row.names=F, quote=F)
+ENRICH_OBJ = File('CMC_ACC_DLPFC_EnrichResults.tsv', 
+                  name = 'Enrichment Analysis Results (Dx.Tissue)', 
+                  parentId = CODE$properties$id)
+annotations(ENRICH_OBJ) = annotations(CODE)
+annotations(ENRICH_OBJ)$dataSubType = 'enrichResults'
+ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+# stopCluster(cl)
+```
+|  *Results*                                  |  *SynapseID*                     |
+|  -----------------------------------------  |   ---------                      |
+|  Covariates                                 |  `r COV_OBJ$properties$id`       |
+|  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
+|  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
+|  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
+|  Design Matrix                              |  `r DM_OBJ$properties$id`        |
+|  Residual Expression (for network analysis) |  `r nEXP_OBJ$properties$id`      |
+|  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
+|  Enrichment Analysis                        |  `r ENRICH_OBJ$properties$id`    |
+
+### Source Code
+[R markdown](`r thisFile`)
