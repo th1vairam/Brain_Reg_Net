@@ -10,9 +10,9 @@ library(knit2synapse) # get the package from devtools::install_github('Sage-Bion
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./CMC_HBCC_COMPARISON.Rmd",
-                                 parentId = "syn7501880",
-                                 entityName = 'CMC - HBCC - Reproducibility Analysis')
+knit2synapse::storeAndKnitToFileEntity(file = "./CMC_HBCC_COMPARISON.Rmd",
+                                       parentId = "syn7501880",
+                                       entityName = 'CMC - HBCC - Reproducibility Analysis')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -90,6 +90,7 @@ diff.exp = data.table::rbindlist(diff.exp, use.names = T, fill = T, idcol = 'Mod
 ```
 
 ### Analyse results
+Replication rate based on number of gene differentiallty expressed in the same directiona at an FDR of 0.05
 ```{r anlz.results}
 rep.rate = list()
 for (pval in seq(0,-6,-1)){
@@ -125,9 +126,9 @@ rep.rate %>%
                      tidyr::gather(method, ncount, -fdr) %>%
                      dplyr::mutate(method = gsub('n.','',method))) %>%
   dplyr::filter(fdr <= 1e-1) %>%
-  ggplot(aes(x=fdr, y=rep.rate, size = ncount, color = method)) + geom_point() + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)')
+  ggplot(aes(x=fdr, y=rep.rate, color = method)) + geom_point(aes(size = ncount)) + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)')
 ```
-
+Replication rate based on qvalue
 ```{r anlz.results1}
 rep.rate = list()
 for (pval in c(-1, -1.30103, -2)){
