@@ -1,0 +1,181 @@
+---
+title: "Compare CMC and HBCC differential expression"
+author: "Thanneer M Perumal"
+date: "`r base::date()`"
+output: html_document
+---
+```{r knit2synapse, eval=FALSE, include=FALSE, echo=FALSE}
+library(synapseClient)
+library(knit2synapse) # get the package from devtools::install_github('Sage-Bionetworks/knit2synapse')
+
+synapseLogin()
+
+knit2synapse::knitToFolderEntity(file = "./CMC_HBCC_COMPARISON.Rmd",
+                                 parentId = "syn7501880",
+                                 entityName = 'CMC - HBCC - Reproducibility Analysis')
+```
+
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+## It is assumed your working directory is where this file
+
+## Load required libraries
+library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
+library(data.table)
+library(tidyr)
+library(plyr)
+library(dplyr)
+library(stringr)
+
+library(ggplot2)
+library(limma)
+library(psych)
+library(edgeR)
+library(cqn)
+library(biomaRt)
+
+library(synapseClient)
+library(knitr)
+library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
+
+synapseLogin()
+
+library(doParallel)
+library(foreach)
+
+cl = makeCluster(detectCores()-2)
+registerDoParallel(cl)
+
+options(xtable.type="html")
+
+knitr::opts_chunk$set(
+  echo=FALSE,
+  warning=FALSE,
+  message=FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+```{r synapse.parameters, include=FALSE, cache=TRUE, echo=FALSE}
+parentId = 'syn8672415';
+activityName = 'Reproducibility Analysis b/w cmc and hbcc samples';
+activityDescription = 'Reproducibility Analysis b/w cmc and hbcc samples';
+
+thisFileName <- 'CMC_HBCC_COMPARISON.Rmd'
+
+# Github link
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
+```
+
+### Data download
+```{r download.data, cache=TRUE}
+# Get differential expression results
+diff.exp.ids = c(CMC = 'syn9874406',
+                 CMC_qSVA = 'syn10341319',
+                 HBCC = 'syn10263511',
+                 HBCC_qSVA = 'syn10294725')
+
+diff.exp = lapply(diff.exp.ids, downloadFile) 
+diff.exp$HBCC = diff.exp$HBCC %>%
+  tidyr::unite(a, to.Dx, to.Tissue, sep = '_') %>%
+  tidyr::unite(b, ref.Dx, ref.Tissue, sep = '_') %>%
+  tidyr::unite(Comparison, a, b, sep = '-')
+diff.exp$HBCC_qSVA = diff.exp$HBCC_qSVA %>%
+  tidyr::unite(a, to.Dx, to.Tissue, sep = '_') %>%
+  tidyr::unite(b, ref.Dx, ref.Tissue, sep = '_') %>%
+  tidyr::unite(Comparison, a, b, sep = '-')
+
+diff.exp = data.table::rbindlist(diff.exp, use.names = T, fill = T, idcol = 'Model')
+```
+
+### Analyse results
+```{r anlz.results}
+rep.rate = list()
+for (pval in seq(0,-6,-1)){
+  de.genes = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC') %>%
+    dplyr::mutate(Direction = factor(sign(logFC), levels = c('-1','1'), labels = c('-1' = 'DOWN','1' = 'UP'))) %>%
+    plyr::dlply(.(Model, Direction), .fun = function(x){
+      x$ensembl_gene_id[x$adj.P.Val <= 10^pval] %>% unique()
+    })
+
+  l1 = length(intersect(de.genes$CMC.DOWN, de.genes$HBCC.DOWN))
+  l2 = length(intersect(de.genes$CMC.UP, de.genes$HBCC.UP))
+  l3 = length(unique(c(de.genes$CMC.UP, de.genes$HBCC.UP, de.genes$CMC.DOWN, de.genes$HBCC.DOWN)))
+  wo.qsva = (l1+l2)/l3
+  n.wo.qsva = l1+l2
+
+  l1 = length(intersect(de.genes$CMC_qSVA.DOWN, de.genes$HBCC_qSVA.DOWN))
+  l2 = length(intersect(de.genes$CMC_qSVA.UP, de.genes$HBCC_qSVA.UP))
+  l3 = length(unique(c(de.genes$CMC_qSVA.UP, de.genes$HBCC_qSVA.UP, de.genes$CMC_qSVA.DOWN, de.genes$HBCC_qSVA.DOWN)))
+  w.qsva = (l1+l2)/l3
+  n.w.qsva = l1+l2
+
+  rep.rate = c(rep.rate, list(data.frame(fdr = 10^pval, wo.qsva = wo.qsva, w.qsva = w.qsva,
+                                         n.wo.qsva = n.wo.qsva, n.w.qsva = n.w.qsva)))
+}
+rep.rate = rbindlist(rep.rate)
+rep.rate %>%
+  dplyr::select(fdr, wo.qsva, w.qsva) %>%
+  tidyr::gather(method, rep.rate, -fdr) %>%
+  dplyr::mutate(rep.rate = rep.rate * 100) %>%
+  dplyr::left_join(rep.rate %>%
+                     dplyr::select(fdr, n.wo.qsva, n.w.qsva) %>%
+                     tidyr::gather(method, ncount, -fdr) %>%
+                     dplyr::mutate(method = gsub('n.','',method))) %>%
+  dplyr::filter(fdr <= 1e-1) %>%
+  ggplot(aes(x=fdr, y=rep.rate, size = ncount, color = method)) + geom_point() + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)')
+```
+
+```{r anlz.results1}
+rep.rate = list()
+for (pval in c(-1, -1.30103, -2)){
+  de.genes = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC') %>%
+    plyr::dlply(.(Model), .fun = function(x){
+      x$ensembl_gene_id[x$adj.P.Val <= 10^pval] %>% unique()
+    })
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC', Model == 'CMC', ensembl_gene_id %in% de.genes$HBCC) %>%
+    dplyr::select(P.Value) %>%
+    qvalue::qvalue(fdr.level = 10^pval)
+  rs = data.frame(method = 'wo.qsva', ref.data = 'HBCC', rep.data = 'CMC',
+                  rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                  ncount = sum(tmp$significant))
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC', Model == 'HBCC', ensembl_gene_id %in% de.genes$CMC) %>%
+    dplyr::select(P.Value) %>%
+    qvalue::qvalue(fdr.level = 10^pval)
+  rs = rbind(rs,
+             data.frame(method = 'wo.qsva', ref.data = 'CMC', rep.data = 'HBCC',
+                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        ncount = sum(tmp$significant)))
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC', Model == 'CMC_qSVA', ensembl_gene_id %in% de.genes$HBCC_qSVA) %>%
+    dplyr::select(P.Value) %>%
+    qvalue::qvalue(fdr.level = 10^pval)
+  rs = rbind(rs,
+             data.frame(method = 'w.qsva', ref.data = 'HBCC', rep.data = 'CMC',
+                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        ncount = sum(tmp$significant)))
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC', Model == 'HBCC_qSVA', ensembl_gene_id %in% de.genes$CMC_qSVA) %>%
+    dplyr::select(P.Value) %>%
+    qvalue::qvalue(fdr.level = 10^pval)
+  rs = rbind(rs,
+             data.frame(method = 'w.qsva', ref.data = 'CMC', rep.data = 'HBCC',
+                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        ncount = sum(tmp$significant)))
+
+  rs$fdr = 10^pval
+  rep.rate = c(rep.rate, list(rs))
+}
+rep.rate = rbindlist(rep.rate)
+rep.rate %>%
+  ggplot(aes(x=fdr, y=rep.rate*100, color = method)) + geom_point(aes(size = ncount)) + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)') + facet_grid(rep.data~., scales = 'free_y')
+```
