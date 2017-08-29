@@ -1360,7 +1360,7 @@ nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # Store differential expression results
 rbindlist(all.diff.exp, use.names = T, fill = T, idcol = 'Model') %>%
   write.table(file = 'MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', name = 'Differential Expression Results (cogdx)', 
+DEXP_OBJ = File('MSSM_FP_STG_PHG_IFG_DiffExpression.tsv', name = 'Differential Expression Results (BrainRegion.Diagnosis)', 
                 parentId = CODE$properties$id)
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
