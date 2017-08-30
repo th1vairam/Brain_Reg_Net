@@ -174,21 +174,39 @@ p[[7]] = p[[7]] + ggtitle('Mapped Reads') + my.theme
 p[[8]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = rRNARate, color = Study)) + geom_boxplot()
 p[[8]] = p[[8]] + ggtitle('rRNARate') + my.theme
 
-p = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2) 
-p
+p1 = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2) 
+p1
 ```
 
 Age match CMC and HBCC (per Dx.Tissue category)
 ```{r preprocess.data1}
 # Filter all ACC samples and Other samples
-tmp = COVARIATES %>%
+max.age = COVARIATES %>%
   dplyr::group_by(Dx.Tissue, Study) %>%
-  dplyr::summarise(mn = quantile(Age_of_Death, 0.25), mx = quantile(Age_of_Death, 0.75)) %>%
-  dplyr::group_by(Dx.Tissue) %>%
-  dplyr::summarise(mn = max(mn), mx = min(mx))
+  dplyr::filter(Study == 'CMC') %>%
+  dplyr::summarise(mn = quantile(Age_of_Death, 0.5))
+
 COVARIATES = COVARIATES %>%
-  dplyr::filter((Dx.Tissue == tmp$Dx.Tissue[1] & Age_of_Death >= tmp$mn[1] & Age_of_Death <= tmp$mx[1]) |
-                  (Dx.Tissue == tmp$Dx.Tissue[2] & Age_of_Death >= tmp$mn[2] & Age_of_Death <= tmp$mx[2]))
+  dplyr::filter((Dx.Tissue == max.age$Dx.Tissue[1] & Age_of_Death <= max.age$mn[1]) |
+                  (Dx.Tissue == max.age$Dx.Tissue[2] & Age_of_Death <= max.age$mn[2]))
+
+COVARIATES %>%
+  dplyr::group_by(Dx.Tissue, Study) %>%
+  dplyr::summarise(count = n()) %>%
+  tidyr::spread(Study, count) %>% 
+  kable()
+```
+
+PMI match CMC and HBCC (per Dx.Tissue category)
+```{r preprocess.data2}
+max.pmi = COVARIATES %>%
+  dplyr::group_by(Dx.Tissue) %>%
+  dplyr::filter(Study == 'HBCC') %>%
+  dplyr::summarise(mn = quantile(PMI, 0.5))
+
+COVARIATES = COVARIATES %>%
+  dplyr::filter((Dx.Tissue == max.age$Dx.Tissue[1] & PMI <= max.pmi$mn[1]) |
+                  (Dx.Tissue == max.age$Dx.Tissue[2] & PMI <= max.pmi$mn[2]))
 
 COVARIATES %>%
   dplyr::group_by(Dx.Tissue, Study) %>%
@@ -293,8 +311,8 @@ p[[7]] = p[[7]] + ggtitle('Mapped Reads') + my.theme
 p[[8]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = rRNARate, color = Study)) + geom_boxplot()
 p[[8]] = p[[8]] + ggtitle('rRNARate') + my.theme
 
-p = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2)
-p
+p1 = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2)
+p1
 ```
 ### Filter genes
 Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
@@ -349,7 +367,7 @@ plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
-p <- p + geom_text(aes(label= label), size=4, hjust=0)
+# p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
 tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
@@ -490,17 +508,71 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 ```{r preAdjustedSigCovars.NULL, fig.width=20, fig.height=12}
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
-### Normalisation
-Based on different model selection methodology (as seen here syn8468116, syn9772932, and syn9774491), following variables are used as covariates: Institution, Gender, RIN, and IntronicRate.
 
-NOTE: Dx.Tissue.Study is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue)
-
-```{r custom.normalisation, results='asis'}
+### Iterative Normalisation
+Dx.Tissue.Study is chosen as the primary variable of interest (i.e., covariate selection is conditioned on diagnosis and tissue)
+```{r iterative.normalisation}
 # Primary variable of interest
-COVARIATES$Dx.Tissue.Study = paste(COVARIATES$Dx.Tissue, COVARIATES$Study, sep='_') %>%
-  factor
-postAdjustCovars = c('Dx.Tissue.Study', 'Institution', 'Gender', 'RIN', 'IntronicRate')
+COVARIATES$Dx.Tissue.Study = paste(COVARIATES$Dx.Tissue, COVARIATES$Study, sep = '_') %>%
+  factor()
+postAdjustCovars = c('Dx.Tissue.Study');
+avoid.covariates = c('Dx.Tissue', 'Study', 'Individual_ID')
 
+# Assign residual covariates
+residualCovars = setdiff(preAdjustedSigCovars$significantCovars, 
+                         c(postAdjustCovars, avoid.covariates))
+residualSigCovars = preAdjustedSigCovars
+covariatesEffects = preAdjustedSigCovars$Effects.significantCovars[residualCovars]
+postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects))) %>% unique()
+
+loopCount = 0 
+while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
+  writeLines(paste('Using following covariates in the model:',
+                   paste(postAdjustCovars, collapse=', ')))
+
+  # Post adjusted design matrix
+  DM1 = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)
+  DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
+
+  # Estimate voom weights for dispersion control
+  VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design=DM1$design, plot=F)
+  VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+  
+  # Fit linear model using new weights and new design
+  VOOM.ADJUSTED.FIT = lmFit(CQN.GENE_EXPRESSION$E,
+                            design = DM1$design,
+                            weights = VOOM.GENE_EXPRESSION$weights)
+
+  # Residuals after normalisation
+  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
+                                                CQN.GENE_EXPRESSION$E)
+  
+  # Residual covariates to choose from
+  residCovars <- setdiff(c(FactorCovariates,ContCovariates),
+                         c(postAdjustCovars, avoid.covariates))
+
+  # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
+  residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
+                                                COVARIATES[, residCovars, drop=F], 
+                                                'adjusted design(voom-normalized)',
+                                                isKeyPlot=TRUE)
+
+  # Add postadjusted covariates (if any)
+  residCovars = setdiff(residualSigCovars$significantCovars, c(postAdjustCovars, avoid.covariates))
+  covariatesEffects = residualSigCovars$Effects.significantCovars[residCovars]
+
+  postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
+  loopCount = loopCount + 1
+}
+
+modelStr <- paste(paste(gsub('_','\\\\_',postAdjustCovars), collapse=', '),
+                  'as fixed effects')
+
+tmp <- paste('Using following covariates in the final model:', modelStr)
+```
+
+### Normalisation
+```{r custom.normalisation, results='asis'}
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', ')))
 
@@ -624,6 +696,104 @@ p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.posi
 p = p + facet_grid(Comparison~., scales = 'free_y')
 p = p + ggtitle('Differential Expression between Schizophrenia and Control')
 p
+
+all.diff.exp = list(Diagnosis.Study = DE)
+all.fit = list(Diagnosis.Study = ADJUSTED.FIT)
+```
+
+### Associate differential expression results with gc content, gene length and average expression
+```{r associate.de, fig.height=10, fig.width=15}
+pl = list()
+pl[[1]] = ggplot(DE, aes(x = log10(Length), y = logFC, color = Direction)) + geom_point() 
+pl[[1]] = pl[[1]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = log10(Length), y = logFC))
+pl[[1]] = pl[[1]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[1]] = pl[[1]] + theme(legend.position = 'top')
+
+pl[[2]] = ggplot(DE, aes(x = percentage_gc_content, y = logFC, color = Direction)) + geom_point()
+pl[[2]] = pl[[2]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = percentage_gc_content, y = logFC))
+pl[[2]] = pl[[2]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[2]] = pl[[2]] + theme(legend.position = 'top')
+
+pl[[3]] = ggplot(DE, aes(x = AveExpr, y = logFC, color = Direction)) + geom_point()
+pl[[3]] = pl[[3]] + geom_smooth(method = 'loess', inherit.aes = FALSE, aes(x = AveExpr, y = logFC))
+pl[[3]] = pl[[3]] + facet_grid(Comparison~.) + scale_color_manual(values = c('green','grey','red'))
+pl[[3]] = pl[[3]] + theme(legend.position = 'top')
+
+multiplot(plotlist = pl, cols = 3)
+```
+
+### Differential expression analysis (SCZ - Control gender specific)
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diffExp1, fig.height=15, fig.width=20}
+COVARIATES$Dx.Tissue.Study.Gender = paste(COVARIATES$Dx.Tissue.Study,
+                                          COVARIATES$Gender,
+                                          sep = '_') %>%
+  factor()
+
+postAdjustCovars = c('Dx.Tissue.Study.Gender', setdiff(postAdjustCovars, c('Dx.Tissue.Study', 'Gender')))
+writeLines(paste('Using following covariates in the model:', paste(postAdjustCovars, collapse=', ')))
+
+# Post adjusted design matrix
+DESIGN = getDesignMatrix(COVARIATES[,postAdjustCovars,drop=F],Intercept = F)$design
+DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
+
+# Estimate voom weights
+VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design = DESIGN)
+VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
+
+# Fit linear model using new weights and new design
+ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
+
+# Fit contrast
+contrast = makeContrasts(contrasts=
+                           c("Dx.Tissue.Study.GenderSCZ_DLPFC_CMC_Female-Dx.Tissue.Study.GenderControl_DLPFC_CMC_Female",
+                             "Dx.Tissue.Study.GenderSCZ_DLPFC_CMC_Male-Dx.Tissue.Study.GenderControl_DLPFC_CMC_Male",
+                             "Dx.Tissue.Study.GenderSCZ_DLPFC_HBCC_Female-Dx.Tissue.Study.GenderControl_DLPFC_HBCC_Female",
+                             "Dx.Tissue.Study.GenderSCZ_DLPFC_HBCC_Male-Dx.Tissue.Study.GenderControl_DLPFC_HBCC_Male"),
+                         levels = colnames(ADJUSTED.FIT$coefficients))
+FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT){
+  topTable(FIT, coef=i, number = 50000, confint = TRUE) %>%
+    rownameToFirstColumn('ensembl_gene_id') 
+}, FIT.CONTR) 
+names(DE) = gsub('Dx.Tissue.Study.Gender', '', colnames(contrast))
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Direction = sign(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(Ensemble2HGNC) %>%
+  left_join(GENE.LEN)
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05) %>%
+  dplyr::select(ensembl_gene_id, Comparison, logFC) %>%
+  group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+tmp1 = DE %>%
+  dplyr::filter(adj.P.Val <= 0.05, abs(logFC) >= log2(1.2)) %>%
+  dplyr::group_by(Comparison) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2_DOWN = length(unique(ensembl_gene_id[logFC < 0])),
+                   FDR_0_05_FC_1.2_UP = length(unique(ensembl_gene_id[logFC > 0])))
+
+kable(full_join(tmp,tmp1))
+
+p = DE %>%
+  ggplot(aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position = 'top')
+p = p + facet_grid(Comparison~., scales = 'free_y')
+p = p + ggtitle('Differential Expression between Schizophrenia and Control')
+p
+
+all.diff.exp = c(all.diff.exp, list(Diagnosis.Study.Gender = DE))
+all.fit = c(all.fit, list(Diagnosis.Study.Gender = ADJUSTED.FIT))
 ```
 
 ### Store files in synapse
@@ -699,7 +869,9 @@ annotations(DM_OBJ)$dataSubType = 'designMatrix'
 DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
-write.table(all.diff.exp, file = 'CMC_HBCC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
+all.diff.exp %>%
+  rbindlist(use.names = T, fill = T) %>%
+  write.table(file = 'CMC_HBCC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
 DEXP_OBJ = File('CMC_HBCC_DLPFC_DiffExpression.tsv', 
 name = 'Differential Expression Results (Dx.Tissue)', 
 parentId = CODE$properties$id)
