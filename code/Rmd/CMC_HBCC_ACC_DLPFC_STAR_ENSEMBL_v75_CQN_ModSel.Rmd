@@ -10,9 +10,9 @@ library(knit2synapse)
 
 synapseLogin()
 
-knit2synapse::knitToFolderEntity(file = "./CMC_HBCC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
+knit2synapse::knitToFolderEntity(file = "./CMC_HBCC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId = "syn7501880",
-                                 entityName = 'CMC and HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
+                                 entityName = 'CMC and HBCC - ACC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -67,7 +67,7 @@ parentId = "syn7501880";
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (CMC and HBCC DLPFC)';
 
-thisFileName <- 'CMC_HBCC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd'
+thisFileName <- 'CMC_HBCC_ACC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd'
 
 # Github link
 thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
@@ -123,19 +123,17 @@ COVARIATES_HBCC = downloadFile(COVARIATES_HBCC_ID) %>%
 COVARIATES = rbindlist(list(CMC = COVARIATES_CMC, 
                             HBCC = COVARIATES_HBCC), 
                        use.names = T, fill = T, idcol = 'Study')
+COVARIATES$Dx.Tissue.Study = paste(COVARIATES$Dx.Tissue, COVARIATES$Study, sep = '_')
 ```
 
 ### Data preprocessing
-Filter DLPFC SCZ and Control samples alone
 ```{r preprocess.data, fig.height=10, fig.width=15}
-# Filter all ACC samples and Other samples
 COVARIATES = COVARIATES %>%
-  dplyr::filter(Dx.Tissue %in% c("SCZ_DLPFC", "Control_DLPFC"))
+  dplyr::filter(!(Dx.Tissue %in% c('BP_DLPFC', 'Other_ACC', 'Other_DLPFC')))
 
 COVARIATES %>%
-  dplyr::group_by(Dx.Tissue, Study) %>%
-  dplyr::summarise(count = n()) %>%
-  tidyr::spread(Study, count) %>% 
+  dplyr::group_by(Dx.Tissue.Study) %>%
+  dplyr::summarise(count = n()) %>% 
   kable()
 
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1),
@@ -178,43 +176,6 @@ p1 = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2)
 p1
 ```
 
-Age match CMC and HBCC (per Dx.Tissue category)
-```{r preprocess.data1}
-# Filter all ACC samples and Other samples
-max.age = COVARIATES %>%
-  dplyr::group_by(Dx.Tissue, Study) %>%
-  dplyr::filter(Study == 'CMC') %>%
-  dplyr::summarise(mn = quantile(Age_of_Death, 0.5))
-
-COVARIATES = COVARIATES %>%
-  dplyr::filter((Dx.Tissue == max.age$Dx.Tissue[1] & Age_of_Death <= max.age$mn[1]) |
-                  (Dx.Tissue == max.age$Dx.Tissue[2] & Age_of_Death <= max.age$mn[2]))
-
-COVARIATES %>%
-  dplyr::group_by(Dx.Tissue, Study) %>%
-  dplyr::summarise(count = n()) %>%
-  tidyr::spread(Study, count) %>% 
-  kable()
-```
-
-PMI match CMC and HBCC (per Dx.Tissue category)
-```{r preprocess.data2}
-max.pmi = COVARIATES %>%
-  dplyr::group_by(Dx.Tissue) %>%
-  dplyr::filter(Study == 'HBCC') %>%
-  dplyr::summarise(mn = quantile(PMI, 0.5))
-
-COVARIATES = COVARIATES %>%
-  dplyr::filter((Dx.Tissue == max.age$Dx.Tissue[1] & PMI <= max.pmi$mn[1]) |
-                  (Dx.Tissue == max.age$Dx.Tissue[2] & PMI <= max.pmi$mn[2]))
-
-COVARIATES %>%
-  dplyr::group_by(Dx.Tissue, Study) %>%
-  dplyr::summarise(count = n()) %>%
-  tidyr::spread(Study, count) %>% 
-  kable()
-```
-
 ```{r gene.param}
 ## Get GC content from biomart
 backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
@@ -244,10 +205,10 @@ rownames(GENE.LEN) = GENE.LEN$ensembl_gene_id
 ### Covariates clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c('Study', 'Individual_ID', 'Institution', 'Gender', 'LibraryBatch', 'Dx.Tissue', 'RibozeroBatch',
-                      'FlowcellBatch')
-ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
-                    "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate")
+FactorCovariates <- c('Individual_ID', 'Institution', 'Gender', 'LibraryBatch', 'Dx.Tissue.Study',
+                      'RibozeroBatch', 'FlowcellBatch')
+ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate",
+                    "IntergenicRate", "GenesDetected", "TranscriptsDetected", "ExpProfEfficiency", "rRNARate")
 
 # Find inter relation between factor covariates
 rownames(COVARIATES) = COVARIATES$SampleID
@@ -274,53 +235,13 @@ h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'A
 draw(h, heatmap_legend_side = 'left')
 ```
 
-### Explore metatdata
-```{r data.explore, fig.width = 15, fig.height = 10}
-my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
-
-# RIN
-p = list()
-p[[1]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = RIN, color = Study)) + geom_boxplot()
-p[[1]] = p[[1]] + ggtitle('RIN') + my.theme
-
-# Age of Death
-p[[2]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = Age_of_Death, color = Study)) + geom_boxplot()
-p[[2]] = p[[2]] + ggtitle('AgeOfDeath') + my.theme
-
-# PMI
-p[[3]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = PMI, color = Study)) + geom_boxplot()
-p[[3]] = p[[3]] + ggtitle('PMI (in hours)') + my.theme
-
-# Intronic Rate
-p[[4]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntronicRate, color = Study)) + geom_boxplot()
-p[[4]] = p[[4]] + ggtitle('Intronic Rate') + my.theme
-
-# IntergenicRate
-p[[5]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = IntergenicRate, color = Study)) + geom_boxplot()
-p[[5]] = p[[5]] + ggtitle('Intergenic Rate') + my.theme
-
-# Transcripts Detected
-p[[6]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = TranscriptsDetected, color = Study)) + geom_boxplot()
-p[[6]] = p[[6]] + ggtitle('Transcripts Detected') + my.theme
-
-# Mapped Reads
-p[[7]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = MappedReads, color = Study)) + geom_boxplot()
-p[[7]] = p[[7]] + ggtitle('Mapped Reads') + my.theme
-
-# rRNARate
-p[[8]] = ggplot(COVARIATES, aes(x = Dx.Tissue, y = rRNARate, color = Study)) + geom_boxplot()
-p[[8]] = p[[8]] + ggtitle('rRNARate') + my.theme
-
-p1 = ggpubr::ggarrange(plotlist = p, ncol = 4, nrow = 2)
-p1
-```
 ### Filter genes
 Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx.Tissue. Also remove genes with missing gene length and percentage GC content
 ```{r cpmnormalisation}
 COUNT[is.na(COUNT)] = 0
 genesToAnalyze = COVARIATES %>%
   rownameToFirstColumn('SampleID') %>%
-  dlply(.(Dx.Tissue), .fun = function(mtd, count){
+  dlply(.(Dx.Tissue.Study), .fun = function(mtd, count){
     processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
                                                      MIN_GENE_CPM=1, 
                                                      MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
@@ -360,18 +281,18 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC2=PC$rotation[,2])
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
-  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  tidyr::separate(Dx.Tissue.Study, c('Dx','Tissue', 'Study'), sep = '_') %>%
   dplyr::mutate(label = SampleID)
 # plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(color=Study, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
-tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
-  group_by(Study, Dx, Tissue) %>%
+tmp = tidyr::separate(COVARIATES, Dx.Tissue.Study, c('Dx', 'Tissue', 'Study'), sep = '_') %>%
+  group_by(Study, Dx, Tissue, Study) %>%
   summarise(count = n()) %>%
   spread(Dx, count)
 ```
@@ -449,10 +370,10 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC2=PC$rotation[,2])
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
-  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_')
+  tidyr::separate(Dx.Tissue.Study, c('Dx','Tissue','Study'), sep = '_')
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(color=Study, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 p
@@ -460,7 +381,7 @@ p
 Tree based clustering of samples
 ```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue")])
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx.Tissue.Study")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E)))
@@ -476,21 +397,6 @@ WGCNA::plotDendroAndColors(tree,
 ```{r temp, include = F}
 dev.off()
 gc()
-```
-
-### Distribution of samples (log cpm)
-```{r lcpm.dist, cache=FALSE}
-# Plot abberent distribution of logcpm counts
-tmp1 = (CQN.GENE_EXPRESSION$E) %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
-  tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
-  left_join(COVARIATES %>%
-              rownameToFirstColumn('SampleID') %>%
-              tidyr::separate(Dx.Tissue, c('Dx', 'Tissue'), sep = '_'))
-
-p = ggplot(tmp1, aes(x = logCPM, color = SampleID)) + geom_density() 
-p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free')
-p
 ```
 
 ### Significant Covariates
@@ -616,12 +522,12 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
                        PC2=PC$rotation[,2])
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>%
-  tidyr::separate(Dx.Tissue, c('Dx','Tissue'), sep = '_') %>%
+  tidyr::separate(Dx.Tissue.Study, c('Dx','Tissue','Study'), sep = '_') %>%
   dplyr::mutate(label = SampleID)
 # plotdata$label[!(plotdata$SampleID %in% top.nsamples)] = ''
 
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Tissue, size=Age_of_Death))
+p <- p + geom_point(aes(color=Study, shape=Tissue, size=Age_of_Death))
 p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 # p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
@@ -629,7 +535,7 @@ p
 
 ```{r decompse.normalise.data2.1, fig.height=8, fig.width=12, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue','Institution')])
+COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue.Study','Institution')])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tree = hclust(as.dist(t(RESIDUAL.GENE_EXPRESSION)))
@@ -640,7 +546,7 @@ WGCNA::plotDendroAndColors(tree,
                            dendroLabels = FALSE, 
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
-                           groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue','Institution')]))
+                           groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue.Study','Institution')]))
 ```
 
 ```{r temp1, include=F}
@@ -652,8 +558,9 @@ gc()
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp, fig.height=15, fig.width=20}
 # Fit contrast
-contrast = makeContrasts(contrasts=c("Dx.Tissue.StudySCZ_DLPFC_CMC-Dx.Tissue.StudyControl_DLPFC_CMC",
-                                     "Dx.Tissue.StudySCZ_DLPFC_HBCC-Dx.Tissue.StudyControl_DLPFC_HBCC"),
+contrast = makeContrasts(contrasts=c("Dx.Tissue.StudySCZ_DLPFC_CMC_-Dx.Tissue.StudyControl_DLPFC_CMC_",
+                                     "Dx.Tissue.StudySCZ_DLPFC_HBCC_-Dx.Tissue.StudyControl_DLPFC_HBCC_",
+                                     "Dx.Tissue.StudySCZ_ACC_CMC_-Dx.Tissue.StudyControl_ACC_CMC_"),
                          levels = colnames(ADJUSTED.FIT$coefficients))
 FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
@@ -725,9 +632,8 @@ multiplot(plotlist = pl, cols = 3)
 ### Differential expression analysis (SCZ - Control gender specific)
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diffExp1, fig.height=15, fig.width=20}
-COVARIATES$Dx.Tissue.Study.Gender = paste(COVARIATES$Dx.Tissue.Study,
-                                          COVARIATES$Gender,
-                                          sep = '_') %>%
+COVARIATES$Dx.Tissue.Study.Gender = paste0(COVARIATES$Dx.Tissue.Study,
+                                           COVARIATES$Gender) %>%
   factor()
 
 postAdjustCovars = c('Dx.Tissue.Study.Gender', setdiff(postAdjustCovars, c('Dx.Tissue.Study', 'Gender')))
@@ -749,7 +655,9 @@ contrast = makeContrasts(contrasts=
                            c("Dx.Tissue.Study.GenderSCZ_DLPFC_CMC_Female-Dx.Tissue.Study.GenderControl_DLPFC_CMC_Female",
                              "Dx.Tissue.Study.GenderSCZ_DLPFC_CMC_Male-Dx.Tissue.Study.GenderControl_DLPFC_CMC_Male",
                              "Dx.Tissue.Study.GenderSCZ_DLPFC_HBCC_Female-Dx.Tissue.Study.GenderControl_DLPFC_HBCC_Female",
-                             "Dx.Tissue.Study.GenderSCZ_DLPFC_HBCC_Male-Dx.Tissue.Study.GenderControl_DLPFC_HBCC_Male"),
+                             "Dx.Tissue.Study.GenderSCZ_DLPFC_HBCC_Male-Dx.Tissue.Study.GenderControl_DLPFC_HBCC_Male",
+                             "Dx.Tissue.Study.GenderSCZ_ACC_CMC_Female-Dx.Tissue.Study.GenderControl_ACC_CMC_Female",
+                             "Dx.Tissue.Study.GenderSCZ_ACC_CMC_Male-Dx.Tissue.Study.GenderControl_ACC_CMC_Male"),
                          levels = colnames(ADJUSTED.FIT$coefficients))
 FIT.CONTR = contrasts.fit(ADJUSTED.FIT, contrasts=contrast)
 FIT.CONTR = eBayes(FIT.CONTR)
@@ -817,7 +725,7 @@ normalizationType	= 'CQN'
 )
 
 # Code
-CODE <- Folder(name = "CMC and HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN", parentId = parentId)
+CODE <- Folder(name = "CMC and HBCC - ACC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 

@@ -74,7 +74,8 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 diff.exp.ids = c(CMC = 'syn9874406',
                  CMC_qSVA = 'syn10341319',
                  HBCC = 'syn10263511',
-                 HBCC_qSVA = 'syn10294725')
+                 HBCC_qSVA = 'syn10294725',
+                 MATCHED = 'syn10490519')
 
 diff.exp = lapply(diff.exp.ids, downloadFile) 
 diff.exp$HBCC = diff.exp$HBCC %>%
@@ -93,7 +94,7 @@ diff.exp = data.table::rbindlist(diff.exp, use.names = T, fill = T, idcol = 'Mod
 Replication rate based on number of gene differentiallty expressed in the same directiona at an FDR of 0.05
 ```{r anlz.results}
 rep.rate = list()
-for (pval in seq(0,-6,-1)){
+for (pval in seq(0,-4,-1)){
   de.genes = diff.exp %>%
     dplyr::filter(Comparison == 'SCZ_DLPFC-Control_DLPFC') %>%
     dplyr::mutate(Direction = factor(sign(logFC), levels = c('-1','1'), labels = c('-1' = 'DOWN','1' = 'UP'))) %>%
@@ -112,21 +113,37 @@ for (pval in seq(0,-6,-1)){
   l3 = length(unique(c(de.genes$CMC_qSVA.UP, de.genes$HBCC_qSVA.UP, de.genes$CMC_qSVA.DOWN, de.genes$HBCC_qSVA.DOWN)))
   w.qsva = (l1+l2)/l3
   n.w.qsva = l1+l2
+  
+  de.genes = diff.exp %>%
+    dplyr::filter(Comparison %in% c('SCZ_DLPFC_CMC-Control_DLPFC_CMC', 'SCZ_DLPFC_HBCC-Control_DLPFC_HBCC')) %>%
+    dplyr::mutate(Direction = factor(sign(logFC), levels = c('-1','1'), labels = c('-1' = 'DOWN','1' = 'UP'))) %>%
+    plyr::dlply(.(Comparison, Model, Direction), .fun = function(x){
+      x$ensembl_gene_id[x$adj.P.Val <= 10^pval] %>% unique()
+    })
+  
+  l1 = length(intersect(de.genes$`SCZ_DLPFC_CMC-Control_DLPFC_CMC.MATCHED.DOWN`,
+                        de.genes$`SCZ_DLPFC_HBCC-Control_DLPFC_HBCC.MATCHED.DOWN`))
+  l2 = length(intersect(de.genes$`SCZ_DLPFC_CMC-Control_DLPFC_CMC.MATCHED.UP`, 
+                        de.genes$`SCZ_DLPFC_HBCC-Control_DLPFC_HBCC.MATCHED.UP`))
+  l3 = length(unique(Reduce(c, de.genes)))
+  matched = (l1+l2)/l3
+  n.matched = l1+l2
 
-  rep.rate = c(rep.rate, list(data.frame(fdr = 10^pval, wo.qsva = wo.qsva, w.qsva = w.qsva,
-                                         n.wo.qsva = n.wo.qsva, n.w.qsva = n.w.qsva)))
+  rep.rate = c(rep.rate, list(data.frame(fdr = 10^pval, 
+                                         wo.qsva = wo.qsva, w.qsva = w.qsva, matched = matched,
+                                         n.wo.qsva = n.wo.qsva, n.w.qsva = n.w.qsva, n.matched = n.matched)))
 }
 rep.rate = rbindlist(rep.rate)
 rep.rate %>%
-  dplyr::select(fdr, wo.qsva, w.qsva) %>%
+  dplyr::select(fdr, wo.qsva, w.qsva, matched) %>%
   tidyr::gather(method, rep.rate, -fdr) %>%
   dplyr::mutate(rep.rate = rep.rate * 100) %>%
   dplyr::left_join(rep.rate %>%
-                     dplyr::select(fdr, n.wo.qsva, n.w.qsva) %>%
-                     tidyr::gather(method, ncount, -fdr) %>%
+                     dplyr::select(fdr, n.wo.qsva, n.w.qsva, n.matched) %>%
+                     tidyr::gather(method, nOverlap, -fdr) %>%
                      dplyr::mutate(method = gsub('n.','',method))) %>%
   dplyr::filter(fdr <= 1e-1) %>%
-  ggplot(aes(x=fdr, y=rep.rate, color = method)) + geom_point(aes(size = ncount)) + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)')
+  ggplot(aes(x=fdr, y=rep.rate, color = method)) + geom_point(aes(size = nOverlap)) + geom_line() + scale_x_log10() + xlab('FDR') + ylab('Replication Rate (%)') + ggtitle('CMC - HBCC - DLPFC')
 ```
 Replication rate based on qvalue
 ```{r anlz.results1}
@@ -143,7 +160,7 @@ for (pval in c(-1, -1.30103, -2)){
     dplyr::select(P.Value) %>%
     qvalue::qvalue(fdr.level = 10^pval)
   rs = data.frame(method = 'wo.qsva', ref.data = 'HBCC', rep.data = 'CMC',
-                  rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                  rep.rate = 1-tmp$pi0, 
                   ncount = sum(tmp$significant))
   
   tmp = diff.exp %>%
@@ -152,7 +169,7 @@ for (pval in c(-1, -1.30103, -2)){
     qvalue::qvalue(fdr.level = 10^pval)
   rs = rbind(rs,
              data.frame(method = 'wo.qsva', ref.data = 'CMC', rep.data = 'HBCC',
-                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        rep.rate = 1-tmp$pi0, 
                         ncount = sum(tmp$significant)))
   
   tmp = diff.exp %>%
@@ -161,7 +178,7 @@ for (pval in c(-1, -1.30103, -2)){
     qvalue::qvalue(fdr.level = 10^pval)
   rs = rbind(rs,
              data.frame(method = 'w.qsva', ref.data = 'HBCC', rep.data = 'CMC',
-                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        rep.rate = 1-tmp$pi0, 
                         ncount = sum(tmp$significant)))
   
   tmp = diff.exp %>%
@@ -170,9 +187,44 @@ for (pval in c(-1, -1.30103, -2)){
     qvalue::qvalue(fdr.level = 10^pval)
   rs = rbind(rs,
              data.frame(method = 'w.qsva', ref.data = 'CMC', rep.data = 'HBCC',
-                        rep.rate = sum(tmp$significant)/length(tmp$significant), 
+                        rep.rate = 1-tmp$pi0, 
                         ncount = sum(tmp$significant)))
 
+  de.genes = diff.exp %>%
+    dplyr::filter(Comparison %in% c('SCZ_DLPFC_CMC-Control_DLPFC_CMC', 'SCZ_DLPFC_HBCC-Control_DLPFC_HBCC')) %>%
+    plyr::dlply(.(Comparison), .fun = function(x){
+      x$ensembl_gene_id[x$adj.P.Val <= 10^pval] %>% unique()
+    })
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC_CMC-Control_DLPFC_CMC', 
+                  ensembl_gene_id %in% de.genes$`SCZ_DLPFC_HBCC-Control_DLPFC_HBCC`) %>%
+    dplyr::select(P.Value)
+  
+  if (dim(tmp)[1] != 0){
+    tmp %>%
+      qvalue::qvalue(fdr.level = 10^pval)
+    rs = rbind(rs,
+               data.frame(method = 'matched', ref.data = 'HBCC', rep.data = 'CMC',
+                          rep.rate = 1-tmp$pi0, 
+                          ncount = sum(tmp$significant)))
+  } else {
+    rs = rbind(rs,
+               data.frame(method = 'matched', ref.data = 'HBCC', rep.data = 'CMC',
+                          rep.rate = 0, 
+                          ncount = 0))
+  }
+  
+  tmp = diff.exp %>%
+    dplyr::filter(Comparison == 'SCZ_DLPFC_HBCC-Control_DLPFC_HBCC', 
+                  ensembl_gene_id %in% de.genes$`SCZ_DLPFC_CMC-Control_DLPFC_CMC`) %>%
+    dplyr::select(P.Value) %>%
+    qvalue::qvalue(fdr.level = 10^pval)
+  rs = rbind(rs,
+             data.frame(method = 'matched', ref.data = 'CMC', rep.data = 'HBCC',
+                        rep.rate = 1-tmp$pi0, 
+                        ncount = sum(tmp$significant)))
+  
   rs$fdr = 10^pval
   rep.rate = c(rep.rate, list(rs))
 }
