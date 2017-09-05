@@ -521,9 +521,9 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design=DM1$design, plot=F)
 
   # # Calculate correlation values of random effects
-  correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
-                                             block = COVARIATES$individualIdentifier)
-  # correlation = list(); correlation$cor = 0.4
+  # correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
+  #                                            block = COVARIATES$individualIdentifier)
+  correlation = list(); correlation$cor = 0.457197
 
   # Re-estimate voom weights
   VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 

@@ -51,6 +51,7 @@ doParallel::registerDoParallel(cl)
 synapseLogin()
 
 options(xtable.type="html")
+source('../R/parallelDuplicateCorrelation.R')
 
 knitr::opts_chunk$set(
   echo=FALSE,
@@ -545,6 +546,7 @@ residualCovars = setdiff(preAdjustedSigCovars$significantCovars,
 residualSigCovars = preAdjustedSigCovars
 covariatesEffects = preAdjustedSigCovars$Effects.significantCovars[residualCovars]
 postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects))) %>% unique()
+notEstimable = c()
 
 loopCount = 0 
 while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
@@ -562,28 +564,35 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
   # Calculate correlation values of random effects
   VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
   correlation = parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION,
-                                             block = COVARIATES$Donor_ID)
+                                             block = COVARIATES$Donor_ID,
+                                             method = 'lmer')
+  # correlation = list(); correlation$cor = 0.457197
   
-  # Re-estimate voom weights
-  VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 
-                              design=DM1$design, plot=F, 
+  if (!is.nan(correlation$cor)){
+    # Re-estimate voom weights
+    VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 
+                                design=DM1$design, plot=F, 
+                                block = COVARIATES$Donor_ID, 
+                                correlation = correlation$cor)
+
+    # Fit linear model using new weights and new design
+    VOOM.ADJUSTED.FIT = lmFit(CQN.GENE_EXPRESSION$E,
+                              design = DM1$design,
+                              weights = VOOM.GENE_EXPRESSION$weights,
                               block = COVARIATES$Donor_ID, 
                               correlation = correlation$cor)
 
-  # Fit linear model using new weights and new design
-  VOOM.ADJUSTED.FIT = lmFit(CQN.GENE_EXPRESSION$E,
-                            design = DM1$design,
-                            weights = VOOM.GENE_EXPRESSION$weights,
-                            block = COVARIATES$Donor_ID, 
-                            correlation = correlation$cor)
-
-  # Residuals after normalisation
-  RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
-                                                CQN.GENE_EXPRESSION$E)
+    # Residuals after normalisation
+    RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(VOOM.ADJUSTED.FIT,
+                                                  CQN.GENE_EXPRESSION$E)
+  } else {
+    notEstimable = c(notEstimable, postAdjustCovars[length(postAdjustCovars)])
+    postAdjustCovars = postAdjustCovars[1:(length(postAdjustCovars)-1)]
+  }
   
   # Residual covariates to choose from
   residCovars <- setdiff(c(FactorCovariates,ContCovariates),
-                         c(postAdjustCovars, primaryVariable, 'Donor_ID'))
+                         c(postAdjustCovars, primaryVariable, 'Donor_ID', notEstimable))
 
   # Find PC of residual gene expression and significant covariates that are highly correlated with PCs
   residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, 
@@ -592,7 +601,7 @@ while(length(residualSigCovars$significantCovars)!=0 && loopCount <= 20){
                                                 isKeyPlot=TRUE)
 
   # Add postadjusted covariates (if any)
-  residCovars = setdiff(residualSigCovars$significantCovars, c(postAdjustCovars, primaryVariable))
+  residCovars = setdiff(residualSigCovars$significantCovars, c(postAdjustCovars, primaryVariable, notEstimable))
   covariatesEffects = residualSigCovars$Effects.significantCovars[residCovars]
 
   postAdjustCovars = c(postAdjustCovars, names(which.max(covariatesEffects)))
@@ -686,8 +695,10 @@ VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Donor_ID)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
+
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
@@ -696,7 +707,11 @@ VOOM.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS)
+FIT = lmFit(VOOM.WEIGHTS$E,
+            weights = VOOM.WEIGHTS$weights,
+            design = VOOM.WEIGHTS$design,
+            block = COVARIATES$Donor_ID, 
+            correlation = correlation$cor)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -795,11 +810,13 @@ DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
 VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Donor_ID)
-  
+
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
@@ -808,7 +825,11 @@ VOOM.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS)
+FIT = lmFit(VOOM.WEIGHTS$E,
+            weights = VOOM.WEIGHTS$weights,
+            design = VOOM.WEIGHTS$design,
+            block = COVARIATES$Donor_ID, 
+            correlation = correlation$cor)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -880,8 +901,10 @@ VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Donor_ID)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
+
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
@@ -890,7 +913,11 @@ VOOM.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS)
+FIT = lmFit(VOOM.WEIGHTS$E,
+            weights = VOOM.WEIGHTS$weights,
+            design = VOOM.WEIGHTS$design,
+            block = COVARIATES$Donor_ID, 
+            correlation = correlation$cor)
 
 # Fit contrast
 contrast = makeContrasts(contrasts=c(
@@ -954,8 +981,10 @@ VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$Donor_ID)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
+
 # Re-estimate voom weights
 VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
@@ -964,7 +993,11 @@ VOOM.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-FIT = lmFit(VOOM.WEIGHTS)
+FIT = lmFit(VOOM.WEIGHTS$E,
+            weights = VOOM.WEIGHTS$weights,
+            design = VOOM.WEIGHTS$design,
+            block = COVARIATES$Donor_ID, 
+            correlation = correlation$cor)
 
 # Get (null) design matrix
 MODEL0 = DESIGN$design[,-grep(primaryVariable,colnames(DESIGN$design))] # Get null model by removing variable of interest
@@ -1017,7 +1050,9 @@ VOOM.SVA.WEIGHTS = voom(NEW.COUNTS,
 
 # Calculate correlation values of random effects
 VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS, block = COVARIATES$Donor_ID)
+correlation = parallelDuplicateCorrelation(VOOM.SVA.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
 
 # Re-estimate voom weights
 VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
@@ -1027,7 +1062,11 @@ VOOM.SVA.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
+VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS$E,
+                     weights = VOOM.SVA.WEIGHTS$weights,
+                     design = VOOM.SVA.WEIGHTS$design,
+                     block = COVARIATES$Donor_ID, 
+                     correlation = correlation$cor)
 
 # Residuals after normalisation
 RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
@@ -1050,6 +1089,8 @@ RESIDUAL.SVA.GENE_EXPRESSION = apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, function(x
   x[x > (mn+3*std.dev)] = NA
   return(x)
 }) %>% t
+
+all.fit = c(all.fit, list(SVA = VOOM.SVA.FIT))
 ```
 
 ### Covariates Adjustments for network analysis
@@ -1065,7 +1106,9 @@ VOOM.NET.WEIGHTS = voom(NEW.COUNTS,
 
 # Calculate correlation values of random effects
 VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-correlation = parallelDuplicateCorrelation(VOOM.NET.WEIGHTS, block = COVARIATES$Donor_ID)
+correlation = parallelDuplicateCorrelation(VOOM.NET.WEIGHTS,
+                                           block = COVARIATES$Donor_ID,
+                                           method = 'lmer')  
 
 # Re-estimate voom weights
 VOOM.NET.WEIGHTS = voom(NEW.COUNTS, 
@@ -1075,7 +1118,11 @@ VOOM.NET.WEIGHTS = voom(NEW.COUNTS,
 
 # Fit linear model using new weights and new design
 VOOM.NET.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS)
+VOOM.NET.FIT = lmFit(VOOM.NET.WEIGHTS$E,
+                     weights = VOOM.NET.WEIGHTS$weights,
+                     design = VOOM.NET.WEIGHTS$design,
+                     block = COVARIATES$Donor_ID, 
+                     correlation = correlation$cor)
 
 # Residuals after normalisation
 RESIDUAL.NET.GENE_EXPRESSION = residuals.MArrayLM(VOOM.NET.FIT,
@@ -1093,6 +1140,8 @@ RESIDUAL.NET.GENE_EXPRESSION = apply(RESIDUAL.NET.GENE_EXPRESSION, 1, function(x
   x[x > (mn+3*std.dev)] = mn+3*std.dev
   return(x)
 }) %>% t
+
+all.fit = c(all.fit, list(NET = VOOM.NET.FIT))
 ```
 
 ### Store files in synapse
@@ -1231,6 +1280,15 @@ DEXP_OBJ = File('MAYO_CBE_TCX_DiffExpression.tsv',
 annotations(DEXP_OBJ) = annotations(CODE)
 annotations(DEXP_OBJ)$dataSubType = 'diffExp'
 DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store all model fits
+save(list = 'all.fit', file = 'MAYO_CBE_TCX_allfits.RData')
+AFIT_OBJ = File('MAYO_CBE_TCX_allfits.RData', 
+                name = 'All model fits (BrainRegion.Diagnosis)', 
+                parentId = CODE$properties$id)
+annotations(AFIT_OBJ) = annotations(CODE)
+annotations(AFIT_OBJ)$dataSubType = 'modelFits'
+AFIT_OBJ = synStore(AFIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
