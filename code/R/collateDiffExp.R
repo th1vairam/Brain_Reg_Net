@@ -307,4 +307,4 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/R/',t
 amp.ad.de.geneSets = c(gs, gs1, gs2, gs3)
 save(list='amp.ad.de.geneSets', file = 'all.diff.exp.gs.RData')
 obj = File('all.diff.exp.gs.RData', name = 'All Differential Expression GeneSets (RData format)', parentId = 'syn8672415')
-obj = synStore(obj, used = c('syn8468023', 'syn10157628', 'syn8456721'), executed = thisFile, activity = 'Collate differential expression results')
+obj = synStore(obj, used = c('syn8468023', 'syn10157628', 'syn8456721'), executed = thisFile, activityName = 'Collate differential expression results')
