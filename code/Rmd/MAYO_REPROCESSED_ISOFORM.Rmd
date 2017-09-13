@@ -930,7 +930,7 @@ ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 # Store logCPM
 VOOM.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('Tx.ID') %>%
-  write.table(file = 'MAYO_CBE_TCX_tpm.tsv', sep = '\t', row.names=F, quote=F)
+  write.table(file = 'MAYO_CBE_TCX_TPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('MAYO_CBE_TCX_TPM.tsv', name = 'TPM (filtered)', parentId = CODE$properties$id)
 annotations(LCOUNT_OBJ) = annotations(CODE)
 annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
