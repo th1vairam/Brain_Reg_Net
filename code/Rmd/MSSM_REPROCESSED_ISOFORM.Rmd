@@ -217,7 +217,7 @@ COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 draw(COVARIATES.CORRELATION$plot, heatmap_legend_side = 'left', padding  = unit(c(18,2,2,18), 'mm'))
 ```
 
-```{r data.explore, fig.width = 12, fig.height = 8}
+```{r data.explore, fig.width = 12, fig.height = 5}
 my.theme = theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1))
 
 # RIN
@@ -233,11 +233,7 @@ p[[2]] = p[[2]] + ggtitle('AOD') + my.theme
 p[[3]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PMI))) + geom_boxplot()
 p[[3]] = p[[3]] + ggtitle('PMI') + my.theme
 
-# Ribosomal bases
-p[[4]] = ggplot(COVARIATES, aes(x = BrainRegion.Diagnosis, y = as.numeric(PCT_RIBOSOMAL_BASES))) + geom_boxplot()
-p[[4]] = p[[4]] + ggtitle('Fraction of Ribosomal Bases') + my.theme
-
-multiplot(plotlist = p, cols = 2)
+multiplot(plotlist = p, cols = 3)
 ```
 ### Filter genes
 Remove genes that have less than 5 tpm counts in at least 50% of samples per BrainRegion x Diagnosis

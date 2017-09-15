@@ -1,5 +1,5 @@
 ---
-title: "Covariate analysis of ROSMAP reprocessed isfoform counts (with CQN normalisation and covariates adjusted)"
+title: "Covariate analysis of ROSMAP reprocessed transcript counts (with TMM normalisation and covariates adjusted)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -35,7 +35,6 @@ library(psych)
 library(edgeR)
 library(biomaRt)
 library(RColorBrewer)
-library(cqn)
 
 library(synapseClient)
 library(knitr)
@@ -887,7 +886,7 @@ new.racl = ResourceAccess(principalId = '3319864',
 CODE <- Folder(name = "ROSMAP Reprocessed Isoform (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
-old.acl = synGetEntityACL(CODE@properties$id)
+# old.acl = synGetEntityACL(CODE@properties$id)
 synChangeEntityACL(CODE@properties$id, new.racl)
 
 # Store covariates
@@ -902,7 +901,7 @@ synChangeEntityACL(COV_OBJ@properties$id, new.racl)
 
 # Store filtered counts
 PROCESSED_COUNTS$filteredExprMatrix$counts %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
+  rownameToFirstColumn('Tx.ID') %>%
   write.table(file = 'ROSMAP_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
 COUNT_OBJ = File('ROSMAP_DLPFC_Counts.tsv', name = 'TPM (raw)', parentId = CODE$properties$id)
 annotations(COUNT_OBJ) = annotations(CODE)
@@ -911,7 +910,7 @@ COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id)
 
 # Store filtered counts
 NEW.COUNTS %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
+  rownameToFirstColumn('Tx.ID') %>%
   write.table(file = 'ROSMAP_DLPFC_eCounts.tsv', sep = '\t', row.names=F, quote=F)
 ECOUNT_OBJ = File('ROSMAP_DLPFC_eCounts.tsv', name = 'TPM (estimated)', parentId = CODE$properties$id)
 annotations(ECOUNT_OBJ) = annotations(CODE)
@@ -920,7 +919,7 @@ ECOUNT_OBJ = synStore(ECOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$i
 
 # Store logCPM
 VOOM.GENE_EXPRESSION$E %>%
-  rownameToFirstColumn('ensembl_gene_id') %>%
+  rownameToFirstColumn('Tx.ID') %>%
   write.table(file = 'ROSMAP_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
 LCOUNT_OBJ = File('ROSMAP_DLPFC_logCPM.tsv', name = 'TPM (filtered)', parentId = CODE$properties$id)
 annotations(LCOUNT_OBJ) = annotations(CODE)
@@ -928,7 +927,7 @@ annotations(LCOUNT_OBJ)$dataSubType = 'filteredLTPM'
 LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
-MODEL1 %>%
+DM1$design %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'ROSMAP_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
 DM_OBJ = File('ROSMAP_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
@@ -957,9 +956,9 @@ FIT_OBJ = synStore(FIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 synChangeEntityACL(FIT_OBJ@properties$id, new.racl)
 
 # Delete folder acl
-synChangeEntityACL(CODE@properties$id, old.acl@resourceAccess)
+synDeleteEntityACL(CODE@properties$id)
 
-stopCluster(cl)
+# stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
 |  -----------------------------------------  |   ---------                      |
