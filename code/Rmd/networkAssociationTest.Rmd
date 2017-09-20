@@ -49,10 +49,10 @@ knitr::opts_chunk$set(
   message=FALSE,
   error = FALSE,
   tidy = FALSE,
-  cache = TRUE)
+  cache = FALSE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE}
 parentId = 'syn10306449';
 activityName = 'Network associaiton statistics';
 
@@ -64,7 +64,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 
 ### Data download
-```{r download.data, cache=FALSE, include=FALSE}
+```{r download.data, include=FALSE}
 # Download data
 MODULES = synTableQuery('SELECT * FROM syn10338156')@values
 all.used.ids = c('syn10338156')
@@ -353,11 +353,16 @@ h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.O
     dplyr::top_n(5, total.eff.sz) %>%
     dplyr::top_n(5, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
-
-  getOverlapPlots(imp.mods, MOD.MEMBERS, MODULE.OVRLP)
+  
+  print(dim(imp.mods)[1])
+  print(br)
+  
+  if(dim(imp.mods)[1] != 0 ){
+    getOverlapPlots(imp.mods, MOD.MEMBERS, MODULE.OVRLP)
+  }
 }, Dx.gender, MOD.MEMBERS, MODULE.OVRLP)
 draw(h[[1]], heatmap_legend_side='left')
-draw(h[[2]], heatmap_legend_side='left')
+# draw(h[[2]], heatmap_legend_side='left')
 draw(h[[3]], heatmap_legend_side='left')
 draw(h[[4]], heatmap_legend_side='left')
 draw(h[[5]], heatmap_legend_side='left')
@@ -374,12 +379,16 @@ h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.O
     dplyr::top_n(25, total.eff.sz) %>%
     dplyr::top_n(25, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
-  print(summary(factor(imp.mods$method)))
+  print(dim(imp.mods)[1])
+  print(br)
   
-  getOverlapPlots(imp.mods, MOD.MEMBERS, MODULE.OVRLP)
+  if(dim(imp.mods)[1] != 0 ){
+    print(summary(factor(imp.mods$method)))
+    getOverlapPlots(imp.mods, MOD.MEMBERS, MODULE.OVRLP)
+  }
 }, Dx.gender, MOD.MEMBERS, MODULE.OVRLP)
 draw(h[[1]], heatmap_legend_side='left')
-draw(h[[2]], heatmap_legend_side='left')
+# draw(h[[2]], heatmap_legend_side='left')
 draw(h[[3]], heatmap_legend_side='left')
 draw(h[[4]], heatmap_legend_side='left')
 draw(h[[5]], heatmap_legend_side='left')
@@ -581,7 +590,7 @@ filter(Dx, ModuleNameFull %in% unique(setdiff(Dx$ModuleNameFull, MAGMA.ENRICH$Se
 ```
 
 ### Store results in synapse
-```{r syn.store, cache = FALSE, include=FALSE}
+```{r syn.store, include=FALSE}
 CODE = Folder('Network Association Tests', parentId = "syn10306449")
 CODE = synStore(CODE)
 
