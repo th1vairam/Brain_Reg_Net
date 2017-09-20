@@ -1,5 +1,5 @@
 ---
-title: "Function to find association b/w n significant eigene genes with Diagnosis"
+title: "Function to find association b/w n significant eigen genes with Diagnosis, Diagnosis.Gender, ApoE"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -19,7 +19,7 @@ knit2synapse::knitToFolderEntity(file = "./networkAssociationTest.Rmd",
 ## It is assumed your working directory is where this file
 
 # Load Libraries
-library(CovariateAnalysis)
+library(CovariateAnalysis) #devtools::install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
 library(tidyr)
 library(plyr)
@@ -64,13 +64,15 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 
 ### Data download
-```{r download.data, cache=TRUE}
+```{r download.data, cache=FALSE, include=FALSE}
 # Download data
 MODULES = synTableQuery('SELECT * FROM syn10338156')@values
+all.used.ids = c('syn10338156')
 
 MOD.MEMBERS = plyr::dlply(MODULES, .(ModuleNameFull), .fun = function(x) unique(x$GeneID))
 
 COVARIATES = downloadFile('syn10160582')
+all.used.ids = c(all.used.ids, 'syn10160582')
 COVARIATES$BrainRegion[COVARIATES$BrainRegion == 'CER'] = 'CBE'
 
 FactorCovariates = c("individualIdentifier", "Study", "BrainRegion.Diagnosis", "BrainRegion", 
@@ -81,6 +83,7 @@ COVARIATES[,FactorCovariates] = lapply(COVARIATES[, FactorCovariates], as.factor
 COVARIATES[,ContCovariates] = lapply(COVARIATES[, ContCovariates], as.numeric)
 
 EXPR = downloadFile('syn10160584')
+all.used.ids = c(all.used.ids, 'syn10160584')
 gene.id.map = data.frame(ID = EXPR$Gene.ID, Gene.ID = EXPR$Gene.ID) %>%
   tidyr::separate(ID, c('GeneID','position'), sep = '\\.')
 EXPR = left_join(EXPR, gene.id.map)
@@ -89,20 +92,23 @@ EXPR$Gene.ID = NULL
 EXPR$GeneID = NULL
 
 MODULE.OVRLP = synTableQuery('SELECT * FROM syn10339153')@values
-
+all.used.ids = c(all.used.ids, 'syn10339153')
 MODULE.ENRICH = synTableQuery('SELECT * FROM syn10492048')@values
+all.used.ids = c(all.used.ids, 'syn10492048')
 
 MAGMA.ENRICH = synTableQuery('SELECT * FROM syn10380432')@values
+all.used.ids = c(all.used.ids, 'syn10380432')
 ```
 
 ```{r fxn}
 # Function to find association statistics
-findAssociationStatistics <- function(x, COVARIATES, EXPR, FORMULA){
+findAssociationStatistics <- function(x, covars, exprs, frmla){
   
-  covar = dplyr::filter(COVARIATES, BrainRegion == unique(x$brainRegion))
-  expr = EXPR[x$GeneID,covar$SampleID]
+  covar = dplyr::filter(covars, BrainRegion == unique(x$brainRegion))
+  expr = exprs[x$GeneID,covar$SampleID]
   
   result = list( assoc.stat = data.frame(total.eff.sz = 0,
+                                         total.pval = 1,
                                          ngenes = length(unique(x$GeneID)),
                                          npc = 0,
                                          npc.sig = 0,
@@ -114,32 +120,66 @@ findAssociationStatistics <- function(x, COVARIATES, EXPR, FORMULA){
     return(result)
   }
   
-  pc = prcomp(expr, center = T, scale. = T)
-  pc.sdev = pc$sdev^2/sum(pc$sdev^2)
-  ind = which(pc.sdev >= 0.01)
-  pc.sdev = pc.sdev[ind]
-  pc.rot = pc$rotation[,ind, drop = F]
-  
-  getAnovaAssociationStats <- function(dat, formula){
-    mdl = as.data.frame(anova(lm(formula = formula, data = dat)))
+  # Function to get anova association stats
+  getAnovaAssociationStats <- function(dat, frmla){
+    mdl = as.data.frame(anova(lm(formula = frmla, data = dat)))
     mdl$fdr = p.adjust(mdl[,'Pr(>F)'])
     eff.sz = mdl['Diagnosis','Sum Sq']/sum(mdl[,'Sum Sq'], na.rm = T)
     fdr = mdl['Diagnosis','fdr']
     return(data.frame(eff.sz = eff.sz, fdr = fdr))
   }
+
+  # Function to get PCs
+  getPCs <- function(expr){
+    pc = prcomp(expr, center = T, scale. = T)
+    pc.sdev = pc$sdev^2/sum(pc$sdev^2)
+    ind = which(pc.sdev >= 0.01)
+    pc.sdev = pc.sdev[ind]
+    pc.rot = pc$rotation[,ind, drop = F]
   
-  anova.stat = apply(pc.rot, 2, function(x, covar, formula){ 
+    return(list(sdev = pc.sdev, rot = pc.rot))
+  }
+
+  # Function to get PCs
+  bootstrapAssociationStats <- function(expr, covar, frmla){
+    pc = getPCs(expr)
+  
+    anova.stat = apply(pc$rot, 2, function(x, covar, frmla){ 
+      dat = cbind(data.frame(PC = x), covar)
+      getAnovaAssociationStats(dat, frmla)
+    }, covar, frmla) %>%
+      rbindlist(use.names = T, fill = T)
+    anova.stat$fve = pc$sdev
+  
+    total.eff.sz = dplyr::filter(anova.stat, fdr <= 0.05) %>%
+      dplyr::mutate(ws = eff.sz * fve) %>%
+      dplyr::select(ws) 
+  
+    sum(total.eff.sz$ws, na.rm = T)
+  }
+
+  pc = getPCs(expr)
+  
+  anova.stat = apply(pc$rot, 2, function(x, covar, frmla){ 
     dat = cbind(data.frame(PC = x), covar)
-    getAnovaAssociationStats(dat, formula)
-  }, covar, FORMULA) %>%
+    getAnovaAssociationStats(dat, frmla)
+  }, covar, frmla) %>%
     rbindlist(use.names = T, fill = T)
-  anova.stat$fve = pc.sdev
+  anova.stat$fve = pc$sdev
   
   total.eff.sz = dplyr::filter(anova.stat, fdr <= 0.05) %>%
     dplyr::mutate(ws = eff.sz * fve) %>%
     dplyr::select(ws) 
+  total.eff.sz = sum(total.eff.sz$ws, na.rm = T)
+
+  rn.eff.sz = plyr::laply(1:100, .fun = function(i, expr, l, covar, frmla){
+    tryCatch({ 
+      bootstrapAssociationStats(expr[sample(1:dim(expr)[1], l), ], covar, frmla) 
+    }, error = function(e){ 0 })
+  }, exprs[,covar$SampleID], length(x$GeneID), covar, frmla, .parallel = T)
   
-  result = data.frame(total.eff.sz = sum(total.eff.sz$ws, na.rm = T),
+  result = data.frame(total.eff.sz = total.eff.sz,
+                      total.pval = sum(rn.eff.sz >= total.eff.sz, na.rm = T)/length(rn.eff.sz),
                       ngenes = length(unique(x$GeneID)),
                       npc = dim(anova.stat)[1],
                       npc.sig = sum(anova.stat$fdr <= 0.05),
@@ -180,7 +220,7 @@ getOverlapPlots <- function(imp.mods, MOD.MEMBERS, MODULE.OVRLP){
 ```
 
 ### Associaiton with Diagnosis
-```{r Dx, fig.height=7, fig.width=15}
+```{r Dx, fig.height=5, fig.width=10}
 # Find assocition b/w Diagnosis category with n eigen genes
 FORMULA = as.formula('PC~Diagnosis+Batch+RIN+PCT_INTRONIC_BASES+PMI+PCT_INTERGENIC_BASES+AOD+PCT_PF_READS_ALIGNED+Gender')
 assoc.stat.diagnosis = MODULES %>%
@@ -194,8 +234,11 @@ Dx = lapply(assoc.stat.diagnosis, function(x) x$assoc.stat) %>%
   tidyr::separate(ModuleName.BrainRegion, c('ModuleName', 'brainRegion'), sep = '\\.') %>%
   dplyr::left_join(MODULES %>%
                      dplyr::select(Module, method, ModuleName, brainRegion, ModuleNameFull) %>%
-                     unique())
-Dx$pc1.fdr.l = Dx$pc1.fdr <= 0.05
+                     unique()) %>%
+  plyr::ddply(.(brainRegion), .fun = function(x){
+    x %>%
+      dplyr::mutate(total.fdr = p.adjust(total.pval))
+  })
 
 p = ggplot(Dx, aes(x = ngenes, y = total.eff.sz, color = method)) + geom_point() + xlim(0,150)
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
@@ -205,8 +248,9 @@ p = ggplot(Dx, aes(x = as.factor(npc.sig), y = total.eff.sz)) + geom_boxplot()
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
 p + theme(legend.position = 'top')
 
-p = ggplot(Dx, aes(x = method, y = total.eff.sz, color = method)) + geom_boxplot() + geom_jitter()
+p = ggplot(Dx, aes(x = method, y = total.eff.sz, color = total.fdr)) + geom_boxplot() + geom_jitter()
 p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free_x')  + xlab('Method') + ylab('Total Effect Size')
+p = p + scale_color_continuous(low = 'red', high = 'white')
 p + theme(legend.position = 'top')
 
 p = ggplot(Dx, aes(x = method, y = pc1.eff.sz, color = -log10(pc1.fdr))) + geom_boxplot() + geom_jitter()
@@ -215,11 +259,12 @@ p = p + scale_color_continuous(low = 'white', high = 'red')
 p + theme(legend.position = 'top')
 ```
 Top 5 modules per method
-```{r Dx.1, fig.height=15, fig.width=15}
+```{r Dx.1, fig.height=12, fig.width=12}
 # Top 5 in each method
 h = lapply(unique(Dx$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
     dplyr::group_by(brainRegion, method) %>%
+    dplyr::filter(total.fdr <= 0.05) %>%
     dplyr::top_n(5, total.eff.sz) %>%
     dplyr::top_n(5, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
@@ -235,11 +280,12 @@ draw(h[[6]], heatmap_legend_side='left')
 draw(h[[7]], heatmap_legend_side='left')
 ```
 Top 5 modules any method
-```{r Dx.2, fig.height=15, fig.width=15}
+```{r Dx.2, fig.height=12, fig.width=12}
 # Top 5 any method
 h = lapply(unique(Dx$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
     dplyr::group_by(brainRegion) %>%
+    dplyr::filter(total.fdr <= 0.05) %>%
     dplyr::top_n(25, total.eff.sz) %>%
     dplyr::top_n(25, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
@@ -257,7 +303,7 @@ draw(h[[7]], heatmap_legend_side='left')
 ```
 
 ### Associaiton with Diagnosis.Gender
-```{r Dx.Gender, fig.height=7, fig.width=15}
+```{r Dx.Gender, fig.height=5, fig.width=10}
 # Find assocition b/w Diagnosis.Gender category with n eigen genes
 COVARIATES$Diagnosis.Gender = paste(COVARIATES$Diagnosis, COVARIATES$Gender, sep= '.') %>%
   as.factor
@@ -273,8 +319,11 @@ Dx.gender = lapply(assoc.stat.diagnosis.gender, function(x) x$assoc.stat) %>%
   tidyr::separate(ModuleName.BrainRegion, c('ModuleName', 'brainRegion'), sep = '\\.') %>%
   dplyr::left_join(MODULES %>%
                      dplyr::select(Module, method, ModuleName, brainRegion, ModuleNameFull) %>%
-                     unique())
-Dx.gender$pc1.fdr.l = Dx.gender$pc1.fdr <= 0.05
+                     unique()) %>%
+  plyr::ddply(.(brainRegion), .fun = function(x){
+    x %>%
+      dplyr::mutate(total.fdr = p.adjust(total.pval))
+  })
 
 p = ggplot(Dx.gender, aes(x = ngenes, y = total.eff.sz, color = method)) + geom_point() + xlim(0,150)
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
@@ -284,8 +333,9 @@ p = ggplot(Dx.gender, aes(x = as.factor(npc.sig), y = total.eff.sz)) + geom_boxp
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
 p + theme(legend.position = 'top')
 
-p = ggplot(Dx.gender, aes(x = method, y = total.eff.sz, color = method)) + geom_boxplot() + geom_jitter()
+p = ggplot(Dx.gender, aes(x = method, y = total.eff.sz, color = total.fdr)) + geom_boxplot() + geom_jitter()
 p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free_x')  + xlab('Method') + ylab('Total Effect Size')
+p = p + scale_color_continuous(low = 'red', high = 'white')
 p + theme(legend.position = 'top')
 
 p = ggplot(Dx.gender, aes(x = method, y = pc1.eff.sz, color = -log10(pc1.fdr))) + geom_boxplot() + geom_jitter()
@@ -294,11 +344,12 @@ p = p + scale_color_continuous(low = 'white', high = 'red')
 p + theme(legend.position = 'top')
 ```
 Top 5 modules per method
-```{r Dx.gender.1, fig.height=15, fig.width=15}
+```{r Dx.gender.1, fig.height=12, fig.width=12}
 # Top 5 in each method
 h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
     dplyr::group_by(brainRegion, method) %>%
+    dplyr::filter(total.fdr <= 0.05) %>%
     dplyr::top_n(5, total.eff.sz) %>%
     dplyr::top_n(5, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
@@ -314,11 +365,12 @@ draw(h[[6]], heatmap_legend_side='left')
 draw(h[[7]], heatmap_legend_side='left')
 ```
 Top 5 modules any method
-```{r Dx.gender.2, fig.height=15, fig.width=15}
+```{r Dx.gender.2, fig.height=12, fig.width=12}
 # Top 5 any method
 h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
     dplyr::group_by(brainRegion) %>%
+    dplyr::filter(total.fdr <= 0.05) %>%
     dplyr::top_n(25, total.eff.sz) %>%
     dplyr::top_n(25, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
@@ -336,7 +388,7 @@ draw(h[[7]], heatmap_legend_side='left')
 ```
 
 ### Associaiton with ApoE
-```{r ApoE, fig.height=7, fig.width=15}
+```{r ApoE, fig.height=5, fig.width=10}
 # Find assocition b/w ApoE category with n eigen genes
 FORMULA = as.formula('PC~BrainRegion.ApoE+Batch+RIN+PCT_INTRONIC_BASES+PMI+PCT_INTERGENIC_BASES+AOD+PCT_PF_READS_ALIGNED+Gender')
 assoc.stat.apoe = MODULES %>%
@@ -350,8 +402,11 @@ ApoE = lapply(assoc.stat.apoe, function(x) x$assoc.stat) %>%
   tidyr::separate(ModuleName.BrainRegion, c('ModuleName', 'brainRegion'), sep = '\\.') %>%
   dplyr::left_join(MODULES %>%
                      dplyr::select(Module, method, ModuleName, brainRegion, ModuleNameFull) %>%
-                     unique())
-ApoE$pc1.fdr.l = ApoE$pc1.fdr <= 0.05
+                     unique()) %>%
+  plyr::ddply(.(brainRegion), .fun = function(x){
+    x %>%
+      dplyr::mutate(total.fdr = p.adjust(total.pval))
+  })
 
 p = ggplot(ApoE, aes(x = ngenes, y = total.eff.sz, color = method)) + geom_point() + xlim(0,150)
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
@@ -361,8 +416,9 @@ p = ggplot(ApoE, aes(x = as.factor(npc.sig), y = total.eff.sz)) + geom_boxplot()
 p = p + facet_grid(.~brainRegion, scales = 'free_x') + xlab('No. of genes') + ylab('Total Effect Size')
 p + theme(legend.position = 'top')
 
-p = ggplot(ApoE, aes(x = method, y = total.eff.sz, color = method)) + geom_boxplot() + geom_jitter()
+p = ggplot(ApoE, aes(x = method, y = total.eff.sz, color = total.fdr)) + geom_boxplot() + geom_jitter()
 p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free_x')  + xlab('Method') + ylab('Total Effect Size')
+p = p + scale_color_continuous(low = 'red', high = 'white')
 p + theme(legend.position = 'top')
 
 p = ggplot(ApoE, aes(x = method, y = pc1.eff.sz, color = -log10(pc1.fdr))) + geom_boxplot() + geom_jitter()
@@ -422,7 +478,7 @@ ad.others = MODULE.ENRICH %>%
 scr1 = Dx %>%
   plyr::ddply(.(brainRegion), .fun = function(x){
     x %>%
-      dplyr::mutate(rnk = rank(total.eff.sz),
+      dplyr::mutate(rnk = rank(rank(total.eff.sz) + rank(-log10(total.fdr))),
                     rnk = rnk/max(rnk)) %>%
       dplyr::arrange(desc(rnk))%>%
       dplyr::group_by(ModuleNameFull) %>%
@@ -472,7 +528,7 @@ ggplot(all.rank, aes(x = dbgap, y = magma))+geom_point()+facet_grid(.~brainRegio
 ggplot(all.rank, aes(x = other, y = magma))+geom_point()+facet_grid(.~brainRegion)+geom_smooth(method = 'lm')
 ```
 Top 5 modules per method
-```{r imp.mdl.1, fig.height=15, fig.width=15}
+```{r imp.mdl.1, fig.height=12, fig.width=12}
 # Top 5 in each method
 h = lapply(unique(all.rank$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
@@ -492,7 +548,7 @@ draw(h[[6]], heatmap_legend_side='left')
 draw(h[[7]], heatmap_legend_side='left')
 ```
 Top 5 modules any method
-```{r imp.mdl.2, fig.height=15, fig.width=15}
+```{r imp.mdl.2, fig.height=12, fig.width=12}
 # Top 5 any method
 h = lapply(unique(all.rank$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.OVRLP){
   imp.mods = Dx %>%
@@ -514,12 +570,34 @@ draw(h[[7]], heatmap_legend_side='left')
 ```
 
 ### Modules missing enrichment scores
-```{r missing}
+```{r missing, include=FALSE}
 writeLines('Modules missing enrich enrichment scores')
 filter(Dx, ModuleNameFull %in% unique(setdiff(Dx$ModuleNameFull, MODULE.ENRICH$ModuleNameFull))) %>%
-  kable
+  dplyr::select(ModuleNameFull) %>% unique() %>% unlist() %>% paste(collapse = ', ') %>% print()
 
 writeLines('Modules missing MAGMA enrichment scores')
 filter(Dx, ModuleNameFull %in% unique(setdiff(Dx$ModuleNameFull, MAGMA.ENRICH$Set))) %>%
-  kable
+  dplyr::select(ModuleNameFull) %>% unique() %>% unlist() %>% paste(collapse = ', ') %>% print()
+```
+
+### Store results in synapse
+```{r syn.store, cache = FALSE, include=FALSE}
+CODE = Folder('Network Association Tests', parentId = "syn10306449")
+CODE = synStore(CODE)
+
+write.table(Dx, file = 'AssociaitonStatWithDx.tsv', sep = '\t', quote = F, row.names = F)
+OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = CODE@properties$id)
+OBJ = synStore(OBJ, used = all.used.ids, executed = thisFile, activityName = activityName)
+
+write.table(Dx.gender, file = 'AssociaitonStatWithDxGender.tsv', sep = '\t', quote = F, row.names = F)
+OBJ1 = File('AssociaitonStatWithDxGender.tsv', name = 'Association with Dx.Gender', parentId = CODE@properties$id)
+OBJ1 = synStore(OBJ1, used = all.used.ids, executed = thisFile, activityName = activityName)
+
+write.table(ApoE, file = 'AssociaitonStatWithApoE4.tsv', sep = '\t', quote = F, row.names = F)
+OBJ2 = File('AssociaitonStatWithApoE4.tsv', name = 'Association with ApoE4', parentId = CODE@properties$id)
+OBJ2 = synStore(OBJ2, used = all.used.ids, executed = thisFile, activityName = activityName)
+
+save(list = c('assoc.stat.diagnosis', 'assoc.stat.diagnosis.gender', 'assoc.stat.apoe'), file = 'AllAssociationResults.RData')
+OBJ3 = File('AllAssociationResults.RData', name = 'All Assocition Statistics (RData)', parentId = CODE@properties$id)
+OBJ3 = synStore(OBJ3, used = all.used.ids, executed = thisFile, activityName = activityName)
 ```
