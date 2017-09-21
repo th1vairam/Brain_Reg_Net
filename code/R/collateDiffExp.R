@@ -83,7 +83,7 @@ tmp = diff.exp$ROSMAP %>%
   dplyr::filter(Model == 'Diagnosis.Gender', Comparison %in% c("AD-CONTROL.IN.FEMALE", "AD-CONTROL.IN.MALE"), 
                 adj.P.Val <= 0.05, logFC >= 0) %>%
   plyr::dlply(.(Comparison), .fun = function(x){
-    select(x, hgnc_symbol) %>%
+    dplyr::select(x, hgnc_symbol) %>%
       unlist %>% unique()
   })
 names(tmp) = c('DLPFC.AD-CONTROL.FEMALE.UP', 'DLPFC.AD-CONTROL.MALE.UP')
@@ -93,7 +93,7 @@ tmp = diff.exp$ROSMAP %>%
   dplyr::filter(Model == 'Diagnosis.Gender', Comparison %in% c("AD-CONTROL.IN.FEMALE", "AD-CONTROL.IN.MALE"), 
                 adj.P.Val <= 0.05, logFC <= 0) %>%
   plyr::dlply(.(Comparison), .fun = function(x){
-    select(x, hgnc_symbol) %>%
+    dplyr::select(x, hgnc_symbol) %>%
       unlist %>% unique()
   })
 names(tmp) = c('DLPFC.AD-CONTROL.FEMALE.DOWN', 'DLPFC.AD-CONTROL.MALE.DOWN')
@@ -185,7 +185,7 @@ tmp = diff.exp$ROSMAP %>%
                                   "apoe_genotype1-apoe_genotype0"), 
                 adj.P.Val <= 0.05, logFC <= 0) %>%
   plyr::dlply(.(Comparison), .fun = function(x){
-    select(x, hgnc_symbol) %>%
+    dplyr::select(x, hgnc_symbol) %>%
       unlist %>% unique()
   })
 
@@ -250,7 +250,7 @@ tmp = diff.exp$ROSMAP %>%
                 Comparison %in% c("AOD.AD-AOD.CONTROL"), 
                 adj.P.Val <= 0.05, logFC >= 0) %>%
   plyr::dlply(.(Comparison), .fun = function(x){
-    select(x, hgnc_symbol) %>%
+    dplyr::select(x, hgnc_symbol) %>%
       unlist %>% unique()
   })
 names(tmp) = 'DLPFC.AD-CONTROL.AOD.UP'
@@ -261,7 +261,7 @@ tmp = diff.exp$ROSMAP %>%
                 Comparison %in% c("AOD.AD-AOD.CONTROL"), 
                 adj.P.Val <= 0.05, logFC <= 0) %>%
   plyr::dlply(.(Comparison), .fun = function(x){
-    select(x, hgnc_symbol) %>%
+    dplyr::select(x, hgnc_symbol) %>%
       unlist %>% unique()
   })
 names(tmp) = 'DLPFC.AD-CONTROL.AOD.DOWN'
