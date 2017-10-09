@@ -399,25 +399,35 @@ Pathway.enrich = plyr::ddply(MODULES, .(ModuleNameFull), .fun = function(mod, ge
 .id = 'ModuleNameFull', geneSet.ref, backgroundGenes)
 ```
 
+### Find overlap between modules in different brainregion
+```{r module.overlap}
+
+```
+
+### Intereating modules
+```{r int.modules}
+
+```
+
 ### Store results in synapse
 ```{r syn.store, include=FALSE, eval = F}
 write.table(Dx, file = 'AssociaitonStatWithDx.tsv', sep = '\t', quote = F, row.names = F)
-OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = 'syn10831307')
+OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = 'syn11140497')
 OBJ = synStore(OBJ, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 write.table(Dx.gender, file = 'AssociaitonStatWithDxGender.tsv', sep = '\t', quote = F, row.names = F)
-OBJ1 = File('AssociaitonStatWithDxGender.tsv', name = 'Association with Dx.Gender', parentId = 'syn10831307')
+OBJ1 = File('AssociaitonStatWithDxGender.tsv', name = 'Association with Dx.Gender', parentId = 'syn11140497')
 OBJ1 = synStore(OBJ1, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 write.table(Pathway.enrich, file = 'PathwayEnrichment.tsv', sep = '\t', quote = F, row.names = F)
-OBJ2 = File('PathwayEnrichment.tsv', name = 'Pathway Enrichment', parentId = 'syn10831307')
+OBJ2 = File('PathwayEnrichment.tsv', name = 'Pathway Enrichment', parentId = 'syn11140497')
 OBJ2 = synStore(OBJ2, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 save(list = c('assoc.stat.diagnosis', 'assoc.stat.diagnosis.gender'), file = 'AllAssociationResults.RData')
-OBJ3 = File('AllAssociationResults.RData', name = 'All Assocition Statistics (RData)', parentId = 'syn10831307')
+OBJ3 = File('AllAssociationResults.RData', name = 'All Assocition Statistics (RData)', parentId = 'syn11140497')
 OBJ3 = synStore(OBJ3, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 write.table(Dx.enrich, file = 'DiagnosisEnrichment.tsv', sep = '\t', quote = F, row.names = F)
-OBJ4 = File('DiagnosisEnrichment.tsv', name = 'Diagnosis Enrichment', parentId = 'syn10831307')
+OBJ4 = File('DiagnosisEnrichment.tsv', name = 'Diagnosis Enrichment', parentId = 'syn11140497')
 OBJ4 = synStore(OBJ4, used = all.used.ids, executed = thisFile, activityName = activityName)
 ```
