@@ -131,7 +131,8 @@ findAssociationStatistics <- function(x, covars, exprs, frmla){
 
   # Function to get PCs
   getPCs <- function(expr){
-    pc = prcomp(expr, center = T, scale. = T)
+    expr = scale(t(scale(t(expr))))
+    pc = prcomp(expr, center = F, scale. = F)
     pc.sdev = pc$sdev^2/sum(pc$sdev^2)
     ind = which(pc.sdev >= 0.01)
     pc.sdev = pc.sdev[ind]
@@ -257,6 +258,28 @@ p = ggplot(Dx, aes(x = method, y = pc1.eff.sz, color = -log10(pc1.fdr))) + geom_
 p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free_x')  + xlab('Method') + ylab('PC1 Effect Size')
 p = p + scale_color_continuous(low = 'white', high = 'red')
 p + theme(legend.position = 'top')
+
+writeLines('Number of significantly associated modules')
+Dx %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = sum(total.fdr <= 0.05)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
+
+writeLines('Percent of significantly associated modules')
+Dx %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = round(sum(total.fdr <= 0.05)/sum(total.fdr <= 1) * 100, 2)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
+
+
+writeLines('Percent of modules whose PC1 is significantly associated')
+Dx %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = round(sum(pc1.fdr <= 0.05)/sum(pc1.fdr <= 1) * 100, 2)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
 ```
 Top 5 modules per method
 ```{r Dx.1, fig.height=12, fig.width=12}
@@ -342,6 +365,28 @@ p = ggplot(Dx.gender, aes(x = method, y = pc1.eff.sz, color = -log10(pc1.fdr))) 
 p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free_x')  + xlab('Method') + ylab('PC1 Effect Size')
 p = p + scale_color_continuous(low = 'white', high = 'red')
 p + theme(legend.position = 'top')
+
+
+writeLines('Number of significantly associated modules')
+Dx.gender %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = sum(total.fdr <= 0.05)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
+
+writeLines('Percent of significantly associated modules')
+Dx.gender %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = round(sum(total.fdr <= 0.05)/sum(total.fdr <= 1) * 100, 2)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
+
+writeLines('Percent of modules whose PC1 is significantly associated')
+Dx.gender %>%
+  dplyr::group_by(brainRegion, method) %>%
+  dplyr::summarise(nsig = round(sum(pc1.fdr <= 0.05)/sum(pc1.fdr <= 1) * 100, 2)) %>%
+  tidyr::spread(method, nsig) %>%
+  kable()
 ```
 Top 5 modules per method
 ```{r Dx.gender.1, fig.height=12, fig.width=12}
@@ -354,15 +399,12 @@ h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.O
     dplyr::top_n(5, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
   
-  print(dim(imp.mods)[1])
-  print(br)
-  
   if(dim(imp.mods)[1] != 0 ){
     getOverlapPlots(imp.mods, MOD.MEMBERS, MODULE.OVRLP)
   }
 }, Dx.gender, MOD.MEMBERS, MODULE.OVRLP)
 draw(h[[1]], heatmap_legend_side='left')
-# draw(h[[2]], heatmap_legend_side='left')
+draw(h[[2]], heatmap_legend_side='left')
 draw(h[[3]], heatmap_legend_side='left')
 draw(h[[4]], heatmap_legend_side='left')
 draw(h[[5]], heatmap_legend_side='left')
@@ -379,8 +421,6 @@ h = lapply(unique(Dx.gender$brainRegion), function(br, Dx, MOD.MEMBERS, MODULE.O
     dplyr::top_n(25, total.eff.sz) %>%
     dplyr::top_n(25, pc1.eff.sz) %>%
     dplyr::filter(brainRegion == br)
-  print(dim(imp.mods)[1])
-  print(br)
   
   if(dim(imp.mods)[1] != 0 ){
     print(summary(factor(imp.mods$method)))
@@ -466,7 +506,8 @@ ad.dbgap = MODULE.ENRICH %>%
   })
 
 other.ad.pathways = c("alzheimer_disease", "Alzheimer.s.disease_Homo.sapiens_hsa05010", 
-                      "Alzheimers.Disease_Homo.sapiens_WP2059", "Alzheimer.disease.amyloid.secretase.pathway_Homo.sapiens_P00003",
+                      "Alzheimers.Disease_Homo.sapiens_WP2059",
+                      "Alzheimer.disease.amyloid.secretase.pathway_Homo.sapiens_P00003",
                       "Alzheimer.s_disease", "Alzheimer.Disease")
 ad.others = MODULE.ENRICH %>%
   dplyr::filter(geneSet != 'dbgap', category %in% other.ad.pathways) %>%
@@ -535,6 +576,10 @@ ggplot(all.rank, aes(x = dbgap, y = other))+geom_point()+facet_grid(.~brainRegio
 ggplot(all.rank, aes(x = dbgap, y = magma))+geom_point()+facet_grid(.~brainRegion)+geom_smooth(method = 'lm')
 
 ggplot(all.rank, aes(x = other, y = magma))+geom_point()+facet_grid(.~brainRegion)+geom_smooth(method = 'lm')
+
+ggplot(tmp, aes(x = method, y = rnk)) + geom_boxplot() + facet_grid(.~brainRegion) + theme(axis.text.x = element_text(angle=45, hjust = 1)) + coord_flip() + geom_jitter()
+
+
 ```
 Top 5 modules per method
 ```{r imp.mdl.1, fig.height=12, fig.width=12}
@@ -591,22 +636,19 @@ filter(Dx, ModuleNameFull %in% unique(setdiff(Dx$ModuleNameFull, MAGMA.ENRICH$Se
 
 ### Store results in synapse
 ```{r syn.store, include=FALSE}
-CODE = Folder('Network Association Tests', parentId = "syn10306449")
-CODE = synStore(CODE)
-
 write.table(Dx, file = 'AssociaitonStatWithDx.tsv', sep = '\t', quote = F, row.names = F)
-OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = CODE@properties$id)
+OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = 'syn10831307')
 OBJ = synStore(OBJ, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 write.table(Dx.gender, file = 'AssociaitonStatWithDxGender.tsv', sep = '\t', quote = F, row.names = F)
-OBJ1 = File('AssociaitonStatWithDxGender.tsv', name = 'Association with Dx.Gender', parentId = CODE@properties$id)
+OBJ1 = File('AssociaitonStatWithDxGender.tsv', name = 'Association with Dx.Gender', parentId = 'syn10831307')
 OBJ1 = synStore(OBJ1, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 write.table(ApoE, file = 'AssociaitonStatWithApoE4.tsv', sep = '\t', quote = F, row.names = F)
-OBJ2 = File('AssociaitonStatWithApoE4.tsv', name = 'Association with ApoE4', parentId = CODE@properties$id)
+OBJ2 = File('AssociaitonStatWithApoE4.tsv', name = 'Association with ApoE4', parentId = 'syn10831307')
 OBJ2 = synStore(OBJ2, used = all.used.ids, executed = thisFile, activityName = activityName)
 
 save(list = c('assoc.stat.diagnosis', 'assoc.stat.diagnosis.gender', 'assoc.stat.apoe'), file = 'AllAssociationResults.RData')
-OBJ3 = File('AllAssociationResults.RData', name = 'All Assocition Statistics (RData)', parentId = CODE@properties$id)
+OBJ3 = File('AllAssociationResults.RData', name = 'All Assocition Statistics (RData)', parentId = 'syn10831307')
 OBJ3 = synStore(OBJ3, used = all.used.ids, executed = thisFile, activityName = activityName)
 ```
