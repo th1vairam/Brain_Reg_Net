@@ -49,7 +49,7 @@ knitr::opts_chunk$set(
   message=FALSE,
   error = FALSE,
   tidy = FALSE,
-  cache = FALSE)
+  cache = TRUE)
 ```
 
 ```{r synapse.parameters, include=FALSE}
@@ -90,14 +90,6 @@ EXPR = left_join(EXPR, gene.id.map)
 rownames(EXPR) = EXPR$GeneID
 EXPR$Gene.ID = NULL
 EXPR$GeneID = NULL
-
-# MODULE.OVRLP = synTableQuery('SELECT * FROM syn10339153')@values
-# all.used.ids = c(all.used.ids, 'syn10339153')
-# MODULE.ENRICH = synTableQuery('SELECT * FROM syn10492048')@values
-# all.used.ids = c(all.used.ids, 'syn10492048')
-# 
-# MAGMA.ENRICH = synTableQuery('SELECT * FROM syn10380432')@values
-# all.used.ids = c(all.used.ids, 'syn10380432')
 ```
 
 ```{r fxn}
@@ -220,7 +212,6 @@ getOverlapPlots <- function(imp.mods, MOD.MEMBERS){
             })
   }
 ```
-
 ### Associaiton with Diagnosis
 ```{r Dx, fig.height=5, fig.width=10}
 # Find assocition b/w Diagnosis category with n eigen genes
@@ -280,9 +271,8 @@ Dx %>%
   dplyr::summarise(nsig = round(sum(pc1.fdr <= 0.05)/sum(pc1.fdr <= 1) * 100, 2)) %>%
   kable()
 ```
-
 ### Associaiton with Diagnosis.Gender
-```{r Dx.Gender, fig.height=5, fig.width=10}
+```{r Dx.Gender, fig.height=10, fig.width=10}
 # Find assocition b/w Diagnosis.Gender category with n eigen genes
 COVARIATES$Diagnosis.Gender = paste(COVARIATES$Diagnosis, COVARIATES$Gender, sep= '.') %>%
   as.factor
@@ -341,10 +331,20 @@ Dx.gender %>%
   dplyr::group_by(brainRegion) %>%
   dplyr::summarise(nsig = round(sum(pc1.fdr <= 0.05)/sum(pc1.fdr <= 1) * 100, 2)) %>%
   kable()
-```
 
+writeLines('Comparison b/w Dx and Dx.gender')
+tmp = dplyr::left_join(Dx %>%
+                         dplyr::select(ModuleName, brainRegion, total.eff.sz, total.fdr) %>%
+                         dplyr::rename(Dx = total.eff.sz, Dx.fdr = total.fdr),
+                       Dx.gender %>%
+                         dplyr::select(ModuleName, brainRegion, total.eff.sz, total.fdr) %>%
+                         dplyr::rename(Dx.gender = total.eff.sz, Dx.gender.fdr = total.fdr))
+p = ggplot(tmp, aes(x = Dx, y = Dx.gender, color = -log10(Dx.fdr+1e-100))) + geom_point() + facet_grid(.~brainRegion) + geom_smooth(method = 'lm')
+p = p +scale_color_continuous(low = 'white', high = 'red')
+p
+```
 ### Enrichment for differential expression
-```{r Dx.enrich}
+```{r Dx.enrich, fig.height=10, fig.width=10}
 # Get differential expression gene list from synapse
 load(synGet('syn10496554')@filePath)
 all.used.ids = c(all.used.ids, 'syn10496554')
@@ -364,9 +364,26 @@ Dx.enrich = plyr::ldply(unique(MODULES$brainRegion), .fun = function(x){
   }, deGenes, backgroundGenes, .id = 'ModuleNameFull') %>%
     dplyr::mutate(fdr = p.adjust(pval))
 }, .id = 'brainRegion')
+
+writeLines('Comparison b/w Dx and Dx.gender')
+Dx.enrich1 = Dx.enrich %>%
+  dplyr::select(-Genes) %>%
+  tidyr::separate(Dx.GeneSet, c('brainRegion', 'Comparison', 'Gender', 'Direction'), sep = '\\.')
+Dx.enrich1$Direction[is.na(Dx.enrich1$Direction)] = Dx.enrich1$Gender[is.na(Dx.enrich1$Direction)]
+Dx.enrich1$Gender = gsub('UP', 'ALL', Dx.enrich1$Gender)
+Dx.enrich1$Gender = gsub('DOWN', 'ALL', Dx.enrich1$Gender)
+Dx.enrich1 = dplyr::filter(Dx.enrich1, Comparison == 'AD-CONTROL', fdr <= 0.05)
+p = ggplot(Dx.enrich1, aes(x = Gender, y = -log10(fdr))) + geom_boxplot() 
+p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free') + geom_jitter(aes(color = Direction))
+pl = list();pl[[1]] = p
+
+p = ggplot(Dx.enrich1, aes(x = Gender, y = Odds.Ratio)) + geom_boxplot() 
+p = p + coord_flip() + facet_grid(.~brainRegion, scales = 'free') + geom_jitter(aes(color = Direction))
+pl[[2]] = p
+multiplot(plotlist = pl, cols = 1)
 ```
 ### Enrichment for gene sets
-```{r pathway.enrich}
+```{r pathway.enrich, results='asis'}
 # Download all related genesets from synapse
 load(synGet('syn4867851')@filePath)
 all.used.ids = c(all.used.ids, 'syn4867851')
@@ -397,20 +414,102 @@ Pathway.enrich = plyr::ddply(MODULES, .(ModuleNameFull), .fun = function(mod, ge
     dplyr::mutate(fdr = p.adjust(pval))
 }, 
 .id = 'ModuleNameFull', geneSet.ref, backgroundGenes)
-```
 
+# Get AD specific pathways
+other.ad.pathways = c("KEGG_2016.Alzheimer's disease_Homo sapiens_hsa05010",
+                      "WikiPathways_2016.Alzheimers Disease_Homo sapiens_WP2059")
+
+writeLines('AD related pathways enriched an fdr of 0.05')
+ad.enrich = Pathway.enrich %>%
+  dplyr::select(ModuleNameFull, GeneSetName, Odds.Ratio, fdr) %>%
+  dplyr::filter(GeneSetName %in% other.ad.pathways, fdr <= 0.05) %>%
+  dplyr::left_join(MODULES %>%
+                     dplyr::select(ModuleNameFull, brainRegion)) %>%
+  unique()
+kable(ad.enrich)
+```
 ### Find overlap between modules in different brainregion
-```{r module.overlap}
-
+```{r module.overlap, fig.height=5, fig.width=10}
+# FisherEnrichment b/w modules
+MOD.MEMBERS = plyr::dlply(MODULES, .(ModuleNameFull), .fun = function(x) unique(x$external_gene_name))
+MOD.OVRLP = plyr::ldply(MOD.MEMBERS, .fun = function(x, modMembers, backgroundGenes){
+  plyr::ldply(modMembers, .fun = function(y, x, backgroundGenes){
+    fisherEnrichment(y, x, backgroundGenes)
+  }, x, backgroundGenes, .parallel = T, .paropts = list(.packages = c('CovariateAnalysis')), .id = 'MOD1') %>%
+    dplyr::rename(MOD1 = ModuleNameFull)
+}, MOD.MEMBERS, backgroundGenes, .id = 'MOD2') %>%
+  dplyr::select(-Genes) %>%
+  dplyr::rename(MOD2 = ModuleNameFull)
 ```
+### Interesting modules
+```{r int.modules, fig.height=7, fig.width=7, results='asis'}
+# Wrt case control
+tmp = inner_join(Dx %>% 
+                   dplyr::filter(total.fdr <= 0.05) %>%
+                   dplyr::select(ModuleNameFull, brainRegion, total.eff.sz, total.fdr) %>%
+                   dplyr::rename(assoc.eff.sz = total.eff.sz, assoc.fdr = total.fdr),
+                 Dx.enrich1 %>%
+                   dplyr::filter(fdr <= 0.05, Gender == 'ALL') %>%
+                   dplyr::select(ModuleNameFull, brainRegion, Direction, Odds.Ratio, fdr) %>%
+                   dplyr::rename(diffexp.fdr = fdr, diffexp.or = Odds.Ratio)) %>%
+  left_join(ad.enrich %>%
+              dplyr::select(ModuleNameFull, fdr, brainRegion) %>%
+              dplyr::rename(ad.pathway.fdr = fdr))
+writeLines('Imporatant Modules for case control comparison')
+kable(tmp)
 
-### Intereating modules
-```{r int.modules}
+writeLines('Up regulated modules')
+tmp1 = filter(tmp, Direction == 'UP')
+tmp1 = filter(MOD.OVRLP, MOD1 %in% tmp1$ModuleNameFull, MOD2 %in% tmp1$ModuleNameFull)
+g = igraph::graph_from_data_frame(tmp1)
+tmp1.or = igraph::as_adj(g, attr = 'Odds.Ratio') %>% data.matrix
+tmp1.or[is.infinite(tmp1.or)] = 0
+
+tmp1.fdr = igraph::as_adj(g, attr = 'pval') %>% data.matrix()
+tmp1.fdr = tmp1.fdr <= 0.05
+tmp1.fdr[tmp1.fdr] = '*'
+tmp1.fdr[tmp1.fdr == 'FALSE'] = ''
+
+h = ComplexHeatmap::Heatmap(log2(tmp1.or+1e-2), col = viridis::viridis(5), 
+                        cell_fun = function(j,i,x,y,wifht,height,fill){
+                          grid.text(tmp1.fdr[i,j] %>% format(digits = 1), x, y)
+                        }, name = 'log2(OR)')
+draw(h, heatmap_legend_side = 'left')
+
+dplyr::filter(Pathway.enrich, 
+              GeneSetName %in% grep('CellType', unique(Pathway.enrich$GeneSetName), value = T),
+              fdr <= 0.05, 
+              ModuleNameFull %in% rownames(tmp1.or)) %>%
+  dplyr::select(-Genes)
+
+writeLines('Down regulated modules')
+tmp1 = filter(tmp, Direction == 'DOWN')
+tmp1 = filter(MOD.OVRLP, MOD1 %in% tmp1$ModuleNameFull, MOD2 %in% tmp1$ModuleNameFull)
+g = igraph::graph_from_data_frame(tmp1)
+tmp1.or = igraph::as_adj(g, attr = 'Odds.Ratio') %>% data.matrix
+tmp1.or[is.infinite(tmp1.or)] = 0
+
+tmp1.fdr = igraph::as_adj(g, attr = 'pval') %>% data.matrix()
+tmp1.fdr = tmp1.fdr <= 0.05
+tmp1.fdr[tmp1.fdr] = '*'
+tmp1.fdr[tmp1.fdr == 'FALSE'] = ''
+
+h = ComplexHeatmap::Heatmap(log2(tmp1.or+1e-2), col = viridis::viridis(5), 
+                        cell_fun = function(j,i,x,y,wifht,height,fill){
+                          grid.text(tmp1.fdr[i,j] %>% format(digits = 1), x, y)
+                        }, name = 'log2(OR)')
+draw(h, heatmap_legend_side = 'left')
+
+dplyr::filter(Pathway.enrich, 
+              GeneSetName %in% grep('CellType', unique(Pathway.enrich$GeneSetName), value = T),
+              fdr <= 0.05, 
+              ModuleNameFull %in% rownames(tmp1.or)) %>%
+  dplyr::select(-Genes)
 
 ```
 
 ### Store results in synapse
-```{r syn.store, include=FALSE, eval = F}
+```{r syn.store, include=FALSE, eval = F, cache=FALSE}
 write.table(Dx, file = 'AssociaitonStatWithDx.tsv', sep = '\t', quote = F, row.names = F)
 OBJ = File('AssociaitonStatWithDx.tsv', name = 'Association with Dx', parentId = 'syn11140497')
 OBJ = synStore(OBJ, used = all.used.ids, executed = thisFile, activityName = activityName)
