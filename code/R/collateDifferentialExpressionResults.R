@@ -138,5 +138,5 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=thisFileName)
 tmp = rbindlist(list(all.de, gender.de, aod.de, apoe.de), use.names = T, fill = T) %>%
   write.table('differentialExpressionSummary.tsv', sep = '\t', row.names = F, quote = F)
 obj = File('differentialExpressionSummary.tsv', name = 'All Differential Expression (Merged)', parentId = 'syn8672415')
-obj = synStore(obj, used = all.used.ids, executed = thisFile, acitivityName = 'Merge all differential expression')
+obj = synStore(obj, used = all.used.ids, executed = thisFile, activityName = 'Merge all differential expression')
 ############################################
