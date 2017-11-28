@@ -105,3 +105,59 @@ p5 = ggpubr::ggarrange(plotlist = list(p,p4), ncol = 1, nrow = 2)
 svg(file = 'DEFigure.svg', height = 10, width = 14)
 p5
 dev.off()
+###################################################################
+## Get all differential expression tables
+# Get differential expression results from synapse
+de = downloadFile('syn11180450') 
+de$Direction = 'NONE'
+de$Direction[de$logFC >= log2(1.2) & de$adj.P.Val <= 0.05] = 'UP'
+de$Direction[de$logFC <= -log2(1.2) & de$adj.P.Val <= 0.05] = 'DOWN'
+
+t.all = de %>%
+  dplyr::filter(Gender == 'ALL', Comparison == 'AD-CONTROL', Model == 'Diagnosis') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.aod = de %>%
+  dplyr::filter(Gender == 'ALL', Comparison == 'AD-CONTROL', Model == 'Diagnosis.AOD') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.male = de %>%
+  dplyr::filter(Gender == 'MALE', Comparison == 'AD-CONTROL', Model == 'Diagnosis.Gender') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.female = de %>%
+  dplyr::filter(Gender == 'FEMALE', Comparison == 'AD-CONTROL', Model == 'Diagnosis.Gender') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.20 = de %>%
+  dplyr::filter(Gender == 'ALL', Comparison == '2-0', Model == 'ApoE4') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.21 = de %>%
+  dplyr::filter(Gender == 'ALL', Comparison == '2-1', Model == 'ApoE4') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
+
+t.10 = de %>%
+  dplyr::filter(Gender == 'ALL', Comparison == '1-0', Model == 'ApoE4') %>%
+  dplyr::group_by(Tissue, Direction) %>%
+  dplyr::summarise(count = length(unique(ensembl_gene_id))) %>%
+  tidyr::spread(Direction, count) %>%
+  ggtexttable(rows = NULL)
