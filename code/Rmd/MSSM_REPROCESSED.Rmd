@@ -76,7 +76,7 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 #### Obtain count matrix and metadata from synapse.
 ```{r download.data}
 # Get reprocessed sample counts for temporal cortex
-COUNT_ID <- 'syn8691099';#'syn7994853';
+COUNT_ID <- 'syn8691099';
 ALL_USED_IDs <- COUNT_ID
 COUNT <- read.table(synGet(COUNT_ID)@filePath, header=T, sep='\t', check.names = F, row.names = 1)
 
@@ -109,8 +109,7 @@ METADATA_TECH <- read.table(synGet(METADATA_TECH_ID)@filePath,sep=',',header=T, 
 # Get 90+ age
 METADATA_AGE_ID = 'syn10156693'
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_AGE_ID
-METADATA_AGE <- read.table(synGet(METADATA_AGE_ID)@filePath, sep='\t', header=T) %>%
-  dplyr::rename(individualIdentifier = BBid)
+METADATA_AGE <- read.table(synGet(METADATA_AGE_ID)@filePath, sep='\t', header=T)
 
 # Get clinical metadata
 METADATA_CLINICAL_ID <- 'syn6101474'
