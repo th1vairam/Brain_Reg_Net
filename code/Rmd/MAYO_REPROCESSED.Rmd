@@ -973,7 +973,7 @@ all.fit = c(all.fit, list(Diagnosis.Gender = FIT))
 Differential expression is performed on the primary variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp3, fig.height=5, fig.width=18}
+```{r diff.exp3, fig.height=5, fig.width=18, cache = FALSE}
 # Get design matrix
 DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis', setdiff(postAdjustCovars, 'AgeAtDeath')), drop = F], 
                          Intercept = F)

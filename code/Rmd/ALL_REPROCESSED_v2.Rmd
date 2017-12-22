@@ -1,5 +1,5 @@
 ---
-title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and BIC based model selection with study regressed apriori)"
+title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and BIC based model selection)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./ALL_REPROCESSED_v2.Rmd",
                                  parentId = "syn8672415",
-                                 entityName = 'ALL Reprocessed RNASeq (Normalised) - study effects removed')
+                                 entityName = 'ALL Reprocessed RNASeq (Normalised - sparse model)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -47,6 +47,7 @@ cl = makeCluster(detectCores()-2)
 registerDoParallel(cl)
 
 options(xtable.type="html")
+source('../R/parallelDuplicateCorrelation.R')
 
 knitr::opts_chunk$set(
   echo=FALSE,
@@ -60,7 +61,7 @@ knitr::opts_chunk$set(
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 parentId = 'syn8672415';
 activityName = 'Covariate adjustments';
-activityDescription = 'Covariate analysis of reprocessed rnaseq from all 7 brain regions';
+activityDescription = 'Covariate analysis of reprocessed RNASeq from all 7 brain regions';
 
 thisFileName <- 'ALL_REPROCESSED_v2.Rmd'
 
@@ -85,10 +86,11 @@ covariates$ROSMAP = covariates$ROSMAP %>%
                 BrainRegion = 'DLPFC',
                 BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')),
                 msex = factor(msex, levels = c('1', '0'), labels = c('1'='MALE','0'='FEMALE')),
-                Batch = factor(Batch)) %>%
+                Batch = factor(Batch),
+                BrainRegion.ApoE = paste('DLPFC', apoe_genotype, sep = '.')) %>%
   dplyr::rename(Gender = msex, RIN = RINcontinuous, AOD = age_death, PMI = pmi) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, Batch, Gender, AOD, PMI, RIN, PCT_PF_READS_ALIGNED, 
-                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
 covariates$ROSMAP$individualIdentifier = factor(paste0('ROSMAPpseudoid',1:dim(covariates$ROSMAP)[1]))
 
 covariates$MSBB = covariates$MSBB %>%
@@ -99,7 +101,8 @@ covariates$MSBB = covariates$MSBB %>%
                 PMI = PMI/60) %>%
   dplyr::rename(Batch = batch, Gender = SEX) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, individualIdentifier, Batch, Gender, AOD, PMI, RIN, 
-                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, 
+                PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
 
 covariates$MAYO = covariates$MAYO %>%
   dplyr::mutate(SampleID = as.character(SampleID),
@@ -108,7 +111,9 @@ covariates$MAYO = covariates$MAYO %>%
                 Batch = factor(Source)) %>%
   dplyr::rename(individualIdentifier = Donor_ID, AOD = AgeAtDeath) %>%
   dplyr::select(SampleID, BrainRegion.Diagnosis, individualIdentifier, Batch, Gender, AOD, PMI, RIN, 
-                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES)
+                PCT_PF_READS_ALIGNED, PCT_CODING_BASES, PCT_INTERGENIC_BASES, PCT_INTRONIC_BASES, 
+                PCT_RIBOSOMAL_BASES, BrainRegion.ApoE)
+levels(covariates$MAYO$BrainRegion.Diagnosis) = c("CER.AD", "CER.CONTROL", "CER.OTHER", "TCX.AD", "TCX.CONTROL", "TCX.OTHER")
 
 # Download sample counts
 counts.id = c(ROSMAP = 'syn8691134',
@@ -128,7 +133,8 @@ covariates = rbindlist(covariates, use.names = T, fill = T, idcol = 'Study') %>%
   tidyr::separate(BrainRegion.Diagnosis, c('BrainRegion', 'Diagnosis'), sep = '\\.') %>%
   dplyr::filter(Diagnosis != 'OTHER') %>%
   dplyr::mutate(BrainRegion = factor(BrainRegion, levels = c('DLPFC', 'FP', 'IFG', 'PHG', 'STG', 'CER', 'TCX')),
-                BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')))
+                BrainRegion.Diagnosis = factor(paste(BrainRegion, Diagnosis, sep = '.')),
+                BrainRegion.ApoE = factor(as.character(BrainRegion.ApoE)))
 
 # Match covariates to expression data
 indToRetain = intersect(covariates$SampleID, colnames(counts))
@@ -173,9 +179,9 @@ GENE.PARAM = left_join(GENE.PARAM, Ensemble2HGNC)
 Determine relationship between covariates. 
 ```{r covariates.clustering}
 FactorCovariates <- c("individualIdentifier", "Study", "BrainRegion.Diagnosis", "BrainRegion", "Diagnosis",
-                      "Gender", "Batch")
-ContCovariates <- c("AOD", "PMI", "RIN", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES",
-                    "PCT_RIBOSOMAL_BASES")
+                      "Gender", "Batch", "BrainRegion.ApoE")
+ContCovariates <- c("AOD", "PMI", "RIN", "PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", 
+                    "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 
 # Find inter relation between factor covariates
 COVARIATES = covariates[,c(FactorCovariates,ContCovariates),drop=F]
@@ -286,7 +292,7 @@ Following is the distribution of biotypes
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
 ```{r detect.outliers, fig.height=8, fig.width=8, results='asis', cache = FALSE}
-indToRemove = c('367_120502')
+indToRemove = c('367_120502', '1950_TCX', '1950_CER', '1925_TCX', '1957_CER')
 
 # Find principal components of expression to plot
 PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
@@ -301,7 +307,7 @@ plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID')) %>
 plotdata$label[!(plotdata$SampleID %in% indToRemove)] = ''
 
 sdev = round((PC$sdev^2/sum(PC$sdev^2)) * 100, 0)
-  
+
 p <- ggplot(plotdata, aes(x=PC1, y=PC2))
 p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
 p <- p + theme_bw() + theme(legend.position="top") + ylab(paste0('PC1(',sdev[2],'%)')) + xlab(paste0('PC1(',sdev[1],'%)'))
@@ -337,7 +343,7 @@ Processing `r dim(PROCESSED_COUNTS$filteredExprMatrix)[1]` genes in `r dim(PROCE
 Based on the expression pattern following samples were tagged as outliers: `r paste(indToRemove, collapse = ', ')` 
 
 Distribution of samples are:
-`r kable(tmp)`
+  `r kable(tmp)`
 
 ### Winsorise counts (Gene outliers in samples)
 ```{r winsorise.data}
@@ -457,14 +463,20 @@ Significant covariates to adjust at FDR 0.1 are `r preAdjustedSigCovars$signific
 preAdjustedSigCovars[["PC_res"]][[2]]$plotData
 ```
 
-### Model Identification
-```{r fxn, eval = F}
+### Normalisation (iterative design)
+1. BrainRegion.Diagnosis is chosen as the primary variable of interest (i.e., covariate adjustments is conditioned on diagnosis and tissue)
+2. Individual_ID is chosen as random effect
+```{r fxn}
 # Function to fit a mixed effect model and return BIC
-fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, voomWeights, covars){
+fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, cnt, covars){
   
   # Get design matrix
   designMat = getDesignMatrix(covars[colnames(lcpm), varsToFit, drop=F], Intercept = F)
   designMat = designMat$design[,linColumnFinder(designMat$design)$indepCols]
+  
+  # Estimate voom weights
+  cnt[is.na(cnt)] = 0
+  voomWeights = limma::voom(cnt, design = designMat, plot=F)$weights
   
   modelBIC = foreach::foreach(i = 1:dim(lcpm)[1],
                               .combine = rbind,
@@ -475,11 +487,9 @@ fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, voomWeights, covar
                                 expr = data.frame(Gx = lcpm[i,])
                                 data = cbind(expr,
                                              designMat[rownames(expr),],
-                                             covars[rownames(designMat),groupingVar,drop=F])
-                                formula = paste(setdiff(colnames(data), c('Gx', groupingVar)), collapse = '+') %>%
-                                  paste('Gx ~',.) %>%
-                                  c(.,paste0('(1|',groupingVar,')')) %>%
-                                  paste(collapse = '+')
+                                             Individual_ID = groupingVar)
+                                formula = paste(setdiff(colnames(data), c('Gx', 'Individual_ID')), collapse = '+') %>%
+                                  paste('Gx ~',.,'+ (1|Individual_ID)', collapse = ' ')
                               
                                 weights = voomWeights[i,]
                                 BIC = NA
@@ -491,14 +501,14 @@ fitMixedEffectModel <- function(varsToFit, groupingVar, lcpm, voomWeights, covar
                                 }, error = function(e){
                                   BIC = NA
                                 })
-                              return(data.frame(Gene.ID = rownames(lcpm)[i],
+                              return(data.frame(ensembl_gene_id = rownames(lcpm)[i],
                                                 BIC = BIC))
                             }
   return(modelBIC)
   }
 
 # Function to select covariates in a step-wise regression fashion
-selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voomWeight, baseModelBIC){
+selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt, baseModelBIC){
   
   varsSelected = c()
   pkgs = c('CovariateAnalysis', 'data.table', 'dplyr', 'plyr',
@@ -507,13 +517,13 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voo
     allModelBIC = foreach(i = 1:length(covarsToSelect),
                           .combine = c,
                           .packages = pkgs,
-                          .export = c('fitMixedEffectModel','voomWeight')) %dopar% {
+                          .export = c('fitMixedEffectModel')) %dopar% {
                             
                             # Fit a mixed effect linear model and get all BIC
                             modelBIC = fitMixedEffectModel(c(adjustCovars, covarsToSelect[i]),
-                                                           c('individualIdentifier'), 
+                                                           covars[colnames(cnt),'individualIdentifier'], 
                                                            lcpm, 
-                                                           voomWeight, 
+                                                           cnt, 
                                                            covars) %>%
                             plyr::rename(c('BIC' = covarsToSelect[i]))
                               
@@ -523,26 +533,26 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voo
     
     # Find number of genes that are changed based on BIC
     nChange = allModelBIC %>%
-      tidyr::gather(ModelName, Value, -Gene.ID) %>%
+      tidyr::gather(ModelName, Value, -ensembl_gene_id) %>%
       dplyr::left_join(baseModelBIC) %>%
       dplyr::mutate(diff = baseModel - Value) %>%
       dplyr::group_by(ModelName) %>%
       dplyr::summarise(better = sum(diff >= 5), 
                        worse = sum(diff <= -5)) %>%
-      dplyr::mutate(nchange = (better/(better+worse)) * 100)
+      dplyr::mutate(nchange = better)
     
     print(nChange)
     
     # Select variable
     tmp = nChange %>%
-      dplyr::filter(nchange > 5) %>%
+      dplyr::filter(nchange > round(dim(cnt)[1]*0.01)) %>%
       dplyr::top_n(1, nchange)
     
     if (dim(tmp)[1] == 0){
       covarsToSelect = c()
     } else {
       baseModelBIC = allModelBIC %>%
-        dplyr::select(Gene.ID, one_of(tmp$ModelName))
+        dplyr::select(ensembl_gene_id, one_of(tmp$ModelName))
       colnames(baseModelBIC)[2] = 'baseModel'
       varsSelected = c(varsSelected, tmp$ModelName)
       covarsToSelect = setdiff(covarsToSelect, tmp$ModelName)
@@ -553,67 +563,34 @@ selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, voo
   return(varsSelected)
 }
 ```
-#### Regress out Study 
-```{r regress.study}
-# Get design matrix
-DESIGN.MAT = getDesignMatrix(COVARIATES[colnames(NEW.COUNTS), 'Study', drop=F], Intercept = T)
-DESIGN.MAT = DESIGN.MAT$design[,linColumnFinder(DESIGN.MAT$design)$indepCols]
-  
-# Estimate voom weights
-VOOM.WEIGHTS = limma::voom(NEW.COUNTS, design = DESIGN.MAT, plot=F)
-
-# Fit a linear model
-FIT = lmFit(VOOM.WEIGHTS)
-
-# Calculate residuals
-RESIDUAL.EXPR = residuals.MArrayLM(FIT, VOOM.WEIGHTS$E)
-
-# Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.EXPR, scale.=T, center = T)
-
-# Plot first 4 PCs
-plotdata <- data.frame(SampleID=rownames(PC$rotation), 
-                       PC1=PC$rotation[,1], 
-                       PC2=PC$rotation[,2])
-
-plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
-
-p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=BrainRegion, shape=Study, size=RIN))
-p <- p + theme_bw() + theme(legend.position="right")
-p
-
-adjust.covars = c('BrainRegion.Diagnosis', 'RIN', 'RIN2', 'Gender', 'PMI', 'AOD', 'Batch', 'PCT_RIBOSOMAL_BASES', 
-                  'PCT_INTRONIC_BASES', 'PCT_CODING_BASES', 'PCT_PF_READS_ALIGNED', 'PCT_INTERGENIC_BASES')
-```
 #### Phase I (clinical, ancestry and sample specific technical variables)
-```{r phase1, eval = F}
+```{r phase1}
 # Fit a base model with the following covariates
 adjust.covars = c('BrainRegion.Diagnosis')
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
-                                   c('individualIdentifier'), 
-                                   RESIDUAL.EXPR, 
-                                   VOOM.WEIGHTS$weights, 
+                                   COVARIATES[colnames(NEW.COUNTS),'individualIdentifier'], 
+                                   CQN.GENE_EXPRESSION$E, 
+                                   NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
 # Iteratively identify covariates in phase I
-phase1.covars = c('Gender', 'PMI', 'AOD', 'RIN', 'RIN2')
+phase1.covars = c('Study', 'Gender', 'PMI', 'AOD', 'RIN', 'RIN2')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     VOOM.WEIGHTS$weights, baseModelBIC)
+                                     NEW.COUNTS, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
 Clinical and technical variables selected in phase I are `r paste(adjust.covars, collapse = ', ')`
 
 #### Phase II (batch effects)
-```{r phase2, eval = F}
+```{r phase2}
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
-                                   c('individualIdentifier'), 
-                                   RESIDUAL.EXPR, 
-                                   VOOM.WEIGHTS$weights, 
+                                   COVARIATES[colnames(NEW.COUNTS),'individualIdentifier'], 
+                                   CQN.GENE_EXPRESSION$E, 
+                                   NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
@@ -621,70 +598,32 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
 phase2.covars = c('Batch')
 vars.selected = selectCovarsToAdjust(phase2.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     VOOM.WEIGHTS$weights, baseModelBIC)
+                                     NEW.COUNTS, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
 Clinical, technical and batch variables selected after phase I and II of model identification are `r paste(adjust.covars, collapse = ', ')`
 
 #### Phase III (RNASeq alignment specific covariates)
-```{r phase3, eval = F}
+```{r phase3}
 # Fit a base model with the following covariates
 baseModelBIC = fitMixedEffectModel(adjust.covars, 
-                                   c('individualIdentifier'), 
-                                   RESIDUAL.EXPR, 
-                                   VOOM.WEIGHTS$weights, 
+                                   COVARIATES[colnames(NEW.COUNTS),'individualIdentifier'], 
+                                   CQN.GENE_EXPRESSION$E, 
+                                   NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
 
 # Iteratively identify covariates in phase I
-phase3.covars = c("PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", "PCT_INTERGENIC_BASES", "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
+phase3.covars = c("PCT_PF_READS_ALIGNED", "PCT_CODING_BASES", "PCT_INTERGENIC_BASES", 
+                  "PCT_INTRONIC_BASES", "PCT_RIBOSOMAL_BASES")
 vars.selected = selectCovarsToAdjust(phase3.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
-                                     VOOM.WEIGHTS$weights, baseModelBIC)
+                                     NEW.COUNTS, baseModelBIC)
 
 adjust.covars = c(adjust.covars, vars.selected)
 ```
 Clinical, technical and batch variables selected after phase I, II and III of model identification are `r paste(adjust.covars, collapse = ', ')`
-
-### Normalisation
-1. BrainRegion.Diagnosis is chosen as the primary variable of interest (i.e., covariate adjustments is conditioned on diagnosis and tissue)
-2. Individual_ID is chosen as random effect
-```{r iterative.normalisation, results='asis'}
-writeLines(paste('Using following covariates in the model:',
-                 paste(adjust.covars, collapse=', '),
-                 'as fixed effects and Individual_ID is chosen as random effect'))
-  
-# Post adjusted design matrix
-DM1 = getDesignMatrix(COVARIATES[,adjust.covars,drop=F],Intercept = F)
-DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
-  
-# Estimate voom weights
-VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, design=DM1$design, plot=F)
-
-# Estimate consensus correlation coefficient
-# correlation <- parallelDuplicateCorrelation(VOOM.GENE_EXPRESSION, block = COVARIATES$Individual_ID)
-correlation = list()
-correlation$cor = 0.45
-
-# Re-calculate voom weights with correlation of random effects
-VOOM.GENE_EXPRESSION = voom(NEW.COUNTS, 
-                            design=DM1$design, plot=F,
-                            block = COVARIATES$Individual_ID, 
-                            correlation = correlation$cor)
-
-# Fit linear model using new weights and new design
-VOOM.GENE_EXPRESSION$E = RESIDUAL.EXPR
-ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
-  
-# Residuals after normalisation
-RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, VOOM.GENE_EXPRESSION$E)
-
-# Find PC of residual gene expression and significant covariates that are highly correlated with PCs
-residualSigCovars = runPCAandPlotCorrelations(RESIDUAL.GENE_EXPRESSION, COVARIATES,
-                                              'adjusted design(voom-normalized)',
-                                              isKeyPlot=TRUE)
-```
 
 ### Sanity check
 ```{r residualSigCovars.manual, fig.width=12, fig.height=8}
@@ -714,7 +653,7 @@ Calculate weighted residuals and add back "BrainRegion.Diagnosis" to the residua
 # Add variable of interest back to the residuals
 varsToAddIn = grep("BrainRegion.Diagnosis", colnames(DM1$design), value = T)
 RESIDUAL.GENE_EXPRESSION = RESIDUAL.GENE_EXPRESSION +
-  ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(DM1$design[,varsToAddIn])
+  VOOM.ADJUSTED.FIT$coefficients[,varsToAddIn] %*% t(VOOM.ADJUSTED.FIT$design[,varsToAddIn])
 ```
 
 ### Coexpression of residual expression 
@@ -767,18 +706,18 @@ Differential expression is performed on the primary variable by controlling for 
 Genes that are differentially expressed at an FDR <= 0.05 are
 ```{r diff.exp1, fig.height=7, fig.width=24}
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, adjust.covars, drop = F], Intercept = F)
+DESIGN = getDesignMatrix(COVARIATES[, c("BrainRegion.Diagnosis", postAdjustCovars), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -855,28 +794,101 @@ pl[[3]] = pl[[3]] + theme(legend.position = 'top')
 multiplot(plotlist = pl, cols = 3)
 ```
 
+### Differential expression analysis (with BrainRegion.ApoE as primary variable)
+Differential expression is performed on the primary variable by controlling for covariates identified above
+Genes that are differentially expressed at an FDR <= 0.05 are
+```{r diff.exp2, fig.height=7, fig.width=24}
+# Get design matrix
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.ApoE', setdiff(postAdjustCovars, 'BrainRegion.Diagnosis')), drop = F],
+                         Intercept = F)
+DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
+
+# Estimate voom weights for dispersion control
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
+
+# Calculate correlation values of random effects
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+
+# Re-estimate voom weights
+VOOM.WEIGHTS = voom(NEW.COUNTS,
+                    design=DESIGN$design, plot=F,
+                    block = COVARIATES$individualIdentifier, 
+                    correlation = correlation$cor)
+
+# Fit linear model using new weights and new design
+VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
+FIT = lmFit(VOOM.WEIGHTS)
+
+# Fit contrast
+cntr = c()
+for (region in c('DLPFC', 'FP', 'STG', 'PHG', 'IFG', 'CER', 'TCX')){
+  tmp = combn(paste0('BrainRegion.ApoE', region, '_', c('0', '1', '2')),2)
+  cntr = c(cntr, apply(tmp, 2, paste, collapse = '-'))
+}
+
+contrast = makeContrasts(contrasts=cntr,
+                         levels = colnames(FIT$coefficients))
+FIT.CONTR = contrasts.fit(FIT, contrasts=contrast)
+FIT.CONTR = eBayes(FIT.CONTR)
+
+# Get differnetial expression
+DE = lapply(1:dim(contrast)[2], function(i, FIT.CONTR){
+  topTable(FIT.CONTR, coef=i, number = 50000, confint = T) %>%
+    rownameToFirstColumn('Gene.ID')
+}, FIT.CONTR)
+names(DE) = colnames(contrast)
+
+DE = DE %>% 
+  rbindlist(idcol = 'Comparison') %>%
+  dplyr::mutate(Comparison = gsub('BrainRegion.ApoE','',Comparison),
+                Study = 'ALL',
+                Direction = logFC/abs(logFC),
+                Direction = factor(Direction, c(-1,1), c('-1' = 'DOWN', '1' = 'UP')),
+                Direction = as.character(Direction)) %>%
+  left_join(GENE.PARAM %>%
+              dplyr::select(Gene.ID, ensembl_gene_id, hgnc_symbol, percentage_gc_content, gene.length) %>%
+              unique())
+DE$Direction[DE$adj.P.Val > 0.05 | abs(DE$logFC) < log2(1.2)] = 'NONE'
+
+tmp = DE %>%
+  dplyr::select(ensembl_gene_id, Comparison, Direction) %>%
+  group_by(Comparison, Direction) %>%
+  dplyr::summarise(FDR_0_05_FC_1.2 = length(unique(ensembl_gene_id))) %>%
+  spread(Direction, FDR_0_05_FC_1.2) 
+kable(tmp)
+
+p = ggplot(DE, aes(y = -log10(adj.P.Val), x = logFC, color = Direction)) + geom_point() + xlim(c(-1,1))
+p = p + scale_color_manual(values = c('green','grey','red')) + theme(legend.position='top')
+p = p + facet_grid(.~Comparison, scales = 'fixed')
+p
+
+all.diff.exp = c(all.diff.exp, list(ApoE = DE))
+all.fit = c(all.fit, list(ApoE = FIT))
+```
+
 ### Differential expression analysis (with BrainRegion.Diagnosis and Gender)
 Differential expression is performed on the BrainRegion.Diagnosis x Gender variable by controlling for covariates identified above
 Genes that are differentially expressed at an FDR <= 0.05 are
-```{r diff.exp2, fig.height=7, fig.width=24}
+```{r diff.exp3, fig.height=7, fig.width=24}
 ## Modeling Diagnosis, msex and age_death conjointly
 COVARIATES$BrainRegion.Diagnosis.Gender = factor(paste(COVARIATES$BrainRegion.Diagnosis,
                                                        COVARIATES$Gender,
                                                        sep = '_'))
 
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis.Gender', setdiff(adjust.covars, c('BrainRegion.Diagnosis', 'Gender'))), drop = F], Intercept = F)
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis.Gender', setdiff(postAdjustCovars, c('BrainRegion.Diagnosis', 'Gender'))), drop = F], Intercept = F)
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -946,23 +958,23 @@ all.fit = c(all.fit, list(Diagnosis.Gender = FIT))
 Differential expression is performed on the BrainRegion.Diagnosis x AOD variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp3, fig.height=7, fig.width=24}
+```{r diff.exp4, fig.height=7, fig.width=24}
 # Get design matrix
-DESIGN = getDesignMatrix(COVARIATES[, c(setdiff(adjust.covars, 'AOD')), drop = F], Intercept = F)
+DESIGN = getDesignMatrix(COVARIATES[, c('BrainRegion.Diagnosis', setdiff(postAdjustCovars, 'AOD')), drop = F], Intercept = F)
 ind = grep('BrainRegion.Diagnosis', colnames(DESIGN$design))
 DESIGN$design[,ind] = DESIGN$design[,ind]*COVARIATES$AOD
 colnames(DESIGN$design)[ind] = paste(colnames(DESIGN$design)[ind], 'AOD', sep = '_')
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -1023,7 +1035,7 @@ all.fit = c(all.fit, list(Diagnosis.AOD = FIT))
 Differential expression is performed on the BrainRegion.Diagnosis x CelltypeFractions variable by controlling for covariates identified above
 
 Genes that are differentially expressed at an FDR <= 0.05 and folde change of 1.2 are
-```{r diff.exp4.1, fig.height=10, fig.width=15}
+```{r diff.exp5, fig.height=10, fig.width=15, eval = F}
 # Cell type markers
 CELL.FRAC = downloadFile('syn10163089')
 all.used.ids = c(all.used.ids, 'syn10163089')
@@ -1047,14 +1059,14 @@ DESIGN = getDesignMatrix(NEW.COVARIATES[, c(adjust.covars, "astrocytes", "endoth
 DESIGN$design = DESIGN$design[,linColumnFinder(DESIGN$design)$indepCols]
 
 # Estimate voom weights for dispersion control
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts, design=DESIGN$design, plot=F)
+VOOM.WEIGHTS = voom(NEW.COUNTS, design=DESIGN$design, plot=F)
 
 # Calculate correlation values of random effects
 VOOM.WEIGHTS$E = CQN.GENE_EXPRESSION$E
-# correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
-  
+correlation = parallelDuplicateCorrelation(VOOM.WEIGHTS, block = COVARIATES$individualIdentifier)
+
 # Re-estimate voom weights
-VOOM.WEIGHTS = voom(PROCESSED_COUNTS$filteredExprMatrix$counts,
+VOOM.WEIGHTS = voom(NEW.COUNTS,
                     design=DESIGN$design, plot=F,
                     block = COVARIATES$individualIdentifier, 
                     correlation = correlation$cor)
@@ -1114,21 +1126,21 @@ Using Fisher's exact test for gene set enrichment analysis
 ```{r enrich.de, fig.height=16, fig.width=16}
 # Perform gene set enrichment analysis using wilcox test from limma
 diffexp.genes = all.diff.exp %>%
-  data.table::rbindlist(idcol='Model', use.names = T, fill = T) %>%
-  dplyr::mutate(Direction = sign(logFC),
-                Direction = factor(Direction, labels = c('-1' = 'DOWN', '1' = 'UP')))
+data.table::rbindlist(idcol='Model', use.names = T, fill = T) %>%
+dplyr::mutate(Direction = sign(logFC),
+Direction = factor(Direction, labels = c('-1' = 'DOWN', '1' = 'UP')))
 
 geneSet.test = diffexp.genes %>%
-  plyr::dlply(.(Model, Comparison, Direction), .fun = function(x){
-    unique(x$hgnc_symbol[x$adj.P.Val <= 0.05])
-  })
-  
+plyr::dlply(.(Model, Comparison, Direction), .fun = function(x){
+unique(x$hgnc_symbol[x$adj.P.Val <= 0.05])
+})
+
 statistics.test = diffexp.genes %>%
-  plyr::dlply(.(Model, Comparison), .fun = function(x){
-    tmp = dplyr::select(x, hgnc_symbol, adj.P.Val) %>% dplyr::group_by(hgnc_symbol) %>% dplyr::top_n(1,-adj.P.Val) %>% unique() %>% as.data.frame()
-    rownames(tmp) = tmp$hgnc_symbol
-    return(tmp)
-  })
+plyr::dlply(.(Model, Comparison), .fun = function(x){
+tmp = dplyr::select(x, hgnc_symbol, adj.P.Val) %>% dplyr::group_by(hgnc_symbol) %>% dplyr::top_n(1,-adj.P.Val) %>% unique() %>% as.data.frame()
+rownames(tmp) = tmp$hgnc_symbol
+return(tmp)
+})
 names(statistics.test) = paste(names(statistics.test),'UP',sep = '.')
 statistics.test1 = statistics.test
 names(statistics.test1) = gsub('.UP','.DOWN', names(statistics.test1))
@@ -1140,45 +1152,50 @@ backgroundGenes = unique(DE$hgnc_symbol)
 load(synGet('syn4867851')@filePath)
 all.used.ids = c(all.used.ids, 'syn4867851')
 geneSet.ref = GeneSets[c('KEGG_2016', 'GO_Biological_Process_2015', 'Reactome_2016', 'WikiPathways_2016')] %>%
-  CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
-  do.call(c,.)
+lapply(function(x){
+lapply(x, function(y){
+sapply(y, function(y) str_split(y, '\\,')[[1]][1])
+})
+}) %>%
+CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
+do.call(c,.)
 
 # Perform enrichment analysis
 enrichment.results = mapply(function(gs.test, st.test, gs.ref){
-  plyr::ldply(gs.ref, .fun = function(y, gs.test, st.test){
-    tmp = CovariateAnalysis::fisherEnrichment(gs.test, y, st.test$hgnc_symbol)
-    tmp$wilcox.pval = limma::geneSetTest(which(st.test$hgnc_symbol %in% y), st.test[,'adj.P.Val'])
-    return(tmp)
-  }, gs.test, st.test, .parallel = T, .id = 'GeneSetName') %>%
-    dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'),
-                  wilcox.fdr = p.adjust(wilcox.pval, method = 'fdr'))
+plyr::ldply(gs.ref, .fun = function(y, gs.test, st.test){
+tmp = CovariateAnalysis::fisherEnrichment(gs.test, y, st.test$hgnc_symbol)
+tmp$wilcox.pval = limma::geneSetTest(which(st.test$hgnc_symbol %in% y), st.test[,'adj.P.Val'])
+return(tmp)
+}, gs.test, st.test, .parallel = T, .id = 'GeneSetName') %>%
+dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'),
+wilcox.fdr = p.adjust(wilcox.pval, method = 'fdr'))
 }, geneSet.test, statistics.test[names(geneSet.test)], 
 MoreArgs = list(geneSet.ref),
 SIMPLIFY = F) %>%
-  data.table::rbindlist(idcol = 'Comparison', use.names = T, fill = T)
+data.table::rbindlist(idcol = 'Comparison', use.names = T, fill = T)
 ```
 
 ### Store files in synapse
 ```{r synapse.store, include=FALSE, eval=TRUE, cache=FALSE}
 # Set annotations
 all.annotations = list(
-  dataType = 'mRNA',
-  dataSubType = 'geneExp',
-  summaryLevel = 'gene',
-  assay	 = 'RNAseq',
-  assaySubType = 'Reprocessed',
+dataType = 'mRNA',
+dataSubType = 'geneExp',
+summaryLevel = 'gene',
+assay	 = 'RNAseq',
+assaySubType = 'Reprocessed',
 
-  tissueTypeAbrv	= 'DLPFC, FP, STG, PHG, IFG, CER, TCX', 
-  study = 'ALL', 
-  center = 'ALL',
-  
-  organism = 'HomoSapiens',
-  consortium	= 'AMP-AD',
-   
-  normalizationStatus	= TRUE,
-  modelSystem	= FALSE,
-  
-  normalizationType	= 'CQN'
+tissueTypeAbrv	= 'DLPFC, FP, STG, PHG, IFG, CER, TCX', 
+study = 'ALL', 
+center = 'ALL',
+
+organism = 'HomoSapiens',
+consortium	= 'AMP-AD',
+
+normalizationStatus	= TRUE,
+modelSystem	= FALSE,
+
+normalizationType	= 'CQN'
 )
 
 # Function to change entity ACL (also creates new acls if it doesn't exist)
@@ -1202,7 +1219,7 @@ new.racl = ResourceAccess(principalId = '3319864',
   ResourceAccessList() 
 
 # Code
-CODE <- Folder(name = "ALL Reprocessed RNASeq (Normalised) - study effects removed", parentId = parentId)
+CODE <- Folder(name = "ALL Reprocessed RNASeq (Normalised)", parentId = parentId)
 annotations(CODE) = all.annotations
 CODE <- synStore(CODE)
 synChangeEntityACL(CODE@properties$id, new.racl)
@@ -1214,7 +1231,7 @@ COV_OBJ = File('AMP_Covariates.tsv', name = 'Covariates', parentId = CODE$proper
 annotations(COV_OBJ) = annotations(CODE)
 annotations(COV_OBJ)$dataSubType = 'covariates'
 COV_OBJ = synStore(COV_OBJ, used = all.used.ids, activityName = activityName, 
-                      executed = thisFile, activityDescription = activityDescription)
+                   executed = thisFile, activityDescription = activityDescription)
 synChangeEntityACL(COV_OBJ@properties$id, new.racl)
 
 # Store filtered counts
@@ -1225,6 +1242,15 @@ COUNT_OBJ = File('AMP_Counts.tsv', name = 'Counts (filtered raw)', parentId = CO
 annotations(COUNT_OBJ) = annotations(CODE)
 annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
 COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+
+# Store filtered counts
+NEW.COUNTS %>%
+  rownameToFirstColumn('Gene.ID') %>%
+  write.table(file = 'AMP_nCounts.tsv', sep = '\t', row.names=F, quote=F)
+NCOUNT_OBJ = File('AMP_nCounts.tsv', name = 'Counts (estimated)', parentId = CODE$properties$id)
+annotations(NCOUNT_OBJ) = annotations(CODE)
+annotations(NCOUNT_OBJ)$dataSubType = 'estimatedCounts'
+NCOUNT_OBJ = synStore(NCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
 CQN.GENE_EXPRESSION$E %>%
@@ -1281,15 +1307,25 @@ annotations(DEG_OBJ) = annotations(CODE)
 annotations(DEG_OBJ)$dataSubType = 'diffExpGS'
 DEG_OBJ = synStore(DEG_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
+# Store all model fits
+save(list = 'all.fit', file = 'AMP_allModelFits.RData')
+AFIT_OBJ = File('AMP_allModelFits.RData',
+                name = 'All Model Fit', 
+                parentId = CODE$properties$id)
+annotations(AFIT_OBJ) = annotations(CODE)
+annotations(AFIT_OBJ)$dataSubType = 'allModelFit'
+AFIT_OBJ = synStore(AFIT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+synChangeEntityACL(AFIT_OBJ@properties$id, new.racl)
+
 synDeleteEntityACL(CODE@properties$id)
 ```
 |  *Results*                                  |  *SynapseID*                     |
-|  -----------------------------------------  |   ----------------------------   |
-|  Covariates                                 |  `r COV_OBJ$properties$id`       |
-|  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
-|  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
-|  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
-|  Design Matrix                              |  `r DM_OBJ$properties$id`        |
-|  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
-|  Enrichment Results                         |  `r ENRICH_OBJ$properties$id`    |
-|  Differentially Expressed Gene Sets         |  `r DEG_OBJ$properties$id`       |
+  |  -----------------------------------------  |   ----------------------------   |
+  |  Covariates                                 |  `r COV_OBJ$properties$id`       |
+  |  Counts (raw)                               |  `r COUNT_OBJ$properties$id`     |
+  |  Counts (lcpm)                              |  `r LCOUNT_OBJ$properties$id`    |
+  |  Offset (for gene length and gc content)    |  `r OFFSET_OBJ$properties$id`    |
+  |  Design Matrix                              |  `r DM_OBJ$properties$id`        |
+  |  Differential Expression                    |  `r DEXP_OBJ$properties$id`      |
+  |  Enrichment Results                         |  `r ENRICH_OBJ$properties$id`    |
+  |  Differentially Expressed Gene Sets         |  `r DEG_OBJ$properties$id`       |

@@ -1,5 +1,6 @@
 ---
-title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and BIC based model selection)"
+title: "Differential expression analysis of reprocessed AMPAD RNASeq data (All 7 brain regions with CQN normlaisation and PCA
+based model selection)"
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
