@@ -1,0 +1,287 @@
+---
+title: "Differential expression figures"
+author: "Thanneer Perumal"
+date: "`r date()`"
+output: html_notebook
+---
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+# Load required libraries
+library(CovariateAnalysis)
+library(data.table)
+library(plyr)
+library(tidyverse)
+
+library(synapseClient)
+library(githubr)
+library(knitr)
+
+synapseLogin()
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  error = FALSE,
+  tidy = FALSE,
+  cache = TRUE)
+```
+
+### Covariates
+```{r technical.cov}
+cov = downloadFile('syn10160582')
+all.used.ids = c('syn10160582')
+```
+Total number of samples
+```{r total.sample}
+cov %>%
+  dplyr::select(Study, SampleID, BrainRegion, Diagnosis) %>%
+  dplyr::group_by(BrainRegion, Diagnosis) %>%
+  dplyr::count() %>%
+  tidyr::spread(Diagnosis, n) %>%
+  kable()
+```
+Total number of samples per sex
+```{r total.sample.sex}
+cov %>%
+  dplyr::select(Study, SampleID, BrainRegion, Diagnosis, Gender) %>%
+  dplyr::group_by(BrainRegion, Gender) %>%
+  dplyr::count() %>%
+  tidyr::spread(Gender, n) %>%
+  kable()
+```
+Different types of RNAs
+```{r diff.rnas}
+tmp = cov %>%
+  dplyr::select(Study, PCT_CODING_BASES, PCT_INTERGENIC_BASES, 
+                PCT_INTRONIC_BASES, PCT_RIBOSOMAL_BASES) %>%
+  tidyr::gather(Feature, Value, -Study) %>%
+  dplyr::group_by(Study, Feature) %>%
+  dplyr::summarise(Value = mean(Value, na.rm = T)) %>%
+  tidyr::spread(Feature, Value) %>%
+  dplyr::group_by(Study) %>%
+  dplyr::mutate(PCT_UTR_BASES = 1 - PCT_CODING_BASES - PCT_INTERGENIC_BASES - PCT_INTRONIC_BASES - PCT_RIBOSOMAL_BASES) %>%
+  tidyr::gather(TypeOfRNA, Value, -Study) 
+
+p = ggplot(tmp, aes(x = Study, y= Value, fill = TypeOfRNA)) + geom_bar(stat = 'identity')
+p = p + ylab('Fraction of aligned reads') + xlab('Study') + theme_bw()
+p
+```
+### Differential Expression
+```{r get.results}
+dexp = downloadFile('syn11180450')
+all.used.ids = c(all.used.ids, 'syn11180450')
+
+ndexp = dplyr::filter(dexp, Model == 'Diagnosis') %>% 
+  dplyr::group_by(Study, Tissue, Comparison, Gender) %>% 
+  dplyr::summarise(UP = sum(adj.P.Val <= 0.05 & logFC >= 0), 
+                   DOWN = sum(adj.P.Val <= 0.05 & logFC <= 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-Comparison, -Gender)
+kable(ndexp)
+```
+pca plot
+```{r pca}
+expr = downloadFile('syn10160584') %>%
+  tidyr::separate(Gene.ID, c('ensembl_gene_id','position'),sep = '\\.') %>%
+  dplyr::filter(ensembl_gene_id %in% unique(dexp$ensembl_gene_id[dexp$adj.P.Val <= 0.05 & dexp$Model == 'Diagnosis']))
+
+pc = prcomp(expr[,-(1:2)], scale. = T, center = T)
+
+cov = data.frame(SampleID = colnames(expr)[-(1:2)],
+           PC1 = pc$rotation[,1],
+           PC2 = pc$rotation[,2]) %>%
+  dplyr::left_join(cov)
+p = ggplot(cov, aes(x = PC1, y = PC2, color = Study, shape = BrainRegion))
+p = p + geom_point() + scale_shape_manual(values = 1:7)
+p = p + theme(legend.position = 'top')
+p
+```
+
+Volcano plots
+```{r vp, fig.height=5, fig.width=10}
+dexp$Direction = 'None'
+dexp$Direction[dexp$logFC >= 0 & dexp$adj.P.Val <= 0.05] = 'Up'
+dexp$Direction[dexp$logFC <= 0 & dexp$adj.P.Val <= 0.05] = 'Down'
+
+p = ggplot(dexp %>%
+             dplyr::filter(Model == 'Diagnosis'), 
+           aes(x = logFC, y = -log10(adj.P.Val), color = Direction)) + geom_point(alpha = 0.1)
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = viridis::viridis(3))
+# dev.off()
+# svg(filename = 'VolcanoPlots.svg', height = 6, width = 12)
+# print(p)
+# dev.off()
+p
+```
+Average expression
+```{r aexp, fig.height=5, fig.width=10}
+col = viridis::viridis(3)
+p = ggplot(dexp%>%
+             dplyr::filter(Model == 'Diagnosis'), 
+           aes(x = AveExpr, y = logFC, color = Direction)) + geom_point(alpha = 0.1)
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = col)
+p
+```
+Number of differentially expressed genes in each foldchange range (histogram)
+```{r ndiff.range, fig.height=5, fig.width=10}
+dexp$lfc1 = ifelse(dexp$logFC >= 0, dexp$logFC, NA)
+dexp$lfc2 = ifelse(dexp$logFC <= 0, dexp$logFC, NA)
+p = ggplot(dexp %>% dplyr::filter(adj.P.Val <= 0.05 & Model == 'Diagnosis'))
+p = p + geom_histogram( aes(x = lfc1, y = ..count..), fill = "red")
+p = p + geom_histogram( aes(x = lfc2, y = -..count..), fill = "green")
+p = p + facet_grid(.~Study+Tissue, scales = 'free') + ylab('Gene count') + xlab('Log Fold Change')
+p
+```
+### Overlap statistics
+overlap between different brain regions
+```{r ovlp.stats.up}
+dexp.enrich.plots = dexp %>%
+  dplyr::filter(Model %in% c('Diagnosis'), 
+                adj.P.Val <= 0.05) %>%
+  plyr::dlply(.(Direction), .fun = function(x){
+    gr = x %>%
+      plyr::dlply(.(Tissue), .fun = function(x){unique(x$ensembl_gene_id)}) %>%
+      plyr::ldply(.,function(x, gs, backgroundGenes){
+        plyr::ldply(gs, .fun = function(y,x,backgroundGenes){
+          CovariateAnalysis::fisherEnrichment(x,y,backgroundGenes)
+        }, x, backgroundGenes) %>%
+          dplyr::rename(To = Tissue)
+      }, ., background.genes) %>%
+      dplyr::rename(From = Tissue) %>%
+      dplyr::mutate(FDR = p.adjust(pval, method = 'BH')) %>%
+      dplyr::select(From, To, Odds.Ratio, FDR, noverlap) %>%
+      igraph::graph_from_data_frame() 
+    
+    or.mat = igraph::as_adj(gr, type = 'both', attr = 'Odds.Ratio') %>% as.matrix()
+    or.mat[is.infinite(or.mat)] = 0
+    no.mat = igraph::as_adj(gr, type = 'both', attr = 'noverlap')
+    
+    if (unique(x$Direction) == 'Up'){
+      col = c('white','red')
+    } else {
+      col = c('white','darkgreen')
+    }
+    ComplexHeatmap::Heatmap(as.matrix(or.mat), 
+                            col= circlize::colorRamp2(c(0,40),col),
+                            cell_fun = function(j, i, x, y, widht, height, fill){
+                              no.mat[i,j] %>%
+                                format(digit = 1) %>%
+                                as.character() %>%
+                                grid.text(x, y)
+                            },
+                            name = 'Odds Ratio',
+                            column_title = paste(unique(x$Direction), 
+                                                 'regulated'))
+  })
+purrr::walk(dexp.enrich.plots, function(x){ print(x) })
+```
+
+### Sex Specific Differential Expression
+```{r ndiff.sex}
+ndexp = dplyr::filter(dexp, Model == 'Diagnosis.Gender') %>% 
+  dplyr::group_by(Study, Tissue, Comparison, Gender) %>% 
+  dplyr::summarise(UP = sum(adj.P.Val <= 0.05 & logFC >= 0), 
+                   DOWN = sum(adj.P.Val <= 0.05 & logFC <= 0)) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(-Comparison)
+ndexp.female = dplyr::filter(ndexp, Gender == 'FEMALE') %>%
+  dplyr::rename(FEMALE.UP = UP, FEMALE.DOWN = DOWN) %>%
+  dplyr::select(-Gender)
+ndexp.male = dplyr::filter(ndexp, Gender == 'MALE') %>%
+  dplyr::rename(MALE.UP = UP, MALE.DOWN = DOWN) %>%
+  dplyr::select(-Gender)
+kable(dplyr::full_join(ndexp.female, ndexp.male, by = c('Tissue', 'Study')))
+```
+Volcano plots
+```{r sex.vp, fig.height=10, fig.width=10}
+p = ggplot(dexp %>%
+             dplyr::filter(Model == 'Diagnosis.Gender'), 
+           aes(x = logFC, y = -log10(adj.P.Val), color = Direction)) + geom_point(alpha = 0.1)
+p = p + facet_grid(Gender+.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = viridis::viridis(3))
+# dev.off()
+# svg(filename = 'VolcanoPlots.svg', height = 6, width = 12)
+# print(p)
+# dev.off()
+p
+```
+Average expression
+```{r sex.aexp, fig.height=10, fig.width=10}
+col = viridis::viridis(3)
+p = ggplot(dexp%>%
+             dplyr::filter(Model == 'Diagnosis.Gender'), 
+           aes(x = AveExpr, y = logFC, color = Direction)) + geom_point(alpha = 0.1)
+p = p + facet_grid(Gender+.~Study+Tissue, scales = 'free') + theme(legend.position = 'top') 
+p = p + scale_color_manual(values = col)
+p
+```
+Number of differentially expressed genes in each foldchange range (histogram)
+```{r sex.ndiff.range, fig.height=10, fig.width=10}
+dexp$lfc1 = ifelse(dexp$logFC >= 0, dexp$logFC, NA)
+dexp$lfc2 = ifelse(dexp$logFC <= 0, dexp$logFC, NA)
+p = ggplot(dexp %>% dplyr::filter(adj.P.Val <= 0.05 & Model == 'Diagnosis.Gender'))
+p = p + geom_histogram( aes(x = lfc1, y = ..count..), fill = "red")
+p = p + geom_histogram( aes(x = lfc2, y = -..count..), fill = "green")
+p = p + facet_grid(Gender+.~Study+Tissue, scales = 'free') + ylab('Gene count') + xlab('Log Fold Change')
+p
+```
+### Overlap statistics
+overlap between different brain regions in female
+```{r ovlp.stats.up.female}
+dexp.enrich.plots = dexp %>%
+  dplyr::filter(Model %in% c('Diagnosis.Gender'), 
+                adj.P.Val <= 0.05) %>%
+  plyr::dlply(.(Gender, Direction), .fun = function(x){
+    gr = x %>%
+      plyr::dlply(.(Tissue), .fun = function(x){unique(x$ensembl_gene_id)}) %>%
+      plyr::ldply(.,function(x, gs, backgroundGenes){
+        plyr::ldply(gs, .fun = function(y,x,backgroundGenes){
+          CovariateAnalysis::fisherEnrichment(x,y,backgroundGenes)
+        }, x, backgroundGenes) %>%
+          dplyr::rename(To = Tissue)
+      }, ., background.genes) %>%
+      dplyr::rename(From = Tissue) %>%
+      dplyr::mutate(FDR = p.adjust(pval, method = 'BH')) %>%
+      dplyr::select(From, To, Odds.Ratio, FDR, noverlap) %>%
+      igraph::graph_from_data_frame() 
+    
+    or.mat = igraph::as_adj(gr, type = 'both', attr = 'Odds.Ratio') %>% as.matrix()
+    or.mat[is.infinite(or.mat)] = 0
+    no.mat = igraph::as_adj(gr, type = 'both', attr = 'noverlap')
+    
+    if (unique(x$Direction) == 'Up'){
+      col = c('white','red')
+    } else {
+      col = c('white','darkgreen')
+    }
+    ComplexHeatmap::Heatmap(as.matrix(or.mat), 
+                            col= circlize::colorRamp2(c(0,40),col),
+                            cell_fun = function(j, i, x, y, widht, height, fill){
+                              no.mat[i,j] %>%
+                                format(digit = 1) %>%
+                                as.character() %>%
+                                grid.text(x, y)
+                            },
+                            name = 'Odds Ratio',
+                            column_title = paste(unique(x$Direction), 
+                                                 'regulated in', 
+                                                 unique(x$Gender)))
+  })
+purrr::walk(dexp.enrich.plots, function(x){ print(x) })
+```
+### Store in synapse
+```{r syn.store}
+# Get github commit
+thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Network", ref="branch", refName='AMPAD_manuscript')
+thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('manuscriptFigures/',thisFileName))
+
+obj = rmarkdown::render('diffExpFigure.Rmd', output_format = 'html_document')
+obj = File(obj, name = 'Differential expression summary', parentId = 'syn11703045')
+obj = synStore(obj, executed = thisFile)
+# wikiPg = WikiPage(owner = obj, title = 'Figure1')
+wikiPg = synGetWiki(obj)
+wikiPg@properties$markdown = paste0("${preview?entityId=",obj$properties$id,"}")
+wikiPg = synStore(wikiPg)
+```
