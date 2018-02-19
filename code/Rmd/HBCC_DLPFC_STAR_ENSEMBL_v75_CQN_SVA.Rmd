@@ -1,9 +1,11 @@
 ---
-title: "Covariate analysis of HBCC RNASeq data reprocessed with STAR-feature counts workflow with Ensembl v75 (DLPFC with CQN and SVA normlaisation)"
-author: "Thanneer Perumal"
-date: "`r date()`"
-output: html_document
+title: Covariate analysis of HBCC RNASeq data reprocessed with STAR-feature counts workflow with Ensembl v75 (ACC and DLPFC with CQN + SVA normlaisation)
+author: Thanneer Perumal
+editor_options:
+  chunk_output_type: console
 ---
+Date of analysis update: "`r date()`"
+
 ```{r knit2synapse, eval=FALSE}
 library(synapseClient)
 library(knit2synapse)
@@ -45,6 +47,10 @@ library(foreach)
 
 cl = makeCluster(detectCores()-2)
 registerDoParallel(cl)
+
+# Source modified functions from sva package
+source('../R/irwsva.build.R')
+source('../R/f.pvalue.R')
 
 options(xtable.type="html")
 
@@ -274,7 +280,7 @@ h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'A
 draw(h, heatmap_legend_side = 'left', padding = unit(c(10,2,2,10), "mm"))
 ```
 
-## Explore metatdata
+### Explore metatdata
 ```{r data.explore, fig.width = 12, fig.height = 12}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
 
@@ -353,13 +359,26 @@ pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
 Following is the distribution of biotypes
 `r kable(pct.pc)`
 
+### Library Normalisation
+Initial library normalisation usign cqn
+```{r cqn}
+# Compute offset for gene length and gc content
+CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
+                          lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
+                          lengthMethod = "smooth", 
+                          verbose = FALSE)
+CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+```
+
 ### Outlier analysis
+#### Sample Outliers
 Detect outlier samples based on their expression (logCPM) pattern
-```{r detect.outliers, fig.height=5, fig.width=5, results='asis', cache = FALSE}
+```{r detect.outliers, fig.height=5, fig.width=6, results='asis', cache = FALSE}
 indToRemove = c("CMC_HBCC_RNA_PFC_3402")
 
 # Find principal components of expression to plot
-PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
+PC <- prcomp(CQN.GENE_EXPRESSION$E, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -379,7 +398,7 @@ p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
 # Plot abberent distribution of logcpm counts
-tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
+tmp1 = CQN.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
   left_join(COVARIATES %>%
@@ -394,6 +413,7 @@ p
 
 indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
 PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
+CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E[,indToRetain]
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
@@ -408,73 +428,29 @@ Based on the expression pattern following samples were tagged as outliers: `r pa
 Distribution of samples are:
 `r kable(tmp)`
 
-
-### Winsorise counts (Gene outliers in samples)
+#### Gene outliers
+Assign NA values to genes that are above and below 3 std deviation of its distribution
 ```{r winsorise.data}
-LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
-
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-LOG.CPM = apply(LOG.CPM, 1, function(x){
+LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   mn = mean(x, na.rm = T)
   std.dev = sd(x, na.rm = T)
   
-  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
-  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
-  
-  x[x < (mn-3*std.dev)] = x[ind.low]
-  x[x > (mn+3*std.dev)] = x[ind.high]
+  x[x < (mn-3*std.dev)] = NA
+  x[x > (mn+3*std.dev)] = NA
   return(x)
 }) %>% t
-
-# Back calculate counts for further analysis
+CQN.GENE_EXPRESSION$E = LOG.CPM
+CQN.GENE_EXPRESSION$E.no.na = CQN.GENE_EXPRESSION$E
+CQN.GENE_EXPRESSION$E.no.na[is.na(CQN.GENE_EXPRESSION$E.no.na)] = 0
 LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
 NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
 ```
 
-### Library Normalisation
-Initial library normalisation usign cqn
-```{r cqn}
-# Compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(NEW.COUNTS, 
-                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
-                          lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
-                          lengthMethod = "smooth", 
-                          verbose = FALSE)
-CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
-
-# Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-CQN.GENE_EXPRESSION$E = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
-  mn = mean(x, na.rm = T)
-  std.dev = sd(x, na.rm = T)
-  
-  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
-  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
-  
-  x[x < (mn-3*std.dev)] = x[ind.low]
-  x[x > (mn+3*std.dev)] = x[ind.high]
-  return(x)
-}) %>% t
-
-# Back calculate counts for further analysis
-LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
-NEW.COUNTS = (2^CQN.GENE_EXPRESSION$E) * t(replicate(dim(CQN.GENE_EXPRESSION$E)[1], LIB.SIZE))/1e6
-```
-
-### Co-expression distribution
-Coexpression of genes 
-```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
-tmp = CQN.GENE_EXPRESSION$E
-tmp[is.na(tmp)] = 0
-cr = cor(t(tmp))
-hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
-```
-
 ### Sample clustering
-```{r decompse.normalise.data, fig.height=6, fig.width=8, results='asis', cache=FALSE}
+```{r decompse.normalise.data, fig.height=5, fig.width=5, results='asis', cache=FALSE}
 # Find principal components of expression to plot
-tmp = CQN.GENE_EXPRESSION$E
-tmp[is.na(tmp)] = 0
-PC <- prcomp(tmp, scale.=T, center = T)
+PC <- prcomp(CQN.GENE_EXPRESSION$E.no.na, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -491,14 +467,12 @@ p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 p
 ```
 Tree based clustering of samples
-```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
+```{r decompse.normalise.data.1, fig.height=5, fig.width=10, results='asis'}
 # Eucledian tree based analysis
 COVARIATES.tmp = data.matrix(COVARIATES[,c("Gender", "Dx.Tissue")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tmp = CQN.GENE_EXPRESSION$E
-tmp[is.na(tmp)] = 0
-tree = hclust(as.dist(t(tmp)))
+tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E.no.na)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -508,15 +482,11 @@ WGCNA::plotDendroAndColors(tree,
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
 ```
-```{r temp, include = F}
-dev.off()
-gc()
-```
 
 ### Distribution of samples (log cpm)
 ```{r lcpm.dist, cache=FALSE}
 # Plot abberent distribution of logcpm counts
-tmp1 = (CQN.GENE_EXPRESSION$E) %>%
+tmp1 = (CQN.GENE_EXPRESSION$E.no.na) %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
   left_join(COVARIATES %>%
@@ -528,13 +498,18 @@ p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free'
 p
 ```
 
+### Co-expression distribution
+Coexpression of genes 
+```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
+cr = cor(t(CQN.GENE_EXPRESSION$E.no.na))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
+```
+
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
-tmp = CQN.GENE_EXPRESSION$E
-tmp[is.na(tmp)] = 0
-preAdjustedSigCovars = runPCAandPlotCorrelations(tmp, 
+preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$E.no.na, 
                                                  COVARIATES,
                                                  'NULL design(voom-normalized)', 
                                                  isKeyPlot=TRUE, 
@@ -561,9 +536,8 @@ DM1 = getDesignMatrix(COVARIATES[,adjust.covars,drop=F],Intercept = F)
 DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
   
 # Estimate voom weights
-tmp = NEW.COUNTS
-tmp[is.na(tmp)] = 0
-VOOM.GENE_EXPRESSION = voom(tmp, design=DM1$design, plot=F)
+cnts = NEW.COUNTS; cnts[is.na(cnts)] = 0
+VOOM.GENE_EXPRESSION = voom(cnts, design=DM1$design, plot=F)
 VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
@@ -583,17 +557,14 @@ MODEL0 = MODEL0[,linColumnFinder(MODEL0)$indepCols]
 MODEL1 = DESIGN
 MODEL1 = MODEL1[,linColumnFinder(MODEL1)$indepCols]
 
-# Source modified functions from sva package
-source('../R/irwsva.build.R')
-source('../R/f.pvalue.R')
-
 # Compute actual variance of all principal components
-tmp = svd(RESIDUAL.GENE_EXPRESSION)
+expr = RESIDUAL.GENE_EXPRESSION; expr[is.na(expr)] = 0
+tmp = svd(expr)
 actual.var = tmp$d^2/sum(tmp$d^2)
 
 # Compute permuted variance of all principal components
 permuted.var = foreach(i = 1:20, .combine = rbind, .packages = c('dplyr')) %dopar% {
-  tmp.residual = t(apply(RESIDUAL.GENE_EXPRESSION, 1, sample, replace = FALSE))
+  tmp.residual = t(apply(expr, 1, sample, replace = FALSE))
   tmp = svd(tmp.residual)
   permuted.var = tmp$d^2/sum(tmp$d^2)
 }
@@ -605,55 +576,46 @@ var.comp = data.frame(component = 1:length(actual.var),
                       residual = actual.var, 
                       permuted.residual = permuted.var) %>%
   tidyr::gather(data, value, -component)
-p = ggplot(var.comp %>% filter(component <= round(NUM.SV*1.2)), aes(x = component, y = value, color = data)) + geom_point()
+p = ggplot(var.comp %>% 
+             dplyr::filter(component <= round(NUM.SV*1.2)), 
+           aes(x = component, y = value, color = data)) + geom_point()
 p = p + geom_hline(yintercept=permuted.var[1], linetype = 'dashed') + xlab('Singular Dimension Index')
 p = p + geom_vline(xintercept=NUM.SV, linetype = 'dashed') + ylab('Fraction of Variance Explained')
 p = p + theme(legend.position = c(0.8, 0.8), legend.title = element_blank())
 p
 
 # Estimate surrogate variables
-SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E, MODEL1, MODEL0, n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
+SURR.VAR = irwsva.build(CQN.GENE_EXPRESSION$E.no.na, MODEL1, MODEL0, 
+                        n.sv = NUM.SV, B = 30, tol = 1e-20)$sv
 colnames(SURR.VAR) = paste0('SV',1:dim(SURR.VAR)[2])
 rownames(SURR.VAR) = rownames(MODEL1)
 
 # Estimate voom weights for dispersion control
-VOOM.SVA.WEIGHTS = voom(NEW.COUNTS, 
+VOOM.SVA.WEIGHTS = voom(cnts, 
                         design=cbind(MODEL1, SURR.VAR), plot=F)
 VOOM.SVA.WEIGHTS$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
 VOOM.SVA.FIT = lmFit(VOOM.SVA.WEIGHTS)
+
+# Residuals after normalisation
+RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
+                                                  CQN.GENE_EXPRESSION$E)
 ```
 
 ### Residual calculation
 Calculate weighted residuals and add back "Dx.Tissue" to the residuals
 ```{r varsToAddBack}
-# Residuals after normalisation
-RESIDUAL.SVA.GENE_EXPRESSION = residuals.MArrayLM(VOOM.SVA.FIT,
-                                                  CQN.GENE_EXPRESSION$E)
-
 # Add variable of interest back to the residuals
 varsToAddIn = grep("Dx.Tissue", colnames(DESIGN), value = T)
 RESIDUAL.SVA.GENE_EXPRESSION = RESIDUAL.SVA.GENE_EXPRESSION + 
   VOOM.SVA.FIT$coefficients[,varsToAddIn] %*% t(VOOM.SVA.FIT$design[,varsToAddIn])
-
-# Assign NA values to outlier expressions
-RESIDUAL.SVA.GENE_EXPRESSION = apply(RESIDUAL.SVA.GENE_EXPRESSION, 1, function(x){
-  mn = mean(x, na.rm = T)
-  std.dev = sd(x, na.rm = T)
-  
-  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
-  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
-  
-  x[x < (mn-3*std.dev)] = NA
-  x[x > (mn+3*std.dev)] = NA
-  return(x)
-}) %>% t
 ```
 Clustering residual data
 ```{r decompse.normalise.data2, fig.height=6, fig.width=6, results='asis'}
 # Find principal components of expression to plot
-PC <- prcomp(RESIDUAL.SVA.GENE_EXPRESSION, scale.=T, center = T)
+expr = RESIDUAL.SVA.GENE_EXPRESSION; expr[is.na(expr)] = 0
+PC <- prcomp(expr, scale.=T, center = T)
 
 # Plot first 4 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -677,9 +639,7 @@ p
 COVARIATES.tmp = data.matrix(COVARIATES[,c('Dx.Tissue'),drop=FALSE])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tmp = RESIDUAL.SVA.GENE_EXPRESSION
-tmp[is.na(tmp)] = 0
-tree = hclust(as.dist(t(tmp)))
+tree = hclust(as.dist(t(expr)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -688,11 +648,6 @@ WGCNA::plotDendroAndColors(tree,
                            abHeight = 0.80, 
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp[,c('Dx.Tissue'),drop=FALSE]))
-```
-
-```{r temp1, include=F}
-dev.off()
-gc()
 ```
 
 ### Store files in synapse

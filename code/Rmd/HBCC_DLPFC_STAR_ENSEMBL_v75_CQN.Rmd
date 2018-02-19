@@ -13,7 +13,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN.Rmd",
-                                 parentId ="syn7501880",
+                                 parentId ="syn9872607",
                                  entityName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
 ```
 
@@ -60,7 +60,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn7501880';
+parentId = 'syn9872607';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (DLPFC)';
 
@@ -276,7 +276,7 @@ h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'A
 draw(h, heatmap_legend_side = 'left', padding = unit(c(10,2,2,10), "mm"))
 ```
 
-## Explore metatdata
+### Explore metatdata
 ```{r data.explore, fig.width = 12, fig.height = 12}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
 
