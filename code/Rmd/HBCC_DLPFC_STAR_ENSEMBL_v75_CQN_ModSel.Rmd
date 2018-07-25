@@ -12,10 +12,10 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId ="syn9846623",
-                                 folderName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)')
+                                 entityName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)')
 ```
 
-```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
+```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE, cache=FALSE}
 ## It is assumed your working directory is where this file
 
 ## Load required libraries
@@ -54,7 +54,7 @@ knitr::opts_chunk$set(
   cache = TRUE)
 ```
 
-```{r synapse.parameters, include=FALSE, cache=TRUE}
+```{r synapse.parameters, include=FALSE, cache=FALSE}
 parentId = 'syn9846623';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (DLPFC)';
@@ -1076,9 +1076,9 @@ all.annotations = list(
 )
 
 # Code
-CODE <- synapseClient::Folder("HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)", 
+CODE <- synapseClient::Folder(name = "HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)", 
                               parentId = parentId)
-synapseClient::synSetAnnotations(CODE, annotations = all.annotations)
+synapseClient::annotations(CODE) = all.annotations
 CODE <- synapseClient::synStore(CODE)
 
 # Store covariates
