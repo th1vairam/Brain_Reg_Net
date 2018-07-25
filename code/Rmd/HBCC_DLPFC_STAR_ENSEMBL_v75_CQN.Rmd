@@ -13,7 +13,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN.Rmd",
-                                 parentId = "syn7501880", #syn9872607",
+                                 parentId = "syn9872607", #"syn7501880", 
                                  entityName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
 ```
 
@@ -60,7 +60,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn7501880'; #'syn9872607';
+parentId = 'syn9872607'; #'syn7501880'; #
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (DLPFC)';
 
