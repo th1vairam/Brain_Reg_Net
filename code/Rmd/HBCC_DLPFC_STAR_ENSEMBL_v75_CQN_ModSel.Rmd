@@ -12,7 +12,7 @@ synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSel.Rmd",
                                  parentId ="syn9846623",
-                                 entityName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)')
+                                 folderName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -21,12 +21,9 @@ knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN_ModSe
 ## Load required libraries
 library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
 library(data.table)
-library(tidyr)
 library(plyr)
-library(dplyr)
-library(stringr)
+library(tidyverse)
 
-library(ggplot2)
 library(limma)
 library(psych)
 library(edgeR)
@@ -71,11 +68,14 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ### Data download
 Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
+downloadFile <- function(id, sep){
+  tmp = data.table::fread(synGet(id)@filePath,  data.table = F, header = T, sep = sep)
+}
+
 # Download reprocessed counts (DLPFC)
-COUNT_DLPFC_ID = 'syn8465067';
-ALL_USED_IDs = COUNT_DLPFC_ID
-COUNT = downloadFile(COUNT_DLPFC_ID) %>%
+COUNT = downloadFile('syn8465067', sep = '\t') %>%
   as.data.frame()
+ALL_USED_IDs = 'syn8465067'
 
 GENE.LEN = dplyr::select(COUNT, GeneID, Length) %>%
   dplyr::rename(ensembl_gene_id = GeneID) %>%
@@ -86,29 +86,25 @@ rownames(COUNT) = COUNT$GeneID
 ind = setdiff(colnames(COUNT), c('GeneID', 'Chr', 'Start', 'End', 'Strand', 'Length'))
 COUNT = data.matrix(COUNT[,ind])
 
-# Get ancestry vector calculated using gemtools
-# ANCESTRY_ID = 'syn2511399'
-# ALL_USED_IDs[length(ALL_USED_IDs)+1] = ANCESTRY_ID
-# ANCESTRY = read.table(synGet(ANCESTRY_ID)@filePath, fill = T, header = T, sep = '\t') %>%
-#   plyr::rename(c('DNA_report..Genotyping.Sample_ID' = 'GenotypingSampleID'))
+# Get clinical metadata
+METADATA_CLINICAL = downloadFile('syn2279441', sep = ',') %>%
+  dplyr::rename(Individual_ID = `Individual ID`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279441')
+
+# Get RNA alignment report from synapse
+METADATA_ALG_REP_DLPFC = downloadFile('syn2279446', sep = ',') %>%
+  dplyr::select(`Exclude?`, `Sample RNA ID`, `Ribozero Batch`, `Library Batch`, `Flowcell Batch`) %>%
+  dplyr::rename(Exclude = `Exclude?`,
+                SampleID = `Sample RNA ID`,
+                LibraryBatch = `Library Batch`, 
+                RibozeroBatch = `Ribozero Batch`, 
+                FlowcellBatch = `Flowcell Batch`) %>%
+  distinct()
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279446')
 
 # Get RNA qc metrics from synapse
-METADATA_ALG_REP_DLPFC_ID = 'syn2279446'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ALG_REP_DLPFC_ID
-METADATA_ALG_REP_DLPFC = read.table(synGet(METADATA_ALG_REP_DLPFC_ID)@filePath, 
-                                    fill = T, header = T, sep = ',') %>%
-  dplyr::select(Sample.RNA.ID, Ribozero.Batch, Library.Batch, Flowcell.Batch) %>%
-  dplyr::rename(SampleID = Sample.RNA.ID,
-                LibraryBatch = Library.Batch, 
-                RibozeroBatch = Ribozero.Batch, 
-                FlowcellBatch = Flowcell.Batch) %>%
-  unique()
-
-# Get RNA qc metrics from synapse
-METADATA_QC_DLPFC_ID = 'syn8539839'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
-METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header = T, sep = ',', row.names = 1) %>%
-  dplyr::select(Sample, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
+METADATA_RNASEQ_QC = downloadFile('syn8539839', sep = ',') %>%
+  dplyr::select(V1, Sample, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
                 Mean_CV, Fragment_Length_StdDev,  Mapped_Pairs, End_1_Mismatch_Rate, End_2_Mismatch_Rate,
                 End_1_Mapping_Rate, End_2_Mapping_Rate, Mapped, Intragenic_Rate, Exonic_Rate, Intergenic_Rate,
                 Intronic_Rate, rRNA_rate, Genes_Detected, Transcripts_Detected, Expression_Profiling_Efficiency,
@@ -124,43 +120,43 @@ METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header
                 rRNARate = rRNA_rate, 
                 TotalReads = Total_Purity_Filtered_Reads_Sequenced, 
                 PercentMapped = UNIQUE_READS._Uniquely_mapped_reads_percent)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8539839')
 
-# Get merged metadata
-METADATA_ID = 'syn2299154'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
-METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = T, check.names = F)
+# Get RNASeq isolation report
+METADATA_RNA_ISOLATION = downloadFile('syn2279445', sep = ',') %>%
+  dplyr::select(`Sample RNA ID`, RIN) %>%
+  dplyr::rename(SampleID = `Sample RNA ID`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279445')
 
-## Metadata with specific information for RNASeq processing
-metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", "Dx", 
-                      
-                          "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
-                          "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?")
+# Get individual id mapping
+METADATA_IID = downloadFile('syn12979139', sep = '\t') %>%
+  dplyr::select(Data_ID, IID_SAMPLE, label) %>%
+  dplyr::rename(Individual_ID = IID_SAMPLE,
+                SampleID = Data_ID) %>%
+  distinct()
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn12979139')
 
-# Filter metadata 
-ind = colnames(METADATA) %in% metadataVarOfInterest
-METADATA = METADATA[,ind]
-colnames(METADATA) = gsub('[^[:alnum:]]','_',colnames(METADATA))
-
-METADATA = METADATA %>%
-  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
-                DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, 
-                DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_) %>%
-  dplyr::rename(PMI = PMI__in_hours_, 
-                IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
-                SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
-                RIN = DLPFC_RNA_isolation__RIN, 
-                ReportExclude = DLPFC_RNA_report__Exclude_) %>%
-  dplyr::filter(SampleID %in% colnames(COUNT)) %>%
-  dplyr::mutate(Tissue = 'DLPFC') %>%
-  list(.,METADATA_QC, METADATA_ALG_REP_DLPFC) %>%
-  join_all %>% droplevels() %>%
-  unique %>% as.data.frame()
-METADATA$SampleID = as.character(METADATA$SampleID)
-
-# Fix missing values
-levels(METADATA$LibraryBatch)[1] = 'NotAvailable'
-levels(METADATA$FlowcellBatch)[1] = 'NotAvailable'
-levels(METADATA$RibozeroBatch)[1] = 'NotAvailable'
+# Merge metadata
+METADATA = dplyr::inner_join(METADATA_ALG_REP_DLPFC, METADATA_RNASEQ_QC) %>%
+  dplyr::inner_join(METADATA_IID) %>%
+  dplyr::inner_join(METADATA_CLINICAL) %>%
+  dplyr::inner_join(METADATA_RNA_ISOLATION) %>%
+  dplyr::select(SampleID, Individual_ID, label, 
+                LibraryBatch, RibozeroBatch, FlowcellBatch,
+                Dx, Gender, `PMI (in hours)`, `Age of Death`, RIN,
+                TotalReads, X5prime_Norm, Mean_Per_Base_Cov.,
+                Mean_CV, Fragment_Length_StdDev, Mapped_Pairs, End_1_Mismatch_Rate, End_2_Mismatch_Rate, 
+                Mapped, IntragenicRate, ExonicRate, IntergenicRate, IntronicRate, rRNARate, GenesDetected,
+                TranscriptsDetected, ExpProfEfficiency, PercentMapped) %>%
+  dplyr::rename(PMI = `PMI (in hours)`,
+                Age_of_Death = `Age of Death`) %>%
+  dplyr::mutate_at(.vars = c('LibraryBatch', 'RibozeroBatch', 'FlowcellBatch', 'Dx', 'Gender'), 
+                   .funs = function(x){
+                     x = forcats::fct_explicit_na(x, na_level = 'NotAvailable')
+                     levels(x)[levels(x) == ''] = 'NotAvailable'
+                     return(x)
+                   }) %>%
+  dplyr::mutate(Tissue = 'DLPFC')
 ```
 
 ### Data preprocessing
@@ -171,8 +167,8 @@ writeLines(paste(setdiff(colnames(COUNT), METADATA$SampleID), collapse = ', '))
 METADATA <- METADATA %>% dplyr::filter(SampleID %in% colnames(COUNT)) 
 
 writeLines('Following samples are marked exclude')
-writeLines(paste(METADATA$SampleID[METADATA$IsolationExclude == 1 | METADATA$ReportExclude == 1], collapse = ', '))
-METADATA <- METADATA  %>% dplyr::filter(IsolationExclude == 0, ReportExclude == 0) 
+writeLines(paste(METADATA$SampleID[METADATA$label == 'exclude'], collapse = ', '))
+METADATA <- METADATA  %>% dplyr::filter(label == 'accept') 
 
 writeLines('Following samples are missing PMI information')
 writeLines(paste(METADATA$SampleID[is.na(METADATA$PMI)], collapse = ', '))
@@ -216,7 +212,7 @@ METADATA = METADATA %>%
 ```
 Following `r length(removedIDs)` sample are removed `r paste(removedIDs, collapse = ',')`
 
-```{r gene.param}
+```{r gene.param, include = FALSE}
 ## Get GC content from biomart
 backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
 
@@ -269,8 +265,8 @@ fdr = COVARIATES.CORRELATION$PVAL
 fdr = format(fdr, digits=1)
 h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate',
             cell_fun = function(j,i,x,y,wifht,height,fill){
-                grid.text(fdr[i,j], x, y)
-              })
+              grid.text(fdr[i,j], x, y)
+            })
 draw(h, heatmap_legend_side = 'left', padding = unit(c(10,2,2,10), "mm"))
 ```
 
@@ -408,34 +404,11 @@ Based on the expression pattern following samples were tagged as outliers: `r pa
 Distribution of samples are:
 `r kable(tmp)`
 
-
-### Winsorise counts (Gene outliers in samples)
-```{r winsorise.data}
-LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
-
-# Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-LOG.CPM = apply(LOG.CPM, 1, function(x){
-  mn = mean(x, na.rm = T)
-  std.dev = sd(x, na.rm = T)
-  
-  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
-  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
-  
-  x[x < (mn-3*std.dev)] = x[ind.low]
-  x[x > (mn+3*std.dev)] = x[ind.high]
-  return(x)
-}) %>% t
-
-# Back calculate counts for further analysis
-LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
-NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
-```
-
-### Library Normalisation
-Initial library normalisation usign cqn
+### Library Normalisation and Winsorise data
+Initial library normalisation usign cqn and setting gene outliers to NA
 ```{r cqn}
 # Compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(NEW.COUNTS, 
+CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
                           x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
                           lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
                           lengthMethod = "smooth", 
@@ -450,8 +423,8 @@ CQN.GENE_EXPRESSION$E = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
   ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
   
-  x[x < (mn-3*std.dev)] = x[ind.low]
-  x[x > (mn+3*std.dev)] = x[ind.high]
+  x[x < (mn-3*std.dev)] = NA
+  x[x > (mn+3*std.dev)] = NA
   return(x)
 }) %>% t
 
@@ -579,7 +552,7 @@ fitFixedEffectModel <- function(varsToFit, lcpm, cnt, covars){
                          .parallel = F,
                          .paropts = list(.packages = c('dplyr')))
   return(modelBIC)
-  }
+}
 
 # Function to select covariates in a step-wise regression fashion
 selectCovarsToAdjust <- function(covarsToSelect, adjustCovars, covars, lcpm, cnt, baseModelBIC){
@@ -701,11 +674,11 @@ Dx.Tissue is chosen as the primary variable of interest (i.e., covariate adjustm
 writeLines(paste('Using following covariates in the model:',
                  paste(adjust.covars, collapse=', '),
                  'as fixed effects and Individual_ID is chosen as random effect'))
-  
+
 # Post adjusted design matrix
 DM1 = getDesignMatrix(COVARIATES[,adjust.covars,drop=F],Intercept = F)
 DM1$design = DM1$design[,linColumnFinder(DM1$design)$indepCols]
-  
+
 # Estimate voom weights
 tmp = NEW.COUNTS
 tmp[is.na(tmp)] = 0
@@ -714,7 +687,7 @@ VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
 ADJUSTED.FIT = lmFit(VOOM.GENE_EXPRESSION)
-  
+
 # Residuals after normalisation
 RESIDUAL.GENE_EXPRESSION = residuals.MArrayLM(ADJUSTED.FIT, CQN.GENE_EXPRESSION$E)
 
@@ -796,13 +769,15 @@ postAdjustCovars = c('Dx.Tissue', 'Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', ')))
-  
+
 # Post adjusted design matrix
 DESIGN = getDesignMatrix(droplevels(COVARIATES[,postAdjustCovars,drop=F]),Intercept = F)$design
 DESIGN = DESIGN[,linColumnFinder(DESIGN)$indepCols]
-  
+
 # Estimate voom weights
-VOOM.GENE_EXPRESSION = limma::voom(NEW.COUNTS, design = DESIGN)
+tmp = NEW.COUNTS
+tmp[is.na(tmp)] = 0
+VOOM.GENE_EXPRESSION = limma::voom(tmp, design = DESIGN)
 VOOM.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
@@ -894,13 +869,15 @@ postAdjustCovars = c('Dx.Tissue.Gender', 'RIN', 'IntronicRate')
 
 writeLines(paste('Using following covariates in the model:',
                  paste(postAdjustCovars, collapse=', ')))
-  
+
 # Post adjusted design matrix
 DESIGN1 = getDesignMatrix(droplevels(COVARIATES[,postAdjustCovars,drop=F]),Intercept = F)$design
 DESIGN1 = DESIGN1[,linColumnFinder(DESIGN1)$indepCols]
-  
+
 # Estimate voom weights
-VOOM.GENE_EXPRESSION1 = limma::voom(NEW.COUNTS, design = DESIGN1)
+tmp = NEW.COUNTS
+tmp[is.na(tmp)] = 0
+VOOM.GENE_EXPRESSION1 = limma::voom(tmp, design = DESIGN1)
 VOOM.GENE_EXPRESSION1$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
@@ -967,9 +944,11 @@ postAdjustCovars = c('Dx.Tissue', 'Gender', 'RIN', 'IntronicRate')
 # Post adjusted design matrix
 DESIGN2 = getDesignMatrix(droplevels(COVARIATES[,postAdjustCovars,drop=F]),Intercept = T)$design
 DESIGN2 = DESIGN2[,linColumnFinder(DESIGN2)$indepCols]
-  
+
 # Estimate voom weights
-VOOM.GENE_EXPRESSION2 = voom(NEW.COUNTS, design = DESIGN2)
+tmp = NEW.COUNTS
+tmp[is.na(tmp)] = 0
+VOOM.GENE_EXPRESSION2 = voom(tmp, design = DESIGN2)
 VOOM.GENE_EXPRESSION2$E = CQN.GENE_EXPRESSION$E
 
 # Fit linear model using new weights and new design
@@ -1053,22 +1032,23 @@ diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
 backgroundGenes = unique(DE$hgnc_symbol)
 
 # Download all related genesets from synapse
-geneset.files = synQuery('select * from file where parentId == "syn3240583"')
+synapseClient::synapseLogin()
+geneset.files = synapseClient::synQuery('select * from file where parentId == "syn3240583"')
 ALL_USED_IDs = c(ALL_USED_IDs, geneset.files$file.id)
 genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.files){
-  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource]) %>%
+  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource], sep = '\t') %>%
     dlply(.(Name), .fun = function(x){
       str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
     })
-  }, geneset.files) %>%
+}, geneset.files) %>%
   CovariateAnalysis::filterGeneSets(backgroundGenes) %>%
   do.call(c,.)
 
 # Perform enrichment analysis
 enrichment.results = llply(diffexp.genes, .fun = function(x, genesetsToTest, backgroundGenes){
-   ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
-     CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
-    }, x, backgroundGenes, .parallel = TRUE) %>%
+  ldply(genesetsToTest, .fun = function(y,x,backgroundGenes){
+    CovariateAnalysis::fisherEnrichment(x, y, backgroundGenes)
+  }, x, backgroundGenes, .parallel = TRUE) %>%
     dplyr::mutate(fdr = p.adjust(pval, method = 'fdr'))
 }, genesets.to.test, backgroundGenes) %>%
   rbindlist(idcol = 'Comparison', use.names = T, fill = T) %>%
@@ -1086,93 +1066,94 @@ all.annotations = list(
   
   tissueTypeAbrv	= 'DLPFC', 
   study = 'HBCC', 
-
+  
   organism = 'HomoSapiens',
   consortium	= 'CMC',
-   
+  
   normalizationStatus	= TRUE,
   
   normalizationType	= 'CQNandMS'
 )
 
 # Code
-CODE <- Folder(name = "HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)", parentId = parentId)
-annotations(CODE) = all.annotations
-CODE <- synStore(CODE)
+CODE <- synapseClient::Folder("HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN (Model Selection)", 
+                              parentId = parentId)
+synapseClient::synSetAnnotations(CODE, annotations = all.annotations)
+CODE <- synapseClient::synStore(CODE)
 
 # Store covariates
 COVARIATES = rownameToFirstColumn(COVARIATES, 'SampleID')
 write.table(COVARIATES, file = 'CMC_ACC_DLPFC_Covariates.tsv', sep = '\t', row.names=F, quote=F)
-COV_OBJ = File('CMC_ACC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
-annotations(COV_OBJ) = annotations(CODE)
-annotations(COV_OBJ)$dataSubType = 'covariates'
-COV_OBJ = synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
-                      executed = thisFile, activityDescription = activityDescription)
+COV_OBJ = synapseClient::File('CMC_ACC_DLPFC_Covariates.tsv', name = 'Covariates', parentId = CODE$properties$id)
+synapseClient::annotations(COV_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(COV_OBJ)$dataSubType = 'covariates'
+COV_OBJ = synapseClient::synStore(COV_OBJ, used = ALL_USED_IDs, activityName = activityName, 
+                                  executed = thisFile, activityDescription = activityDescription)
 
 # Store filtered counts
 NEW.COUNTS %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_Counts.tsv', sep = '\t', row.names=F, quote=F)
-COUNT_OBJ = File('CMC_ACC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
-annotations(COUNT_OBJ) = annotations(CODE)
-annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
-COUNT_OBJ = synStore(COUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+COUNT_OBJ = synapseClient::File('CMC_ACC_DLPFC_Counts.tsv', name = 'Counts (filtered raw)', parentId = CODE$properties$id)
+synapseClient::annotations(COUNT_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(COUNT_OBJ)$dataSubType = 'filteredCounts'
+COUNT_OBJ = synapseClient::synStore(COUNT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store logCPM
 CQN.GENE_EXPRESSION$E %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_logCPM.tsv', sep = '\t', row.names=F, quote=F)
-LCOUNT_OBJ = File('CMC_ACC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
-annotations(LCOUNT_OBJ) = annotations(CODE)
-annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
-LCOUNT_OBJ = synStore(LCOUNT_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+LCOUNT_OBJ = synapseClient::File('CMC_ACC_DLPFC_logCPM.tsv', name = 'Counts (filtered logCPM)', parentId = CODE$properties$id)
+synapseClient::annotations(LCOUNT_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(LCOUNT_OBJ)$dataSubType = 'filteredLCPM'
+LCOUNT_OBJ = synapseClient::synStore(LCOUNT_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store cqn offsets
 CQN.GENE_EXPRESSION$offset %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_offset.tsv', sep = '\t', row.names=F, quote=F)
-OFFSET_OBJ = File('CMC_ACC_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
-annotations(OFFSET_OBJ) = annotations(CODE)
-annotations(OFFSET_OBJ)$dataSubType = 'offset'
-OFFSET_OBJ = synStore(OFFSET_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+OFFSET_OBJ = synapseClient::File('CMC_ACC_DLPFC_offset.tsv', name = 'Gene length and GC content offset', parentId = CODE$properties$id)
+synapseClient::annotations(OFFSET_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(OFFSET_OBJ)$dataSubType = 'offset'
+OFFSET_OBJ = synapseClient::synStore(OFFSET_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store design matrix
 DM1$design %>%
   rownameToFirstColumn('SampleID') %>%
   write.table(file = 'CMC_ACC_DLPFC_Design.tsv', sep = '\t', row.names=F, quote=F)
-DM_OBJ = File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
-annotations(DM_OBJ) = annotations(CODE)
-annotations(DM_OBJ)$dataSubType = 'designMatrix'
-DM_OBJ = synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+DM_OBJ = synapseClient::File('CMC_ACC_DLPFC_Design.tsv', name = 'Design Matrix', parentId = CODE$properties$id)
+synapseClient::annotations(DM_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(DM_OBJ)$dataSubType = 'designMatrix'
+DM_OBJ = synapseClient::synStore(DM_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 
 # Store residual gene expression for network analysis
 RESIDUAL.GENE_EXPRESSION %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   write.table(file = 'CMC_ACC_DLPFC_netResidualExpression.tsv', sep = '\t', row.names=F, quote=F)
-nEXP_OBJ = File('CMC_ACC_DLPFC_netResidualExpression.tsv', 
-                name = 'Normalised, covariates removed residual expression (for network analysis)', 
-                parentId = CODE$properties$id)
-annotations(nEXP_OBJ) = annotations(CODE)
-annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
-nEXP_OBJ = synStore(nEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+nEXP_OBJ = synapseClient::File('CMC_ACC_DLPFC_netResidualExpression.tsv', 
+                               name = 'Normalised, covariates removed residual expression (for network analysis)', 
+                               parentId = CODE$properties$id)
+synapseClient::annotations(nEXP_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(nEXP_OBJ)$dataSubType = 'residualGeneExpForNetAnlz'
+nEXP_OBJ = synapseClient::synStore(nEXP_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store differential expression results
 write.table(DE, file = 'CMC_ACC_DLPFC_DiffExpression.tsv', sep = '\t', row.names=F, quote=F)
-DEXP_OBJ = File('CMC_ACC_DLPFC_DiffExpression.tsv', 
-                name = 'Differential Expression Results (Dx.Tissue)', 
-                parentId = CODE$properties$id)
-annotations(DEXP_OBJ) = annotations(CODE)
-annotations(DEXP_OBJ)$dataSubType = 'diffExp'
-DEXP_OBJ = synStore(DEXP_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+DEXP_OBJ = synapseClient::File('CMC_ACC_DLPFC_DiffExpression.tsv', 
+                               name = 'Differential Expression Results (Dx.Tissue)', 
+                               parentId = CODE$properties$id)
+synapseClient::annotations(DEXP_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(DEXP_OBJ)$dataSubType = 'diffExp'
+DEXP_OBJ = synapseClient::synStore(DEXP_OBJ, activity = synapseClient::synGetActivity(COV_OBJ$properties$id))
 
 # Store enrichment results
 write.table(enrichment.results, file = 'CMC_ACC_DLPFC_EnrichResults.tsv', sep = '\t', row.names=F, quote=F)
-ENRICH_OBJ = File('CMC_ACC_DLPFC_EnrichResults.tsv', 
-                  name = 'Enrichment Analysis Results (Dx.Tissue)', 
-                  parentId = CODE$properties$id)
-annotations(ENRICH_OBJ) = annotations(CODE)
-annotations(ENRICH_OBJ)$dataSubType = 'enrichResults'
-ENRICH_OBJ = synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
+ENRICH_OBJ = synapseClient::File('CMC_ACC_DLPFC_EnrichResults.tsv', 
+                                 name = 'Enrichment Analysis Results (Dx.Tissue)', 
+                                 parentId = CODE$properties$id)
+synapseClient::annotations(ENRICH_OBJ) = synapseClient::annotations(CODE)
+synapseClient::annotations(ENRICH_OBJ)$dataSubType = 'enrichResults'
+ENRICH_OBJ = synapseClient::synStore(ENRICH_OBJ, activity = synGetActivity(COV_OBJ$properties$id))
 # stopCluster(cl)
 ```
 |  *Results*                                  |  *SynapseID*                     |
