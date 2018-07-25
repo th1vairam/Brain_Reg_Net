@@ -13,7 +13,7 @@ library(knit2synapse)
 synapseLogin()
 
 knit2synapse::knitToFolderEntity(file = "./HBCC_DLPFC_STAR_ENSEMBL_v75_CQN.Rmd",
-                                 parentId ="syn9872607",
+                                 parentId = "syn7501880", #syn9872607",
                                  entityName = 'HBCC - DLPFC - STAR - FEATURE COUNTS - ENSEMBL v75 - CQN')
 ```
 
@@ -60,7 +60,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
-parentId = 'syn9872607';
+parentId = 'syn7501880'; #'syn9872607';
 activityName = 'Covariate adjustments';
 activityDescription = 'Covariate analysis of STAR aligned feature counts with Ensembl v75 with CQN normalisation (DLPFC)';
 
@@ -73,11 +73,14 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ### Data download
 Obtain count matrix and metadata from synapse.
 ```{r download.data, cache=TRUE}
+downloadFile <- function(id, sep){
+  tmp = data.table::fread(synGet(id)@filePath,  data.table = F, header = T, sep = sep)
+}
+
 # Download reprocessed counts (DLPFC)
-COUNT_DLPFC_ID = 'syn8465067';
-ALL_USED_IDs = COUNT_DLPFC_ID
-COUNT = downloadFile(COUNT_DLPFC_ID) %>%
+COUNT = downloadFile('syn8465067', sep = '\t') %>%
   as.data.frame()
+ALL_USED_IDs = 'syn8465067'
 
 GENE.LEN = dplyr::select(COUNT, GeneID, Length) %>%
   dplyr::rename(ensembl_gene_id = GeneID) %>%
@@ -88,29 +91,25 @@ rownames(COUNT) = COUNT$GeneID
 ind = setdiff(colnames(COUNT), c('GeneID', 'Chr', 'Start', 'End', 'Strand', 'Length'))
 COUNT = data.matrix(COUNT[,ind])
 
-# Get ancestry vector calculated using gemtools
-# ANCESTRY_ID = 'syn2511399'
-# ALL_USED_IDs[length(ALL_USED_IDs)+1] = ANCESTRY_ID
-# ANCESTRY = read.table(synGet(ANCESTRY_ID)@filePath, fill = T, header = T, sep = '\t') %>%
-#   plyr::rename(c('DNA_report..Genotyping.Sample_ID' = 'GenotypingSampleID'))
+# Get clinical metadata
+METADATA_CLINICAL = downloadFile('syn2279441', sep = ',') %>%
+  dplyr::rename(Individual_ID = `Individual ID`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279441')
+
+# Get RNA alignment report from synapse
+METADATA_ALG_REP_DLPFC = downloadFile('syn2279446', sep = ',') %>%
+  dplyr::select(`Exclude?`, `Sample RNA ID`, `Ribozero Batch`, `Library Batch`, `Flowcell Batch`) %>%
+  dplyr::rename(Exclude = `Exclude?`,
+                SampleID = `Sample RNA ID`,
+                LibraryBatch = `Library Batch`, 
+                RibozeroBatch = `Ribozero Batch`, 
+                FlowcellBatch = `Flowcell Batch`) %>%
+  distinct()
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279446')
 
 # Get RNA qc metrics from synapse
-METADATA_ALG_REP_DLPFC_ID = 'syn2279446'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ALG_REP_DLPFC_ID
-METADATA_ALG_REP_DLPFC = read.table(synGet(METADATA_ALG_REP_DLPFC_ID)@filePath, 
-                                    fill = T, header = T, sep = ',') %>%
-  dplyr::select(Sample.RNA.ID, Ribozero.Batch, Library.Batch, Flowcell.Batch) %>%
-  dplyr::rename(SampleID = Sample.RNA.ID,
-                LibraryBatch = Library.Batch, 
-                RibozeroBatch = Ribozero.Batch, 
-                FlowcellBatch = Flowcell.Batch) %>%
-  unique()
-
-# Get RNA qc metrics from synapse
-METADATA_QC_DLPFC_ID = 'syn8539839'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
-METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header = T, sep = ',', row.names = 1) %>%
-  dplyr::select(Sample, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
+METADATA_RNASEQ_QC = downloadFile('syn8539839', sep = ',') %>%
+  dplyr::select(V1, Sample, Total_Purity_Filtered_Reads_Sequenced, X5prime_Norm, Mean_Per_Base_Cov.,  
                 Mean_CV, Fragment_Length_StdDev,  Mapped_Pairs, End_1_Mismatch_Rate, End_2_Mismatch_Rate,
                 End_1_Mapping_Rate, End_2_Mapping_Rate, Mapped, Intragenic_Rate, Exonic_Rate, Intergenic_Rate,
                 Intronic_Rate, rRNA_rate, Genes_Detected, Transcripts_Detected, Expression_Profiling_Efficiency,
@@ -126,43 +125,43 @@ METADATA_QC = read.table(synGet(METADATA_QC_DLPFC_ID)@filePath, fill = T, header
                 rRNARate = rRNA_rate, 
                 TotalReads = Total_Purity_Filtered_Reads_Sequenced, 
                 PercentMapped = UNIQUE_READS._Uniquely_mapped_reads_percent)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn8539839')
 
-# Get merged metadata
-METADATA_ID = 'syn2299154'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ID
-METADATA = read.csv(synGet(METADATA_ID)@filePath, fill = T, header = T, check.names = F)
+# Get RNASeq isolation report
+METADATA_RNA_ISOLATION = downloadFile('syn2279445', sep = ',') %>%
+  dplyr::select(`Sample RNA ID`, RIN) %>%
+  dplyr::rename(SampleID = `Sample RNA ID`)
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn2279445')
 
-## Metadata with specific information for RNASeq processing
-metadataVarOfInterest = c("Individual ID", "Institution", "Gender", "Age of Death", "PMI (in hours)", "Dx", 
-                      
-                          "DLPFC_RNA_isolation: Exclude?", "DLPFC_RNA_isolation: Sample RNA ID",
-                          "DLPFC_RNA_isolation: RIN", "DLPFC_RNA_report: Exclude?")
+# Get individual id mapping
+METADATA_IID = downloadFile('syn12979139', sep = '\t') %>%
+  dplyr::select(Data_ID, IID_SAMPLE, label) %>%
+  dplyr::rename(Individual_ID = IID_SAMPLE,
+                SampleID = Data_ID) %>%
+  distinct()
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn12979139')
 
-# Filter metadata 
-ind = colnames(METADATA) %in% metadataVarOfInterest
-METADATA = METADATA[,ind]
-colnames(METADATA) = gsub('[^[:alnum:]]','_',colnames(METADATA))
-
-METADATA = METADATA %>%
-  dplyr::select(Individual_ID, Institution, Gender, Age_of_Death, PMI__in_hours_, Dx, 
-                DLPFC_RNA_isolation__Exclude_, DLPFC_RNA_isolation__Sample_RNA_ID, 
-                DLPFC_RNA_isolation__RIN, DLPFC_RNA_report__Exclude_) %>%
-  dplyr::rename(PMI = PMI__in_hours_, 
-                IsolationExclude = DLPFC_RNA_isolation__Exclude_, 
-                SampleID = DLPFC_RNA_isolation__Sample_RNA_ID, 
-                RIN = DLPFC_RNA_isolation__RIN, 
-                ReportExclude = DLPFC_RNA_report__Exclude_) %>%
-  dplyr::filter(SampleID %in% colnames(COUNT)) %>%
-  dplyr::mutate(Tissue = 'DLPFC') %>%
-  list(.,METADATA_QC, METADATA_ALG_REP_DLPFC) %>%
-  join_all %>% droplevels() %>%
-  unique %>% as.data.frame()
-METADATA$SampleID = as.character(METADATA$SampleID)
-
-# Fix missing values
-levels(METADATA$LibraryBatch)[1] = 'NotAvailable'
-levels(METADATA$FlowcellBatch)[1] = 'NotAvailable'
-levels(METADATA$RibozeroBatch)[1] = 'NotAvailable'
+# Merge metadata
+METADATA = dplyr::inner_join(METADATA_ALG_REP_DLPFC, METADATA_RNASEQ_QC) %>%
+  dplyr::inner_join(METADATA_IID) %>%
+  dplyr::inner_join(METADATA_CLINICAL) %>%
+  dplyr::inner_join(METADATA_RNA_ISOLATION) %>%
+  dplyr::select(SampleID, Individual_ID, label, 
+                LibraryBatch, RibozeroBatch, FlowcellBatch,
+                Dx, Gender, `PMI (in hours)`, `Age of Death`, RIN,
+                TotalReads, X5prime_Norm, Mean_Per_Base_Cov.,
+                Mean_CV, Fragment_Length_StdDev, Mapped_Pairs, End_1_Mismatch_Rate, End_2_Mismatch_Rate, 
+                Mapped, IntragenicRate, ExonicRate, IntergenicRate, IntronicRate, rRNARate, GenesDetected,
+                TranscriptsDetected, ExpProfEfficiency, PercentMapped) %>%
+  dplyr::rename(PMI = `PMI (in hours)`,
+                Age_of_Death = `Age of Death`) %>%
+  dplyr::mutate_at(.vars = c('LibraryBatch', 'RibozeroBatch', 'FlowcellBatch', 'Dx', 'Gender'), 
+                   .funs = function(x){
+                     x = forcats::fct_explicit_na(x, na_level = 'NotAvailable')
+                     levels(x)[levels(x) == ''] = 'NotAvailable'
+                     return(x)
+                   }) %>%
+  dplyr::mutate(Tissue = 'DLPFC')
 ```
 
 ### Data preprocessing
@@ -173,8 +172,8 @@ writeLines(paste(setdiff(colnames(COUNT), METADATA$SampleID), collapse = ', '))
 METADATA <- METADATA %>% dplyr::filter(SampleID %in% colnames(COUNT)) 
 
 writeLines('Following samples are marked exclude')
-writeLines(paste(METADATA$SampleID[METADATA$IsolationExclude == 1 | METADATA$ReportExclude == 1], collapse = ', '))
-METADATA <- METADATA  %>% dplyr::filter(IsolationExclude == 0, ReportExclude == 0) 
+writeLines(paste(METADATA$SampleID[METADATA$label == 'exclude'], collapse = ', '))
+METADATA <- METADATA  %>% dplyr::filter(label == 'accept') 
 
 writeLines('Following samples are missing PMI information')
 writeLines(paste(METADATA$SampleID[is.na(METADATA$PMI)], collapse = ', '))
@@ -218,7 +217,7 @@ METADATA = METADATA %>%
 ```
 Following `r length(removedIDs)` sample are removed `r paste(removedIDs, collapse = ',')`
 
-```{r gene.param}
+```{r gene.param, include = FALSE}
 ## Get GC content from biomart
 backgroundGenes = data.frame(ensembl_gene_id = rownames(COUNT))
 
@@ -263,7 +262,7 @@ COVARIATES$RIN2 = COVARIATES$RIN^2
 ContCovariates = c(ContCovariates, 'RIN2')
 ```
 Correlation/association between covariates at an FDR <= 0.1
-```{r covariates.correlation, fig.width=20, fig.height=10}
+```{r covariates.correlation, fig.width=15, fig.height=15}
 COVARIATES.CORRELATION = getAssociationStatistics(COVARIATES, PVAL = 0.05)
 tmp = COVARIATES.CORRELATION$ESTIMATE
 tmp[COVARIATES.CORRELATION$PVAL > 0.05] = 0
@@ -271,12 +270,12 @@ fdr = COVARIATES.CORRELATION$PVAL
 fdr = format(fdr, digits=1)
 h = Heatmap(tmp, col = colorRamp2(c(-1,0,1), c('blue','white','red')), name = 'AssocEstimate',
             cell_fun = function(j,i,x,y,wifht,height,fill){
-                grid.text(fdr[i,j], x, y)
-              })
+              grid.text(fdr[i,j], x, y)
+            })
 draw(h, heatmap_legend_side = 'left', padding = unit(c(10,2,2,10), "mm"))
 ```
 
-### Explore metatdata
+## Explore metatdata
 ```{r data.explore, fig.width = 12, fig.height = 12}
 my.theme <- theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
 
@@ -355,26 +354,13 @@ pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
 Following is the distribution of biotypes
 `r kable(pct.pc)`
 
-### Library Normalisation
-Initial library normalisation usign cqn
-```{r cqn}
-# Compute offset for gene length and gc content
-CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
-                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
-                          lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
-                          lengthMethod = "smooth", 
-                          verbose = FALSE)
-CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
-```
-
 ### Outlier analysis
-#### Sample Outliers
 Detect outlier samples based on their expression (logCPM) pattern
-```{r detect.outliers, fig.height=5, fig.width=6, results='asis', cache = FALSE}
+```{r detect.outliers, fig.height=8, fig.width=8, results='asis', cache = FALSE}
 indToRemove = c("CMC_HBCC_RNA_PFC_3402")
 
 # Find principal components of expression to plot
-PC <- prcomp(CQN.GENE_EXPRESSION$E, scale.=T, center = T)
+PC <- prcomp(voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -394,7 +380,7 @@ p <- p + geom_text(aes(label= label), size=4, hjust=0)
 p
 
 # Plot abberent distribution of logcpm counts
-tmp1 = CQN.GENE_EXPRESSION$E %>%
+tmp1 = voom(PROCESSED_COUNTS$filteredExprMatrix$counts)$E %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
   left_join(COVARIATES %>%
@@ -409,7 +395,6 @@ p
 
 indToRetain = setdiff(colnames(PROCESSED_COUNTS$filteredExprMatrix$counts), indToRemove)
 PROCESSED_COUNTS$filteredExprMatrix$counts = PROCESSED_COUNTS$filteredExprMatrix$counts[,indToRetain]
-CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$E[,indToRetain]
 COVARIATES = COVARIATES[indToRetain,]
 
 tmp = tidyr::separate(COVARIATES, Dx.Tissue, c('Dx', 'Tissue'), sep = '_') %>%
@@ -424,29 +409,50 @@ Based on the expression pattern following samples were tagged as outliers: `r pa
 Distribution of samples are:
 `r kable(tmp)`
 
-#### Gene outliers
-Assign NA values to genes that are above and below 3 std deviation of its distribution
-```{r winsorise.data}
+### Library Normalisation and Winsorise data
+Initial library normalisation usign cqn and setting gene outliers to NA
+```{r cqn}
+# Compute offset for gene length and gc content
+CQN.GENE_EXPRESSION = cqn(PROCESSED_COUNTS$filteredExprMatrix$counts, 
+                          x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gc_content'],
+                          lengths = as.numeric(GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length']),
+                          lengthMethod = "smooth", 
+                          verbose = FALSE)
+CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
+
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-LOG.CPM = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
+CQN.GENE_EXPRESSION$E = apply(CQN.GENE_EXPRESSION$E, 1, function(x){
   mn = mean(x, na.rm = T)
   std.dev = sd(x, na.rm = T)
+  
+  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
+  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
   
   x[x < (mn-3*std.dev)] = NA
   x[x > (mn+3*std.dev)] = NA
   return(x)
 }) %>% t
-CQN.GENE_EXPRESSION$E = LOG.CPM
-CQN.GENE_EXPRESSION$E.no.na = CQN.GENE_EXPRESSION$E
-CQN.GENE_EXPRESSION$E.no.na[is.na(CQN.GENE_EXPRESSION$E.no.na)] = 0
+
+# Back calculate counts for further analysis
 LIB.SIZE = colSums(PROCESSED_COUNTS$filteredExprMatrix$counts)
-NEW.COUNTS = (2^LOG.CPM) * t(replicate(dim(LOG.CPM)[1], LIB.SIZE))/1e6
+NEW.COUNTS = (2^CQN.GENE_EXPRESSION$E) * t(replicate(dim(CQN.GENE_EXPRESSION$E)[1], LIB.SIZE))/1e6
+```
+
+### Co-expression distribution
+Coexpression of genes 
+```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
+tmp = CQN.GENE_EXPRESSION$E
+tmp[is.na(tmp)] = 0
+cr = cor(t(tmp))
+hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
 ```
 
 ### Sample clustering
-```{r decompse.normalise.data, fig.height=5, fig.width=5, results='asis', cache=FALSE}
+```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
 # Find principal components of expression to plot
-PC <- prcomp(CQN.GENE_EXPRESSION$E.no.na, scale.=T, center = T)
+tmp = CQN.GENE_EXPRESSION$E
+tmp[is.na(tmp)] = 0
+PC <- prcomp(tmp, scale.=T, center = T)
 
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
@@ -463,12 +469,14 @@ p <- p + theme_bw() + theme(legend.position="right") + facet_grid(Tissue~.)
 p
 ```
 Tree based clustering of samples
-```{r decompse.normalise.data.1, fig.height=5, fig.width=10, results='asis'}
+```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
 COVARIATES.tmp = data.matrix(COVARIATES[,c("Gender", "Dx.Tissue")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
-tree = hclust(as.dist(t(CQN.GENE_EXPRESSION$E.no.na)))
+tmp = CQN.GENE_EXPRESSION$E
+tmp[is.na(tmp)] = 0
+tree = hclust(as.dist(t(tmp)))
 cols = WGCNA::labels2colors(COVARIATES.tmp);
 
 WGCNA::plotDendroAndColors(tree, 
@@ -478,11 +486,15 @@ WGCNA::plotDendroAndColors(tree,
                            main = "Sample dendrogram",
                            groupLabels = colnames(COVARIATES.tmp))
 ```
+```{r temp, include = F}
+dev.off()
+gc()
+```
 
 ### Distribution of samples (log cpm)
 ```{r lcpm.dist, cache=FALSE}
 # Plot abberent distribution of logcpm counts
-tmp1 = (CQN.GENE_EXPRESSION$E.no.na) %>%
+tmp1 = (CQN.GENE_EXPRESSION$E) %>%
   rownameToFirstColumn('ensembl_gene_id') %>%
   tidyr::gather(SampleID, logCPM, -ensembl_gene_id) %>%
   left_join(COVARIATES %>%
@@ -494,18 +506,13 @@ p = p + theme(legend.position = 'NONE') + facet_grid(Dx+.~Tissue, scale = 'free'
 p
 ```
 
-### Co-expression distribution
-Coexpression of genes 
-```{r coexp1, cache=FALSE, fig.height=5, fig.width=5}
-cr = cor(t(CQN.GENE_EXPRESSION$E.no.na))
-hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation')
-```
-
 ### Significant Covariates
 Correlation between pca of unadjusted mRNA expression and covariates is used to find significant covariates
 ```{r preAdjusted.covariates, cache=TRUE}
 # Find correlation between PC's of gene expression with covariates
-preAdjustedSigCovars = runPCAandPlotCorrelations(CQN.GENE_EXPRESSION$E.no.na, 
+tmp = CQN.GENE_EXPRESSION$E
+tmp[is.na(tmp)] = 0
+preAdjustedSigCovars = runPCAandPlotCorrelations(tmp, 
                                                  COVARIATES,
                                                  'NULL design(voom-normalized)', 
                                                  isKeyPlot=TRUE, 
@@ -857,7 +864,7 @@ backgroundGenes = unique(DE$hgnc_symbol)
 geneset.files = synQuery('select * from file where parentId == "syn3240583"')
 ALL_USED_IDs = c(ALL_USED_IDs, geneset.files$file.id)
 genesets.to.test = sapply(geneset.files$file.name, function(dataSource, geneset.files){
-  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource]) %>%
+  tmp = downloadFile(geneset.files$file.id[geneset.files$file.name == dataSource], sep = '\t') %>%
     dlply(.(Name), .fun = function(x){
       str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
     })
