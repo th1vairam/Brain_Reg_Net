@@ -10,9 +10,9 @@ library(knit2synapse)
 
 synLogin()
 
-knit2synapse::knitToFolderEntity(file = "./CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd",
-                                 parentId ="syn9846623",
-                                 entityName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
+knit2synapse::createAndKnitToFolderEntity(file = "./CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd",
+                                          parentId ="syn9846623",
+                                          folderName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
@@ -38,7 +38,7 @@ library(synapser)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
-synapseLogin()
+synLogin()
 
 library(doParallel)
 library(foreach)
