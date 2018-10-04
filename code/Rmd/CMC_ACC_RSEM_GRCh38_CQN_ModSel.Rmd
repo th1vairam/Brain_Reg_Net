@@ -1,6 +1,6 @@
 ---
-title: "Covariate analysis of CMC RNASeq data reprocessed with RSEM-feature counts workflow with GRCh38 (DLPFC with CQN normlaisation)"
-author: "Thanneer Perumal"
+title: "Covariate analysis of CMC RNASeq data reprocessed with RSEM-feature counts workflow with GRCh38 (ACC with CQN normalisation)"
+author: "Kelsey Montgomery"
 date: "`r date()`"
 output: html_document
 ---
@@ -10,9 +10,9 @@ library(knit2synapse)
 
 synLogin()
 
-knit2synapse::createAndKnitToFolderEntity(file = "./CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd",
+knit2synapse::createAndKnitToFolderEntity(file = "./CMC_ACC_RSEM_GRCh38_CQN_ModSel.Rmd",
                                           parentId ="syn9846623",
-                                          folderName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
+                                          folderName = 'ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
 ```
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
