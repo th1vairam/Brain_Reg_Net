@@ -43,7 +43,8 @@ synLogin()
 library(doParallel)
 library(foreach)
 
-cl = makeCluster(detectCores()-2)
+#cl = makeCluster(detectCores()-2)
+cl = makeCluster(detectCores())
 registerDoParallel(cl)
 
 options(xtable.type="html")
@@ -65,7 +66,7 @@ activityDescription = 'Covariate analysis of RSEM aligned effective counts with 
 thisFileName <- 'CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd'
 
 # Github link
-thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
+thisRepo <- getRepo(repository = "kelshmo/Brain_Reg_Net", ref="branch", refName='CMC')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
 ### Data download
@@ -203,7 +204,7 @@ backgroundGenes = data.frame(gene_id = rownames(COUNT)) %>%
 mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
-Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype"),
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype", "chromosome_name"),
                        filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
 
@@ -297,7 +298,9 @@ multiplot(plotlist = p, cols = 3)
 # vcd::mosaic(~ Gender + Dx, data = COVARIATES)
 ```
 ### Filter genes
-Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx. Also remove genes with missing gene length and percentage GC content
+Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx and per Dx.sex. Also remove genes with missing gene length and percentage GC content
+
+
 ```{r cpmnormalisation}
 genesToAnalyze = dlply(METADATA, .(Dx), .fun = function(mtd, count){
   processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
@@ -325,6 +328,11 @@ pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
 
 Following is the distribution of biotypes
 `r kable(pct.pc)`
+
+```{r sex-specific_expr, fig.height=8, fig.width=8, results='asis', cache = FALSE}
+#filter for sex specific chromosomes here. Plot x and y expression separately for males and females 
+```
+
 
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
@@ -442,6 +450,8 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 
 ### Sample clustering
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
+#plotMDS of CQN normalized expression data plotMDS(x) where x is any data object which can be coerced to a matrix 
+
 # Find principal components of expression to plot
 tmp = CQN.GENE_EXPRESSION$E
 tmp[is.na(tmp)] = 0
