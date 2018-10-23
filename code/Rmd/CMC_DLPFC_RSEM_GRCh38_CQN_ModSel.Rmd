@@ -15,6 +15,9 @@ knit2synapse::createAndKnitToFolderEntity(file = "./CMC_DLPFC_RSEM_GRCh38_CQN_Mo
                                           folderName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
 ```
 
+Notes: 
+- 3 Kleinfelter individuals
+
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
 ## It is assumed your working directory is where this file
 
@@ -33,12 +36,12 @@ library(edgeR)
 library(cqn)
 library(lme4)
 library(biomaRt)
+library(ComplexHeatmap)
 
 library(synapser)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
-synLogin()
 
 library(doParallel)
 library(foreach)
@@ -71,11 +74,15 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain effective count matrix and metadata from synapse.
+
+#readRDS(file = "logcpm.rds")
 ```{r download.data, cache=TRUE}
 downloadFile <- function(id){
   fread(synGet(id)$path, data.table = F)
 }
-
+downloadFile_version <- function(id , version){
+  fread(synGet(id, version = version)$path, data.table = F)
+}
 # Download reprocessed counts (DLPFC)
 COUNT_ID = 'syn16783526'
 ALL_USED_IDs = COUNT_ID
@@ -105,20 +112,18 @@ GENOTYPE = downloadFile(GENOTYPE_ID) %>%
   dplyr::select(Individual_ID, `SNP_report:Genotyping_Sample_ID`) %>%
   dplyr::inner_join(ANCESTRY)
 
-# Get RNASeq alignment qc metrics from synapse
-METADATA_ALGMETRIC_DLPFC_ID = 'syn16783867'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ALGMETRIC_DLPFC_ID
-METADATA_ALGMETRIC_DLPFC = downloadFile(METADATA_ALGMETRIC_DLPFC_ID) %>%
-  dplyr::rename(Sample_RNA_ID = ID)
-
 # Get RNASeq QCmetadata
-METADATA_QC_DLPFC_ID = 'syn16816488'
+METADATA_QC_DLPFC_ID = 'syn16816488' 
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
-METADATA_QC_DLPFC = downloadFile(METADATA_QC_DLPFC_ID) %>%
-  dplyr::select(Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, `PMI_(in_hours)`, Dx,
+METADATA_QC_DLPFC = downloadFile_version(METADATA_QC_DLPFC_ID, version = 7) %>%
+  dplyr::select(Individual_ID, Institution, Reported_Gender, Sex, Ethnicity, Age_of_Death, `PMI_(in_hours)`, Dx,
                 Sample_RNA_ID, one_of('rnaSeq_isolation:Exclude?', 'rnaSeq_isolation:RIN',
                                       'rnaSeq_report:Ribozero_Batch', 'rnaSeq_report:Library_Batch', 
-                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?'))
+                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?', 'rnaSeq_report:Mapped_Reads',
+                                      'rnaSeq_report:Intragenic_Rate','rnaSeq_report:Intronic_Rate',
+                                      'rnaSeq_report:Intergenic_Rate','rnaSeq_report:Genes_Detected',
+                                      'rnaSeq_report:Expression_Profiling_Efficiency', 'rnaSeq_report:rRNA_Rate',
+                                      'rnaSeq_report:Total_Reads', 'rnaSeq_report:Alignment_Rate'))
 ```
 
 ### Data preprocessing
@@ -126,7 +131,6 @@ METADATA_QC_DLPFC = downloadFile(METADATA_QC_DLPFC_ID) %>%
 # Merge metadata
 METADATA = METADATA_QC_DLPFC %>%
   dplyr::left_join(GENOTYPE) %>%
-  dplyr::left_join(METADATA_ALGMETRIC_DLPFC) %>%
   dplyr::rename(PMI = `PMI_(in_hours)`,
                 IsolationExclude = `rnaSeq_isolation:Exclude?`, 
                 RIN = `rnaSeq_isolation:RIN`, 
@@ -135,11 +139,12 @@ METADATA = METADATA_QC_DLPFC %>%
                 LibraryBatch = `rnaSeq_report:Library_Batch`,
                 FlowcellBatch = `rnaSeq_report:Flowcell_Batch`,
                 RibozeroBatch = `rnaSeq_report:Ribozero_Batch`,
-                MappedReads = Mapped,
-                IntragenicRate = `Intragenic Rate`, IntronicRate = `Intronic Rate`, 
-                IntergenicRate = `Intergenic Rate`, GenesDetected = `Genes Detected`,
-                ExpProfEfficiency = `Expression Profiling Efficiency`, rRNARate = `rRNA rate`) %>%
-  dplyr::select(SampleID, Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, PMI, Dx, 
+                MappedReads = `rnaSeq_report:Mapped_Reads`,
+                IntragenicRate = `rnaSeq_report:Intragenic_Rate`, IntronicRate = `rnaSeq_report:Intronic_Rate`, 
+                IntergenicRate = `rnaSeq_report:Intergenic_Rate`, GenesDetected = `rnaSeq_report:Genes_Detected`,
+                ExpProfEfficiency = `rnaSeq_report:Expression_Profiling_Efficiency`, rRNARate = `rnaSeq_report:rRNA_Rate`,
+                TotalReads = `rnaSeq_report:Total_Reads`, AlignmentRate = `rnaSeq_report:Alignment_Rate`) %>%
+  dplyr::select(SampleID, Individual_ID, Institution, Reported_Gender,Sex, Ethnicity, Age_of_Death, PMI, Dx, 
                 RIN, IsolationExclude, ReportExclude, EV.1, EV.2, EV.3, EV.4, EV.5,
                 LibraryBatch, FlowcellBatch, RibozeroBatch, MappedReads, TotalReads, GenesDetected, AlignmentRate,
                 IntragenicRate, IntergenicRate, IntronicRate, ExpProfEfficiency, rRNARate) %>%
@@ -161,7 +166,7 @@ writeLines(paste('Following', length(ind), 'counts are missing PMI'))
 writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
 
-ind = METADATA$SampleID [is.na(METADATA$Gender)]
+ind = METADATA$SampleID [is.na(METADATA$Reported_Gender)]
 writeLines(paste('Following', length(ind), 'counts are missing gender'))
 writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
@@ -210,7 +215,7 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percent
 
 GENE.GC.CONT = Ensemble2HGNC %>%
   dplyr::left_join(backgroundGenes) %>%
-  dplyr::select(gene_id, percentage_gene_gc_content) %>%
+  dplyr::select(gene_id, percentage_gene_gc_content, chromosome_name) %>%
   unique
 rownames(GENE.GC.CONT) = GENE.GC.CONT$gene_id
 ```
@@ -218,7 +223,7 @@ rownames(GENE.GC.CONT) = GENE.GC.CONT$gene_id
 ### Covariates clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c('Individual_ID', "Institution", "Gender", "LibraryBatch", "Dx", "FlowcellBatch")
+FactorCovariates <- c('Individual_ID', "Institution", "Reported_Gender", "LibraryBatch", "Dx", "FlowcellBatch")
 ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
                     "GenesDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
                     "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
@@ -295,7 +300,7 @@ multiplot(plotlist = p, cols = 3)
 # vcd::mosaic(~ Institution + Dx, data = COVARIATES)
 
 # Gender
-# vcd::mosaic(~ Gender + Dx, data = COVARIATES)
+# vcd::mosaic(~ Reported_Gender + Dx, data = COVARIATES)
 ```
 ### Filter genes
 Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx and per Dx.sex. Also remove genes with missing gene length and percentage GC content
@@ -635,7 +640,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
   dplyr::rename(baseModel = BIC)
 
 # Iteratively identify covariates in phase I
-phase1.covars = c('Institution', 'Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
+phase1.covars = c('Institution', 'Reported_Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
                                      NEW.COUNTS, baseModelBIC)
