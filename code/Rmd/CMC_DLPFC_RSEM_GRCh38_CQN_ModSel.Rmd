@@ -242,6 +242,29 @@ p[[1]] = p[[1]] + ggtitle('X') + my.theme
 p[[2]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y"), aes(x = `Reported Gender`, y = `counts(log)`)) + geom_boxplot()
 p[[2]] = p[[2]] + ggtitle('Y') + my.theme
 multiplot(plotlist = p, cols = 2)
+
+##XIST and UTY expression 
+#ENSG00000229807.10 and ENSG00000183878.15 
+FILT <- REPORTED.GENDER.COUNTS %>% 
+  filter(gene_id == "ENSG00000229807.10" | gene_id == "ENSG00000183878.15") %>% 
+  select(-one_of("chromosome_name")) %>% 
+  tidyr::spread(FILT, key = gene_id, value = `counts(log)`) %>% 
+  mutate(XIST = as.numeric(`ENSG00000229807.10`)) %>% 
+  mutate(UTY = as.numeric(`ENSG00000183878.15`))
+
+p = ggplot(FILT, aes (x= XIST, y = UTY)) 
+p = p + geom_point(aes(color=`Reported Gender`)) 
+
+female.Y <- filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y" & `Reported Gender` == "Female") %>% 
+  filter(`counts(log)` > 1 | `counts(log)` != "-Inf")
+
+COUNTS.sum <- REPORTED.GENDER.COUNTS %>%
+  filter(`counts(log)` != "-Inf") %>% 
+  group_by(SampleID, chromosome_name, `Reported Gender`) %>% 
+  summarize(`counts(log)sum` = sum(`counts(log)`)) %>% 
+  ungroup() %>% 
+  group_by(SampleID) %>% 
+  mutate(`ratio` = `counts(log)sum`/sum(`counts(log)sum`))
 ```
 
 
@@ -703,7 +726,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
 phase1.covars = c('Institution', 'Reported_Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
@@ -723,7 +746,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
 phase2.covars = c('LibraryBatch', 'FlowcellBatch')
 vars.selected = selectCovarsToAdjust(phase2.covars, adjust.covars, 
@@ -743,7 +766,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
 phase3.covars = c("MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate", "GenesDetected",
                   "ExpProfEfficiency", "rRNARate", "TotalReads")
