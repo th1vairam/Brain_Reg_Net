@@ -12,11 +12,9 @@ synLogin()
 
 knit2synapse::createAndKnitToFolderEntity(file = "./CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd",
                                           parentId ="syn9846623",
-                                          folderName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
+                                          folderName = 'DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model - Kelsey')
 ```
 
-Notes: 
-- 3 Kleinfelter individuals
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
 ## It is assumed your working directory is where this file
@@ -37,17 +35,20 @@ library(cqn)
 library(lme4)
 library(biomaRt)
 library(ComplexHeatmap)
+library(statmod)
 
 library(synapser)
 library(knitr)
 library(githubr) # get the package from devtools::install_github('brian-bot/githubr')
 
+synLogin()
 
 library(doParallel)
 library(foreach)
 
-#cl = makeCluster(detectCores()-2)
-cl = makeCluster(detectCores())
+cl = makeCluster(detectCores()-2)
+
+
 registerDoParallel(cl)
 
 options(xtable.type="html")
@@ -74,8 +75,6 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 ```
 ### Data download
 #### Obtain effective count matrix and metadata from synapse.
-
-#readRDS(file = "logcpm.rds")
 ```{r download.data, cache=TRUE}
 downloadFile <- function(id){
   fread(synGet(id)$path, data.table = F)
@@ -214,11 +213,37 @@ Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percent
                        mart = mart)
 
 GENE.GC.CONT = Ensemble2HGNC %>%
-  dplyr::left_join(backgroundGenes) %>%
+  dplyr::left_join(backgroundGenes) %>% 
   dplyr::select(gene_id, percentage_gene_gc_content, chromosome_name) %>%
   unique
 rownames(GENE.GC.CONT) = GENE.GC.CONT$gene_id
 ```
+### Sex Chromosome-specific Gene Expression Patterns
+
+```{r Reported_Gender_plots}
+COUNT$gene_id = rownames(COUNT) 
+REPORTED.GENDER.COUNTS = GENE.GC.CONT %>% 
+  left_join(COUNT) %>%
+  dplyr::select(-one_of("percentage_gene_gc_content")) %>%
+  filter(chromosome_name == "X" |chromosome_name == "Y") %>% 
+  tidyr::gather(key = item, value = value, -c(gene_id, chromosome_name)) %>%
+  mutate(value = log(value)) %>%
+  rename(`counts(log)`= value) %>% 
+  rename(SampleID = item) %>%
+  left_join(METADATA[,c("SampleID", "Reported_Gender")]) %>% 
+  rename(`Reported Gender` = Reported_Gender) 
+
+
+my.theme <- theme_bw() %+replace% theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
+
+p = list()
+p[[1]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "X"), aes(x = `Reported Gender`, y = `counts(log)`)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('X') + my.theme
+p[[2]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y"), aes(x = `Reported Gender`, y = `counts(log)`)) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('Y') + my.theme
+multiplot(plotlist = p, cols = 2)
+```
+
 
 ### Covariates clustering
 Determine relationship between covariates. 
@@ -307,7 +332,10 @@ Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx 
 
 
 ```{r cpmnormalisation}
-genesToAnalyze = dlply(METADATA, .(Dx), .fun = function(mtd, count){
+rownames(COUNT) = COUNT$gene_id
+COUNT$gene_id = NULL
+
+genesToAnalyze = dlply(METADATA, .(Dx, Reported_Gender), .fun = function(mtd, count){
   processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
                                                    MIN_GENE_CPM=1, 
                                                    MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
@@ -315,8 +343,8 @@ genesToAnalyze = dlply(METADATA, .(Dx), .fun = function(mtd, count){
 }, COUNT)
 
 genesToAnalyze = unlist(genesToAnalyze) %>% 
-  unique() %>%
-  intersect(GENE.GC.CONT$gene_id[!is.na(GENE.GC.CONT$percentage_gene_gc_content)]) %>%
+  unique() %>% 
+  intersect(GENE.GC.CONT$gene_id[!is.na(GENE.GC.CONT$percentage_gene_gc_content)]) %>% 
   intersect(GENE.LEN$gene_id[!is.na(GENE.LEN$Length)])
 
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
@@ -333,11 +361,6 @@ pct.pc = PROCESSED_COUNTS$filteredExprMatrix$genes %>%
 
 Following is the distribution of biotypes
 `r kable(pct.pc)`
-
-```{r sex-specific_expr, fig.height=8, fig.width=8, results='asis', cache = FALSE}
-#filter for sex specific chromosomes here. Plot x and y expression separately for males and females 
-```
-
 
 ### Outlier analysis
 Detect outlier samples based on their expression (logCPM) pattern
@@ -422,6 +445,31 @@ NEW.COUNTS = PROCESSED_COUNTS$filteredExprMatrix$counts
 NEW.COUNTS[is.na(LOG.CPM)] = 0
 ```
 
+```{r testCPM}
+# TEMP <- LOG.CPM
+# TEMP$gene_id = rownames(TEMP) 
+# t <- data.frame(TEMP) %>% 
+#   mutate(gene_id = rownames(TEMP))
+# REPORTED.GENDER.COUNTS = GENE.GC.CONT %>% 
+#   left_join(t) %>%
+#   dplyr::select(-one_of("percentage_gene_gc_content")) %>%
+#   filter(chromosome_name == "X" |chromosome_name == "Y") %>% 
+#   tidyr::gather(key = item, value = value, -c(gene_id, chromosome_name)) %>%
+#   rename(`CPM(log)`= value) %>% 
+#   rename(SampleID = item) %>%
+#   left_join(METADATA[,c("SampleID", "Reported_Gender")]) %>% 
+#   rename(`Reported Gender` = Reported_Gender)
+
+
+# my.theme <- theme_bw() %+replace% theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
+# 
+# p = list()
+# p[[1]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "X"), aes(x = `Reported Gender`, y = `CPM(log)`)) + geom_boxplot()
+# p[[1]] = p[[1]] + ggtitle('X') + my.theme
+# p[[2]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y"), aes(x = `Reported Gender`, y = `CPM(log)`)) + geom_boxplot()
+# p[[2]] = p[[2]] + ggtitle('Y') + my.theme
+#multiplot(plotlist = p, cols = 2)
+```
 ### Library Normalisation
 Initial library normalisation usign cqn
 ```{r cqn}
@@ -455,13 +503,12 @@ hist(cr, main = 'Distribution of correlation between genes', xlab = 'Correlation
 
 ### Sample clustering
 ```{r decompse.normalise.data, fig.height=8, fig.width=8, results='asis', cache=FALSE}
-#plotMDS of CQN normalized expression data plotMDS(x) where x is any data object which can be coerced to a matrix 
-
 # Find principal components of expression to plot
 tmp = CQN.GENE_EXPRESSION$E
 tmp[is.na(tmp)] = 0
 PC <- prcomp(tmp, scale.=T, center = T)
 
+p = list()
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
                        PC1=PC$rotation[,1], 
@@ -469,16 +516,34 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
-p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
-p <- p + theme_bw() %+replace% theme(legend.position="top")
+p[[1]] <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p[[1]] <- p[[1]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p[[1]] <- p[[1]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                               shape = guide_legend(nrow = 2),
+                                                                               size = guide_legend(nrow = 2))
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
-p
+
+#MDS
+tmp.mds <- dist(t(tmp))
+mds <- cmdscale(tmp.mds)
+#Plot MDS
+plotdata <- data.frame(SampleID = rownames(mds),
+                       MDS1= mds[,1],
+                       MDS2= mds[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+
+p[[2]] <- ggplot(plotdata, aes(MDS1,MDS2))
+p[[2]] <- p[[2]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p[[2]] <- p[[2]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                               shape = guide_legend(nrow = 2),
+                                                                               size = guide_legend(nrow = 2))
+multiplot(plotlist = p, cols = 1)
 ```
 Tree based clustering of samples
 ```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx")])
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Reported_Gender", "LibraryBatch", "Dx")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tmp = CQN.GENE_EXPRESSION$E
@@ -875,9 +940,9 @@ diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
 backgroundGenes = unique(DE$hgnc_symbol)
 
 # Download all related genesets from synapse
-geneset.files = synQuery('select * from file where parentId == "syn3240583"')$results
+geneset.files = synGetChildren("syn3240583", includeTypes=list("file"))$asList()
 genesets.to.test = purrr::map(geneset.files, .f = function(fileList){
-  tmp = downloadFile(fileList$file.id) %>%
+  tmp = downloadFile(fileList$id) %>%
     dlply(.(Name), .fun = function(x){
       str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
     })
@@ -920,7 +985,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model", parentId = parentId)
+CODE <- Folder(name = "DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model - Kelsey", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
