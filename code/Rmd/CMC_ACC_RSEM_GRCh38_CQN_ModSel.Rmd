@@ -1,6 +1,6 @@
 ---
-title: "Covariate analysis of CMC RNASeq data reprocessed with RSEM-feature counts workflow with GRCh38 (ACC with CQN normalisation)"
-author: "Kelsey Montgomery"
+title: "Covariate analysis of CMC RNASeq data reprocessed with RSEM-feature counts workflow with GRCh38 (ACC with CQN normlaisation)"
+author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
 ---
@@ -12,8 +12,9 @@ synLogin()
 
 knit2synapse::createAndKnitToFolderEntity(file = "./CMC_ACC_RSEM_GRCh38_CQN_ModSel.Rmd",
                                           parentId ="syn9846623",
-                                          folderName = 'ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
+                                          folderName = 'ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model - Kelsey')
 ```
+
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
 ## It is assumed your working directory is where this file
@@ -33,6 +34,8 @@ library(edgeR)
 library(cqn)
 library(lme4)
 library(biomaRt)
+library(ComplexHeatmap)
+library(statmod)
 
 library(synapser)
 library(knitr)
@@ -44,6 +47,8 @@ library(doParallel)
 library(foreach)
 
 cl = makeCluster(detectCores()-2)
+
+
 registerDoParallel(cl)
 
 options(xtable.type="html")
@@ -60,12 +65,12 @@ knitr::opts_chunk$set(
 ```{r synapse.parameters, include=FALSE, cache=TRUE}
 parentId = 'syn9846623';
 activityName = 'Covariate adjustments';
-activityDescription = 'Covariate analysis of RSEM aligned effective counts with GRCh38 with CQN normalisation (DLPFC)';
+activityDescription = 'Covariate analysis of RSEM aligned effective counts with GRCh38 with CQN normalisation (ACC)';
 
-thisFileName <- 'CMC_DLPFC_RSEM_GRCh38_CQN_ModSel.Rmd'
+thisFileName <- 'CMC_ACC_RSEM_GRCh38_CQN_ModSel.Rmd'
 
 # Github link
-thisRepo <- getRepo(repository = "th1vairam/Brain_Reg_Net", ref="branch", refName='CMC')
+thisRepo <- getRepo(repository = "kelshmo/Brain_Reg_Net", ref="branch", refName='CMC')
 thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/',thisFileName))
 ```
 ### Data download
@@ -74,17 +79,19 @@ thisFile <- getPermlink(repository = thisRepo, repositoryPath=paste0('code/Rmd/'
 downloadFile <- function(id){
   fread(synGet(id)$path, data.table = F)
 }
-
-# Download reprocessed counts (DLPFC)
-COUNT_ID = 'syn16783526'
+downloadFile_version <- function(id , version){
+  fread(synGet(id, version = version)$path, data.table = F)
+}
+# Download reprocessed counts (ACC)
+COUNT_ID = 'syn16783564'
 ALL_USED_IDs = COUNT_ID
 COUNT = downloadFile(COUNT_ID) %>% data.frame()
 rownames(COUNT) = COUNT$gene_id
 COUNT$gene_id = NULL
 COUNT$transcript_id.s. = NULL
 
-# Download gene lengths (DLPFC)
-GENE.LEN = downloadFile('syn16783530') %>%
+# Download gene lengths (ACC)
+GENE.LEN = downloadFile('syn16783573') %>%
   tidyr::gather(sampleID, Length, -gene_id, -`transcript_id(s)`) %>%
   group_by(gene_id) %>%
   summarise(Length = median(Length, na.rm = T)) %>%
@@ -104,28 +111,25 @@ GENOTYPE = downloadFile(GENOTYPE_ID) %>%
   dplyr::select(Individual_ID, `SNP_report:Genotyping_Sample_ID`) %>%
   dplyr::inner_join(ANCESTRY)
 
-# Get RNASeq alignment qc metrics from synapse
-METADATA_ALGMETRIC_DLPFC_ID = 'syn16783867'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_ALGMETRIC_DLPFC_ID
-METADATA_ALGMETRIC_DLPFC = downloadFile(METADATA_ALGMETRIC_DLPFC_ID) %>%
-  dplyr::rename(Sample_RNA_ID = ID)
-
 # Get RNASeq QCmetadata
-METADATA_QC_DLPFC_ID = 'syn16816488'
-ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_DLPFC_ID
-METADATA_QC_DLPFC = downloadFile(METADATA_QC_DLPFC_ID) %>%
-  dplyr::select(Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, `PMI_(in_hours)`, Dx,
+METADATA_QC_ACC_ID = 'syn16816488' 
+ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_ACC_ID
+METADATA_QC_ACC = downloadFile_version(METADATA_QC_ACC_ID, version = 7) %>%
+  dplyr::select(Individual_ID, Institution, Reported_Gender, Sex, Ethnicity, Age_of_Death, `PMI_(in_hours)`, Dx,
                 Sample_RNA_ID, one_of('rnaSeq_isolation:Exclude?', 'rnaSeq_isolation:RIN',
                                       'rnaSeq_report:Ribozero_Batch', 'rnaSeq_report:Library_Batch', 
-                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?'))
+                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?', 'rnaSeq_report:Mapped_Reads',
+                                      'rnaSeq_report:Intragenic_Rate','rnaSeq_report:Intronic_Rate',
+                                      'rnaSeq_report:Intergenic_Rate','rnaSeq_report:Genes_Detected',
+                                      'rnaSeq_report:Expression_Profiling_Efficiency', 'rnaSeq_report:rRNA_Rate',
+                                      'rnaSeq_report:Total_Reads', 'rnaSeq_report:Alignment_Rate'))
 ```
 
 ### Data preprocessing
 ```{r preprocess.data}
 # Merge metadata
-METADATA = METADATA_QC_DLPFC %>%
+METADATA = METADATA_QC_ACC %>%
   dplyr::left_join(GENOTYPE) %>%
-  dplyr::left_join(METADATA_ALGMETRIC_DLPFC) %>%
   dplyr::rename(PMI = `PMI_(in_hours)`,
                 IsolationExclude = `rnaSeq_isolation:Exclude?`, 
                 RIN = `rnaSeq_isolation:RIN`, 
@@ -134,11 +138,12 @@ METADATA = METADATA_QC_DLPFC %>%
                 LibraryBatch = `rnaSeq_report:Library_Batch`,
                 FlowcellBatch = `rnaSeq_report:Flowcell_Batch`,
                 RibozeroBatch = `rnaSeq_report:Ribozero_Batch`,
-                MappedReads = Mapped,
-                IntragenicRate = `Intragenic Rate`, IntronicRate = `Intronic Rate`, 
-                IntergenicRate = `Intergenic Rate`, GenesDetected = `Genes Detected`,
-                ExpProfEfficiency = `Expression Profiling Efficiency`, rRNARate = `rRNA rate`) %>%
-  dplyr::select(SampleID, Individual_ID, Institution, Gender, Ethnicity, Age_of_Death, PMI, Dx, 
+                MappedReads = `rnaSeq_report:Mapped_Reads`,
+                IntragenicRate = `rnaSeq_report:Intragenic_Rate`, IntronicRate = `rnaSeq_report:Intronic_Rate`, 
+                IntergenicRate = `rnaSeq_report:Intergenic_Rate`, GenesDetected = `rnaSeq_report:Genes_Detected`,
+                ExpProfEfficiency = `rnaSeq_report:Expression_Profiling_Efficiency`, rRNARate = `rnaSeq_report:rRNA_Rate`,
+                TotalReads = `rnaSeq_report:Total_Reads`, AlignmentRate = `rnaSeq_report:Alignment_Rate`) %>%
+  dplyr::select(SampleID, Individual_ID, Institution, Reported_Gender,Sex, Ethnicity, Age_of_Death, PMI, Dx, 
                 RIN, IsolationExclude, ReportExclude, EV.1, EV.2, EV.3, EV.4, EV.5,
                 LibraryBatch, FlowcellBatch, RibozeroBatch, MappedReads, TotalReads, GenesDetected, AlignmentRate,
                 IntragenicRate, IntergenicRate, IntronicRate, ExpProfEfficiency, rRNARate) %>%
@@ -160,7 +165,7 @@ writeLines(paste('Following', length(ind), 'counts are missing PMI'))
 writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
 
-ind = METADATA$SampleID [is.na(METADATA$Gender)]
+ind = METADATA$SampleID [is.na(METADATA$Reported_Gender)]
 writeLines(paste('Following', length(ind), 'counts are missing gender'))
 writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
@@ -203,21 +208,70 @@ backgroundGenes = data.frame(gene_id = rownames(COUNT)) %>%
 mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "ensembl.org", dataset = "hsapiens_gene_ensembl")
 
 # Query biomart
-Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype"),
+Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype", "chromosome_name"),
                        filters = "ensembl_gene_id", values = backgroundGenes$ensembl_gene_id,
                        mart = mart)
 
 GENE.GC.CONT = Ensemble2HGNC %>%
-  dplyr::left_join(backgroundGenes) %>%
-  dplyr::select(gene_id, percentage_gene_gc_content) %>%
+  dplyr::left_join(backgroundGenes) %>% 
+  dplyr::select(gene_id, percentage_gene_gc_content, chromosome_name) %>%
   unique
 rownames(GENE.GC.CONT) = GENE.GC.CONT$gene_id
 ```
+### Sex Chromosome-specific Gene Expression Patterns
+
+```{r Reported_Gender_plots}
+COUNT$gene_id = rownames(COUNT) 
+REPORTED.GENDER.COUNTS = GENE.GC.CONT %>% 
+  left_join(COUNT) %>%
+  dplyr::select(-one_of("percentage_gene_gc_content")) %>%
+  filter(chromosome_name == "X" |chromosome_name == "Y") %>% 
+  tidyr::gather(key = item, value = value, -c(gene_id, chromosome_name)) %>%
+  mutate(value = log(value)) %>%
+  rename(`counts(log)`= value) %>% 
+  rename(SampleID = item) %>%
+  left_join(METADATA[,c("SampleID", "Reported_Gender")]) %>% 
+  rename(`Reported Gender` = Reported_Gender) 
+
+
+my.theme <- theme_bw() %+replace% theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
+
+p = list()
+p[[1]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "X"), aes(x = `Reported Gender`, y = `counts(log)`)) + geom_boxplot()
+p[[1]] = p[[1]] + ggtitle('X') + my.theme
+p[[2]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y"), aes(x = `Reported Gender`, y = `counts(log)`)) + geom_boxplot()
+p[[2]] = p[[2]] + ggtitle('Y') + my.theme
+multiplot(plotlist = p, cols = 2)
+
+##XIST and UTY expression 
+#ENSG00000229807.10 and ENSG00000183878.15 
+FILT <- REPORTED.GENDER.COUNTS %>% 
+  filter(gene_id == "ENSG00000229807.10" | gene_id == "ENSG00000183878.15") %>% 
+  select(-one_of("chromosome_name")) %>% 
+  tidyr::spread(FILT, key = gene_id, value = `counts(log)`) %>% 
+  mutate(XIST = as.numeric(`ENSG00000229807.10`)) %>% 
+  mutate(UTY = as.numeric(`ENSG00000183878.15`))
+
+p = ggplot(FILT, aes (x= XIST, y = UTY)) 
+p = p + geom_point(aes(color=`Reported Gender`)) 
+
+female.Y <- filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y" & `Reported Gender` == "Female") %>% 
+  filter(`counts(log)` > 1 | `counts(log)` != "-Inf")
+
+COUNTS.sum <- REPORTED.GENDER.COUNTS %>%
+  filter(`counts(log)` != "-Inf") %>% 
+  group_by(SampleID, chromosome_name, `Reported Gender`) %>% 
+  summarize(`counts(log)sum` = sum(`counts(log)`)) %>% 
+  ungroup() %>% 
+  group_by(SampleID) %>% 
+  mutate(`ratio` = `counts(log)sum`/sum(`counts(log)sum`))
+```
+
 
 ### Covariates clustering
 Determine relationship between covariates. 
 ```{r covariates.clustering}
-FactorCovariates <- c('Individual_ID', "Institution", "Gender", "LibraryBatch", "Dx", "FlowcellBatch")
+FactorCovariates <- c('Individual_ID', "Institution", "Reported_Gender", "LibraryBatch", "Dx", "FlowcellBatch")
 ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
                     "GenesDetected", "ExpProfEfficiency", "rRNARate", "TotalReads", 
                     "EV.1", "EV.2", "EV.3", "EV.4", "EV.5")
@@ -294,12 +348,17 @@ multiplot(plotlist = p, cols = 3)
 # vcd::mosaic(~ Institution + Dx, data = COVARIATES)
 
 # Gender
-# vcd::mosaic(~ Gender + Dx, data = COVARIATES)
+# vcd::mosaic(~ Reported_Gender + Dx, data = COVARIATES)
 ```
 ### Filter genes
-Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx. Also remove genes with missing gene length and percentage GC content
+Remove genes that have less than 1 cpm counts in at least 50% of samples per Dx and per Dx.sex. Also remove genes with missing gene length and percentage GC content
+
+
 ```{r cpmnormalisation}
-genesToAnalyze = dlply(METADATA, .(Dx), .fun = function(mtd, count){
+rownames(COUNT) = COUNT$gene_id
+COUNT$gene_id = NULL
+
+genesToAnalyze = dlply(METADATA, .(Dx, Reported_Gender), .fun = function(mtd, count){
   processed.counts = getGeneFilteredGeneExprMatrix(count[,mtd$SampleID],
                                                    MIN_GENE_CPM=1, 
                                                    MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0.5)
@@ -307,8 +366,8 @@ genesToAnalyze = dlply(METADATA, .(Dx), .fun = function(mtd, count){
 }, COUNT)
 
 genesToAnalyze = unlist(genesToAnalyze) %>% 
-  unique() %>%
-  intersect(GENE.GC.CONT$gene_id[!is.na(GENE.GC.CONT$percentage_gene_gc_content)]) %>%
+  unique() %>% 
+  intersect(GENE.GC.CONT$gene_id[!is.na(GENE.GC.CONT$percentage_gene_gc_content)]) %>% 
   intersect(GENE.LEN$gene_id[!is.na(GENE.LEN$Length)])
 
 PROCESSED_COUNTS = getGeneFilteredGeneExprMatrix(COUNT[genesToAnalyze, ], MIN_GENE_CPM=0, MIN_SAMPLE_PERCENT_WITH_MIN_GENE_CPM=0)
@@ -409,6 +468,31 @@ NEW.COUNTS = PROCESSED_COUNTS$filteredExprMatrix$counts
 NEW.COUNTS[is.na(LOG.CPM)] = 0
 ```
 
+```{r testCPM}
+# TEMP <- LOG.CPM
+# TEMP$gene_id = rownames(TEMP) 
+# t <- data.frame(TEMP) %>% 
+#   mutate(gene_id = rownames(TEMP))
+# REPORTED.GENDER.COUNTS = GENE.GC.CONT %>% 
+#   left_join(t) %>%
+#   dplyr::select(-one_of("percentage_gene_gc_content")) %>%
+#   filter(chromosome_name == "X" |chromosome_name == "Y") %>% 
+#   tidyr::gather(key = item, value = value, -c(gene_id, chromosome_name)) %>%
+#   rename(`CPM(log)`= value) %>% 
+#   rename(SampleID = item) %>%
+#   left_join(METADATA[,c("SampleID", "Reported_Gender")]) %>% 
+#   rename(`Reported Gender` = Reported_Gender)
+
+
+# my.theme <- theme_bw() %+replace% theme(legend.position = 'top', axis.text.x = element_text(angle = 90, hjust = 1), plot.title=element_text(hjust=0.5))
+# 
+# p = list()
+# p[[1]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "X"), aes(x = `Reported Gender`, y = `CPM(log)`)) + geom_boxplot()
+# p[[1]] = p[[1]] + ggtitle('X') + my.theme
+# p[[2]] = ggplot(filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y"), aes(x = `Reported Gender`, y = `CPM(log)`)) + geom_boxplot()
+# p[[2]] = p[[2]] + ggtitle('Y') + my.theme
+#multiplot(plotlist = p, cols = 2)
+```
 ### Library Normalisation
 Initial library normalisation usign cqn
 ```{r cqn}
@@ -447,6 +531,7 @@ tmp = CQN.GENE_EXPRESSION$E
 tmp[is.na(tmp)] = 0
 PC <- prcomp(tmp, scale.=T, center = T)
 
+p = list()
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
                        PC1=PC$rotation[,1], 
@@ -454,16 +539,34 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
-p <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p <- p + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
-p <- p + theme_bw() %+replace% theme(legend.position="top")
+p[[1]] <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p[[1]] <- p[[1]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p[[1]] <- p[[1]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                               shape = guide_legend(nrow = 2),
+                                                                               size = guide_legend(nrow = 2))
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
-p
+
+#MDS
+tmp.mds <- dist(t(tmp))
+mds <- cmdscale(tmp.mds)
+#Plot MDS
+plotdata <- data.frame(SampleID = rownames(mds),
+                       MDS1= mds[,1],
+                       MDS2= mds[,2])
+
+plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
+
+p[[2]] <- ggplot(plotdata, aes(MDS1,MDS2))
+p[[2]] <- p[[2]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p[[2]] <- p[[2]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                               shape = guide_legend(nrow = 2),
+                                                                               size = guide_legend(nrow = 2))
+multiplot(plotlist = p, cols = 1)
 ```
 Tree based clustering of samples
 ```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
 # Eucledian tree based analysis
-COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Gender", "LibraryBatch", "Dx")])
+COVARIATES.tmp = data.matrix(COVARIATES[,c("Institution", "Reported_Gender", "LibraryBatch", "Dx")])
 COVARIATES.tmp[is.na(COVARIATES.tmp)] = 0
 
 tmp = CQN.GENE_EXPRESSION$E
@@ -623,9 +726,9 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
-phase1.covars = c('Institution', 'Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
+phase1.covars = c('Institution', 'Reported_Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
                                      COVARIATES, CQN.GENE_EXPRESSION$E, 
                                      NEW.COUNTS, baseModelBIC)
@@ -643,7 +746,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
 phase2.covars = c('LibraryBatch', 'FlowcellBatch')
 vars.selected = selectCovarsToAdjust(phase2.covars, adjust.covars, 
@@ -663,7 +766,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-
+baseModelBIC
 # Iteratively identify covariates in phase I
 phase3.covars = c("MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate", "GenesDetected",
                   "ExpProfEfficiency", "rRNARate", "TotalReads")
@@ -860,9 +963,9 @@ diffexp.genes = diffexp.genes[sapply(diffexp.genes, length) > 20]
 backgroundGenes = unique(DE$hgnc_symbol)
 
 # Download all related genesets from synapse
-geneset.files = synQuery('select * from file where parentId == "syn3240583"')$results
+geneset.files = synGetChildren("syn3240583", includeTypes=list("file"))$asList()
 genesets.to.test = purrr::map(geneset.files, .f = function(fileList){
-  tmp = downloadFile(fileList$file.id) %>%
+  tmp = downloadFile(fileList$id) %>%
     dlply(.(Name), .fun = function(x){
       str_split(x$symBeforeOverlap, '\\|') %>% unlist %>% unique
     })
@@ -905,7 +1008,7 @@ all.annotations = list(
 )
 
 # Code
-CODE <- Folder(name = "DLPFC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model", parentId = parentId)
+CODE <- Folder(name = "ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model", parentId = parentId)
 CODE <- synStore(CODE)
 
 # Store covariates
