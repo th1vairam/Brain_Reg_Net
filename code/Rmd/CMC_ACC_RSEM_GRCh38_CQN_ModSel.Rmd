@@ -12,12 +12,12 @@ synLogin()
 
 knit2synapse::createAndKnitToFolderEntity(file = "./CMC_ACC_RSEM_GRCh38_CQN_ModSel.Rmd",
                                           parentId ="syn9846623",
-                                          folderName = 'ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model - Kelsey')
+                                          folderName = 'ACC - RSEM - EXPECTED COUNTS - GRCh38 - CQN - Sparse Model')
 ```
 
 
 ```{r libs, echo=FALSE, warning=FALSE, message=FALSE, include=FALSE}
-## It is assumed your working directory is where this file
+# It is assumed your working directory is where this file
 
 ## Load required libraries
 library(CovariateAnalysis) # get the package from devtools::install_github('th1vairam/CovariateAnalysis@dev')
@@ -96,7 +96,7 @@ GENE.LEN = downloadFile('syn16783573') %>%
   group_by(gene_id) %>%
   summarise(Length = median(Length, na.rm = T)) %>%
   ungroup() %>% data.frame()
-ALL_USED_IDs = c(ALL_USED_IDs, 'syn16783530')
+ALL_USED_IDs = c(ALL_USED_IDs, 'syn16783573')
 
 # Get ancestry vector calculated using gemtools
 ANCESTRY_ID = 'syn2511399'
@@ -107,22 +107,24 @@ ANCESTRY = downloadFile(ANCESTRY_ID) %>%
 # Get genotype ids from synapse
 GENOTYPE_ID = 'syn16816490'
 ALL_USED_IDs = c(ALL_USED_IDs, GENOTYPE_ID)
-GENOTYPE = downloadFile(GENOTYPE_ID) %>%
+GENOTYPE = downloadFile(GENOTYPE_ID) %>% 
   dplyr::select(Individual_ID, `SNP_report:Genotyping_Sample_ID`) %>%
   dplyr::inner_join(ANCESTRY)
 
 # Get RNASeq QCmetadata
 METADATA_QC_ACC_ID = 'syn16816488' 
 ALL_USED_IDs[length(ALL_USED_IDs)+1] = METADATA_QC_ACC_ID
-METADATA_QC_ACC = downloadFile_version(METADATA_QC_ACC_ID, version = 7) %>%
+METADATA_QC_ACC = downloadFile_version(METADATA_QC_ACC_ID, version = 8) %>% 
   dplyr::select(Individual_ID, Institution, Reported_Gender, Sex, Ethnicity, Age_of_Death, `PMI_(in_hours)`, Dx,
                 Sample_RNA_ID, one_of('rnaSeq_isolation:Exclude?', 'rnaSeq_isolation:RIN',
                                       'rnaSeq_report:Ribozero_Batch', 'rnaSeq_report:Library_Batch', 
-                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?', 'rnaSeq_report:Mapped_Reads',
+                                      'rnaSeq_report:Flowcell_Batch', 'rnaSeq_report:Exclude?',
+                                      'rnaSeq_report:Mapped_Reads',
                                       'rnaSeq_report:Intragenic_Rate','rnaSeq_report:Intronic_Rate',
                                       'rnaSeq_report:Intergenic_Rate','rnaSeq_report:Genes_Detected',
-                                      'rnaSeq_report:Expression_Profiling_Efficiency', 'rnaSeq_report:rRNA_Rate',
-                                      'rnaSeq_report:Total_Reads', 'rnaSeq_report:Alignment_Rate'))
+                                      'rnaSeq_report:Expression_Profiling_Efficiency',
+                                      'rnaSeq_report:rRNA_Rate',
+                                      'rnaSeq_report:Total_Reads', 'rnaSeq_report:Percent_Aligned'))
 ```
 
 ### Data preprocessing
@@ -139,10 +141,14 @@ METADATA = METADATA_QC_ACC %>%
                 FlowcellBatch = `rnaSeq_report:Flowcell_Batch`,
                 RibozeroBatch = `rnaSeq_report:Ribozero_Batch`,
                 MappedReads = `rnaSeq_report:Mapped_Reads`,
-                IntragenicRate = `rnaSeq_report:Intragenic_Rate`, IntronicRate = `rnaSeq_report:Intronic_Rate`, 
-                IntergenicRate = `rnaSeq_report:Intergenic_Rate`, GenesDetected = `rnaSeq_report:Genes_Detected`,
-                ExpProfEfficiency = `rnaSeq_report:Expression_Profiling_Efficiency`, rRNARate = `rnaSeq_report:rRNA_Rate`,
-                TotalReads = `rnaSeq_report:Total_Reads`, AlignmentRate = `rnaSeq_report:Alignment_Rate`) %>%
+                IntragenicRate = `rnaSeq_report:Intragenic_Rate`, 
+                IntronicRate = `rnaSeq_report:Intronic_Rate`, 
+                IntergenicRate = `rnaSeq_report:Intergenic_Rate`, 
+                GenesDetected = `rnaSeq_report:Genes_Detected`,
+                ExpProfEfficiency = `rnaSeq_report:Expression_Profiling_Efficiency`, 
+                rRNARate = `rnaSeq_report:rRNA_Rate`,
+                TotalReads = `rnaSeq_report:Total_Reads`, 
+                AlignmentRate = `rnaSeq_report:Percent_Aligned`) %>%
   dplyr::select(SampleID, Individual_ID, Institution, Reported_Gender,Sex, Ethnicity, Age_of_Death, PMI, Dx, 
                 RIN, IsolationExclude, ReportExclude, EV.1, EV.2, EV.3, EV.4, EV.5,
                 LibraryBatch, FlowcellBatch, RibozeroBatch, MappedReads, TotalReads, GenesDetected, AlignmentRate,
@@ -156,7 +162,7 @@ writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
 
 ind = METADATA$SampleID [is.na(METADATA$Ethnicity) | is.na(METADATA$Institution) | is.na(METADATA$Dx)]
-writeLines(paste('Following', length(ind), 'counts are missing any metadata'))
+writeLines(paste('Following', length(ind), 'counts are missing clinical metadata'))
 writeLines(paste(ind, collapse = ', '))
 METADATA <- METADATA  %>% dplyr::filter(!(SampleID %in% ind)) 
 
@@ -205,7 +211,7 @@ backgroundGenes = data.frame(gene_id = rownames(COUNT)) %>%
   tidyr::separate(id, c('ensembl_gene_id','position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "ensembl.org", dataset = "hsapiens_gene_ensembl")
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "ensembl.org", dataset = "hsapiens_gene_ensembl")#change to specific ensembl archive....host 
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype", "chromosome_name"),
@@ -247,29 +253,22 @@ multiplot(plotlist = p, cols = 2)
 #ENSG00000229807.10 and ENSG00000183878.15 
 FILT <- REPORTED.GENDER.COUNTS %>% 
   filter(gene_id == "ENSG00000229807.10" | gene_id == "ENSG00000183878.15") %>% 
-  select(-one_of("chromosome_name")) %>% 
-  tidyr::spread(FILT, key = gene_id, value = `counts(log)`) %>% 
+  dplyr::select(-one_of("chromosome_name")) %>% 
+  tidyr::spread(key = gene_id, value = `counts(log)`) %>% 
   mutate(XIST = as.numeric(`ENSG00000229807.10`)) %>% 
   mutate(UTY = as.numeric(`ENSG00000183878.15`))
 
 p = ggplot(FILT, aes (x= XIST, y = UTY)) 
 p = p + geom_point(aes(color=`Reported Gender`)) 
-
-female.Y <- filter(REPORTED.GENDER.COUNTS, chromosome_name == "Y" & `Reported Gender` == "Female") %>% 
-  filter(`counts(log)` > 1 | `counts(log)` != "-Inf")
-
-COUNTS.sum <- REPORTED.GENDER.COUNTS %>%
-  filter(`counts(log)` != "-Inf") %>% 
-  group_by(SampleID, chromosome_name, `Reported Gender`) %>% 
-  summarize(`counts(log)sum` = sum(`counts(log)`)) %>% 
-  ungroup() %>% 
-  group_by(SampleID) %>% 
-  mutate(`ratio` = `counts(log)sum`/sum(`counts(log)sum`))
+p
 ```
 
 
 ### Covariates clustering
 Determine relationship between covariates. 
+
+To summarize NAN values:
+sapply(METADATA, function(x) sum(is.nan(x)))
 ```{r covariates.clustering}
 FactorCovariates <- c('Individual_ID', "Institution", "Reported_Gender", "LibraryBatch", "Dx", "FlowcellBatch")
 ContCovariates <- c("Age_of_Death", "PMI", "RIN", "MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate",
@@ -531,7 +530,6 @@ tmp = CQN.GENE_EXPRESSION$E
 tmp[is.na(tmp)] = 0
 PC <- prcomp(tmp, scale.=T, center = T)
 
-p = list()
 # Plot first 2 PCs
 plotdata <- data.frame(SampleID=rownames(PC$rotation), 
                        PC1=PC$rotation[,1], 
@@ -539,11 +537,12 @@ plotdata <- data.frame(SampleID=rownames(PC$rotation),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
-p[[1]] <- ggplot(plotdata, aes(x=PC1, y=PC2))
-p[[1]] <- p[[1]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
-p[[1]] <- p[[1]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
-                                                                               shape = guide_legend(nrow = 2),
-                                                                               size = guide_legend(nrow = 2))
+p <- ggplot(plotdata, aes(x=PC1, y=PC2))
+p <- p + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p <- p + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                     shape = guide_legend(nrow = 2),
+                                                                     size = guide_legend(nrow = 2))
+p
 # p <- p + geom_text(aes(label= SampleID), size=4, hjust=0)
 
 #MDS
@@ -556,12 +555,12 @@ plotdata <- data.frame(SampleID = rownames(mds),
 
 plotdata <- left_join(plotdata, rownameToFirstColumn(COVARIATES, 'SampleID'))
 
-p[[2]] <- ggplot(plotdata, aes(MDS1,MDS2))
-p[[2]] <- p[[2]] + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
-p[[2]] <- p[[2]] + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
-                                                                               shape = guide_legend(nrow = 2),
-                                                                               size = guide_legend(nrow = 2))
-multiplot(plotlist = p, cols = 1)
+p <- ggplot(plotdata, aes(MDS1,MDS2))
+p <- p + geom_point(aes(color=Institution, shape=Dx, size=Age_of_Death))
+p <- p + theme_bw() %+replace% theme(legend.position="top") + guides(colour = guide_legend(nrow = 2),
+                                                                     shape = guide_legend(nrow = 2),
+                                                                     size = guide_legend(nrow = 2))
+p
 ```
 Tree based clustering of samples
 ```{r decompse.normalise.data.1, fig.height=6, fig.width=10, results='asis'}
@@ -726,7 +725,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-baseModelBIC
+
 # Iteratively identify covariates in phase I
 phase1.covars = c('Institution', 'Reported_Gender', 'PMI', 'Age_of_Death', 'RIN', 'RIN2', 'EV.1', 'EV.2', 'EV.3', 'EV.4', 'EV.5')
 vars.selected = selectCovarsToAdjust(phase1.covars, adjust.covars, 
@@ -746,7 +745,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-baseModelBIC
+
 # Iteratively identify covariates in phase I
 phase2.covars = c('LibraryBatch', 'FlowcellBatch')
 vars.selected = selectCovarsToAdjust(phase2.covars, adjust.covars, 
@@ -766,7 +765,7 @@ baseModelBIC = fitMixedEffectModel(adjust.covars,
                                    NEW.COUNTS, 
                                    COVARIATES) %>%
   dplyr::rename(baseModel = BIC)
-baseModelBIC
+
 # Iteratively identify covariates in phase I
 phase3.covars = c("MappedReads", "IntragenicRate", "IntronicRate", "IntergenicRate", "GenesDetected",
                   "ExpProfEfficiency", "rRNARate", "TotalReads")
