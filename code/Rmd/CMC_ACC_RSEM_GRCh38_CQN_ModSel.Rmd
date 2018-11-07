@@ -3,6 +3,8 @@ title: "Covariate analysis of CMC RNASeq data reprocessed with RSEM-feature coun
 author: "Thanneer Perumal"
 date: "`r date()`"
 output: html_document
+editor_options: 
+  chunk_output_type: console
 ---
 ```{r knit2synapse, eval=FALSE}
 library(synapser)
@@ -48,8 +50,12 @@ library(foreach)
 
 cl = makeCluster(detectCores()-2)
 
-
 registerDoParallel(cl)
+
+library(future)
+library(furrr)
+
+plan(multiprocess)
 
 options(xtable.type="html")
 
@@ -211,7 +217,7 @@ backgroundGenes = data.frame(gene_id = rownames(COUNT)) %>%
   tidyr::separate(id, c('ensembl_gene_id','position'), sep = '\\.')
 
 # Define biomart object
-mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "ensembl.org", dataset = "hsapiens_gene_ensembl")#change to specific ensembl archive....host 
+mart <- useMart(biomart = "ENSEMBL_MART_ENSEMBL", host = "oct2018.archive.ensembl.org", dataset = "hsapiens_gene_ensembl")#change to specific ensembl archive....host 
 
 # Query biomart
 Ensemble2HGNC <- getBM(attributes = c("ensembl_gene_id", "hgnc_symbol", "percentage_gene_gc_content", "gene_biotype", "chromosome_name"),
@@ -447,22 +453,28 @@ Distribution of samples are:
 
 ### Winsorise counts (Gene outliers in samples)
 ```{r winsorise.data}
-LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T)
+LOG.CPM = cpm(PROCESSED_COUNTS$filteredExprMatrix$counts, log = T) %>%
+  rownameToFirstColumn('gene_id') %>%
+  tidyr::gather(sample_id, value, -gene_id) %>%
+  group_by(gene_id) %>%
+  nest() %>%
+  tibble::deframe() %>%
+  future_map(function(x){
+    mn = mean(x$value, na.rm = T)
+    std.dev = sd(x$value, na.rm = T)
+    
+    x[which(x$value <= mn-3*std.dev), 'value'] = NA 
+    x[which(x$value >= mn+3*std.dev), 'value'] = NA 
+    
+    return(x)
+  }, .progress = T) %>%
+  bind_rows(.id = 'gene_id') %>%
+  tidyr::spread(sample_id, value) %>%
+  tibble::column_to_rownames(var = 'gene_id') %>%
+  as.data.frame()
 
-# Set gene counts in specific samples that are deviating 3 sd from other samples to 3SD limit
-LOG.CPM = apply(LOG.CPM, 1, function(x){
-  mn = mean(x, na.rm = T)
-  std.dev = sd(x, na.rm = T)
-  
-  ind.low = which(x == max(x[which(x <= mn-3*std.dev)], na.rm = T))
-  ind.high = which(x == min(x[which(x >= mn+3*std.dev)], na.rm = T))
-  
-  x[x < (mn-3*std.dev)] = NA
-  x[x > (mn+3*std.dev)] = NA
-  return(x)
-}) %>% t
-
-# Back calculate counts for further analysis
+# Assign zero values to NAs
+LOG.CPM = LOG.CPM[rownames(PROCESSED_COUNTS$filteredExprMatrix$counts), colnames(PROCESSED_COUNTS$filteredExprMatrix$counts)]
 NEW.COUNTS = PROCESSED_COUNTS$filteredExprMatrix$counts
 NEW.COUNTS[is.na(LOG.CPM)] = 0
 ```
@@ -497,11 +509,11 @@ Initial library normalisation usign cqn
 ```{r cqn}
 # Compute offset for gene length and gc content
 GENE.LEN = tibble::column_to_rownames(GENE.LEN, var = 'gene_id') %>% as.data.frame()
-CQN.GENE_EXPRESSION = cqn(NEW.COUNTS, 
+CQN.GENE_EXPRESSION = cqn(round(NEW.COUNTS[,c(1:190, 192:476)]), 
                           x = GENE.GC.CONT[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'percentage_gene_gc_content'],
                           lengths = GENE.LEN[PROCESSED_COUNTS$filteredExprMatrix$genes$genes, 'Length'],
                           lengthMethod = "smooth", 
-                          verbose = FALSE)
+                          verbose = TRUE)
 CQN.GENE_EXPRESSION$E = CQN.GENE_EXPRESSION$y + CQN.GENE_EXPRESSION$offset
 
 # Set gene counts in specific samples that are deviating 3 sd from other samples to 0
